@@ -530,6 +530,12 @@ REQUIRED SCENARIO: **${t.type||"varied"}** — ${t.desc||"any business or daily 
 - 5-8 speaker turns, 60-100 words. Natural speech with contractions and fragments.
 - 3 comprehension questions.
 - REQUIRED: Include "translation_ja" field with full Japanese translation of the conversation.
+GENDER RULES — STRICTLY ENFORCED:
+- "Man:" lines are spoken by a MALE character. Use male names (Mr. Park, David, James). Use "he/him/his" when referring to the Man speaker.
+- "Woman:" lines are spoken by a FEMALE character. Use female names (Ms. Chen, Sarah, Emily). Use "she/her" when referring to the Woman speaker.
+- In questions: "the man" = the Man speaker. "the woman" = the Woman speaker. NEVER swap them.
+- In translation_ja: "Man:" = "男性:" and "Woman:" = "女性:". NEVER swap them.
+- NEVER have a Man speaker refer to himself with a female name or vice versa.
 LEVEL-SPECIFIC PART 3 QUESTION RULES:
 ${level==="beginner"?`- Questions: all 3 should be straightforward detail questions (Who/What/Where/When)
 - Answers are directly stated in the conversation — no inference needed
@@ -552,13 +558,18 @@ Create a TOEIC Part 3 (Conversations) with EXACTLY 3 speakers.
 FORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"
 REQUIRED SCENARIO: **${t.type||"team discussion"}** — ${t.desc||"three colleagues discussing a workplace topic"}
 - 7-10 turns, 80-120 words. All 3 speakers must have substantial lines. Natural speech.
+GENDER RULES — STRICTLY ENFORCED:
+- "Man 1:"/"Man 2:" lines are spoken by MALE characters. Use male names and "he/him/his".
+- "Woman:"/"Woman 1:"/"Woman 2:" lines are spoken by FEMALE characters. Use female names and "she/her".
+- In questions: "the man" or "Man 1/2" = male speaker. "the woman" or "Woman 1/2" = female speaker. NEVER swap.
+- In translation_ja: "Man 1:" = "男性1:", "Man 2:" = "男性2:", "Woman:" = "女性:". NEVER swap.
 
 {"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...","speakers":["Man 1","Man 2","Woman"],"audio":"Man 1: ... Woman: ... Man 2: ...","questions":[{"question":"What are the speakers mainly discussing?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"..."},{"question":"What does Man 2 suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"..."},{"question":"What will the woman most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"..."}]}`,
 
     part4: () => `${sys}
 Create a TOEIC Part 4 (Talks) question set.
 REQUIRED TALK TYPE: **${t.type||"varied"}** — ${t.desc||"any type of short talk"}
-- Single-speaker monologue, 60-90 words, 4-8 sentences. Must sound natural as spoken audio.
+- Single-speaker monologue, 100-140 words, 6-10 sentences. Must sound natural as spoken audio.
 - REQUIRED: Include "translation_ja" field with full Japanese translation of the talk.
 LEVEL-SPECIFIC PART 4 QUESTION RULES:
 ${level==="beginner"?`- Questions: main purpose + 2 detail questions directly answered in the talk
@@ -573,7 +584,7 @@ ${level==="beginner"?`- Questions: main purpose + 2 detail questions directly an
 - Distractors include information that is partially mentioned but doesn't answer the question`}
 ${t.type&&t.type.startsWith("graphic")?"- IMPORTANT: Include a 'graphic' object with 'title' (string), 'headers' (array of column names), and 'rows' (array of row arrays). The talk MUST reference information in this graphic. One question MUST begin with 'Look at the graphic.'":""}
 
-{"talk":"Full monologue 60-90 words...","translation_ja":"トーク全文の日本語訳をここに書く","talk_type":"${t.type||"talk"}","audio":"[same full text as talk]","questions":[{"question":"What is the purpose of the message?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"和訳と解説"},{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"和訳と解説"},{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"和訳と解説"}]}`,
+{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳をここに書く","talk_type":"${t.type||"talk"}","audio":"[same full text as talk]","questions":[{"question":"What is the purpose of the message?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"和訳と解説"},{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"和訳と解説"},{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"和訳と解説"}]}`,
 
     part5: () => `${sys}
 Create a TOEIC Part 5 (Incomplete Sentences) question.
@@ -713,8 +724,32 @@ function normalizeSet(raw, part) {
       return { part, spoken:raw.spoken, audio,
         questions:[{question:raw.spoken, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja}] };
     }
-    case "part3":
-      return { part, conversation:raw.conversation, translation_ja:raw.translation_ja||null, audio:raw.audio||raw.conversation, speakers:raw.speakers||["Man","Woman"], graphic:raw.graphic||null, questions:raw.questions };
+    case "part3": {
+      // Gender validation: check conversation lines match speaker labels
+      const conv = raw.conversation || "";
+      const lines = conv.split(/\\n|\n/);
+      for (const line of lines) {
+        const m = line.match(/^(Man|Woman)\s*\d?\s*:\s*(.+)/i);
+        if (m) {
+          const label = m[1].toLowerCase();
+          const text = m[2];
+          // Check for obvious gender mismatches
+          if (label === "man" && /\bI'm\s+(?:Ms\.|Mrs\.|she|her name is)\b/i.test(text)) {
+            console.warn("⚠️ Part 3 gender mismatch: Man line contains female reference:", text.slice(0,60));
+          }
+          if (label === "woman" && /\bI'm\s+(?:Mr\.|he|his name is)\b/i.test(text)) {
+            console.warn("⚠️ Part 3 gender mismatch: Woman line contains male reference:", text.slice(0,60));
+          }
+        }
+      }
+      // Fix translation_ja labels if swapped
+      let tja = raw.translation_ja || null;
+      if (tja) {
+        tja = tja.replace(/女性(\s*\d?\s*):(.+?)(?=男性|女性|$)/g, (m, n, t) => `女性${n}:${t}`);
+        tja = tja.replace(/男性(\s*\d?\s*):(.+?)(?=男性|女性|$)/g, (m, n, t) => `男性${n}:${t}`);
+      }
+      return { part, conversation:conv, translation_ja:tja, audio:raw.audio||conv, speakers:raw.speakers||["Man","Woman"], graphic:raw.graphic||null, questions:raw.questions };
+    }
     case "part4":
       return { part, talk:raw.talk, translation_ja:raw.translation_ja||null, talk_type:raw.talk_type||"", audio:raw.audio||raw.talk, graphic:raw.graphic||null, questions:raw.questions };
     case "part5":
