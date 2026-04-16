@@ -1160,12 +1160,28 @@ function openStockDB() {
 }
 
 async function stockSave(part, level, qSet, imgUrl) {
-  // Listening parts (1-4) require audio. Reject if no audio available.
+  // STRICT VALIDATION — reject incomplete items
+  // Rule 1: Listening parts (1-4) require audio
   const isListening = part && ["part1","part2","part3","part4"].includes(part);
   const hasAudio = !!(qSet._audioOpus || qSet._audioPcm);
   if (isListening && !hasAudio) {
-    console.warn(`[SKIP] ${part}: listening question without audio - not saving to stock`);
+    console.warn(`[STOCK REJECT] ${part}: listening question without audio`);
     throw new Error(`${part} requires audio but none generated`);
+  }
+  // Rule 2: Part 1 requires image
+  if (part === "part1" && !imgUrl) {
+    console.warn(`[STOCK REJECT] part1: photograph question without image`);
+    throw new Error(`part1 requires an image but none generated`);
+  }
+  // Rule 3: Graphic questions (Part 3/4/7 with graphic field) require image
+  if (qSet && qSet.graphic && !imgUrl) {
+    console.warn(`[STOCK REJECT] ${part}: graphic question without image`);
+    throw new Error(`${part} graphic question requires image`);
+  }
+  // Rule 4: questions list non-empty
+  if (!qSet || !qSet.questions || qSet.questions.length === 0) {
+    console.warn(`[STOCK REJECT] ${part}: no questions`);
+    throw new Error(`${part} has no questions`);
   }
   const db = await openStockDB();
   const data = {
@@ -1204,6 +1220,37 @@ async function stockGetAll(part) {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+// Validation helper (matches stockSave rules)
+function validateStockItem(item) {
+  if (!item || !item.part) return {ok:false, reason:"no part"};
+  const isListening = ["part1","part2","part3","part4"].includes(item.part);
+  if (isListening && !item.audioOpus) return {ok:false, reason:"listening without audio"};
+  if (item.part === "part1" && !item.imgUrl) return {ok:false, reason:"part1 without image"};
+  if (item.qSet && item.qSet.graphic && !item.imgUrl) return {ok:false, reason:"graphic without image"};
+  if (!item.qSet || !item.qSet.questions || item.qSet.questions.length === 0) return {ok:false, reason:"no questions"};
+  return {ok:true};
+}
+
+// Purge broken items from stock DB
+async function stockPurgeBroken() {
+  const all = await stockGetAll();
+  const db = await openStockDB();
+  let purged = 0;
+  for (const item of all) {
+    const v = validateStockItem(item);
+    if (!v.ok) {
+      console.warn(`[PURGE] id=${item.id} (${item.part}): ${v.reason}`);
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("questions","readwrite");
+        tx.objectStore("questions").delete(item.id);
+        tx.oncomplete = () => { purged++; resolve(); };
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+  }
+  return purged;
 }
 
 async function stockDelete(id) {
@@ -1951,6 +1998,7 @@ async function renderStockSelect() {
     <div style="display:flex;gap:8px;justify-content:center;margin-top:16px">
       ${total>0?`<button class="btn-s" id="stockExportBtn" style="font-size:12px">📤 エクスポート</button>`:""}
       <button class="btn-s" id="stockImportBtn" style="font-size:12px">📥 インポート</button>
+      ${total>0?`<button class="btn-s" id="stockPurgeBtn" style="font-size:12px;color:#fbbf24">🧹 壊れた問題を浄化</button>`:""}
     </div>
     <input type="file" id="stockFileInput" accept=".json" style="display:none">
     ${total>0?`<div style="margin-top:60px;text-align:center"><button class="btn-s" id="stockClearBtn" style="color:#f87171;font-size:11px;opacity:0.6">🗑️ 全ストック削除</button></div>`:""}`;
@@ -2003,6 +2051,15 @@ async function renderStockSelect() {
     } catch(err) { alert("インポート失敗: "+err.message); }
   };
   const bb=$("stockBackBtn"); if(bb)bb.onclick=()=>{S.screen="home";render();};
+  const pb=$("stockPurgeBtn"); if(pb)pb.onclick=async()=>{
+    if(!confirm("音声や画像が欠損した問題を削除します。よろしいですか？")) return;
+    try {
+      const n = await stockPurgeBroken();
+      if (n > 0) alert(`🧹 ${n}件の壊れた問題を削除しました`);
+      else alert("✅ 壊れた問題はありませんでした");
+      render();
+    } catch(err) { alert("浄化失敗: "+err.message); }
+  };
   const cb=$("stockClearBtn"); if(cb)cb.onclick=async()=>{
     if(!confirm("全ストックを削除しますか？")) return;
     const db=await openStockDB();
@@ -2868,6 +2925,7 @@ function renderMockSetup() {
     </button>
 
     <div style="display:flex;gap:6px;margin-top:12px">
+      <button class="btn-s" id="mockPurgeBtn" style="flex:1;font-size:11px;color:#fbbf24">🧹 壊れた問題を浄化</button>
       <button class="btn-s" id="mockClearBtn" style="flex:1;font-size:11px;color:#f87171">🗑️ 模試データをクリア</button>
       <button class="btn-s" id="mockBackBtn" style="flex:1">← ホームに戻る</button>
     </div>`;
@@ -2957,6 +3015,29 @@ function renderMockSetup() {
     };
   });
 
+  $("mockPurgeBtn").onclick = async () => {
+    if (!confirm("音声や画像が欠損した模試問題を削除します。よろしいですか？")) return;
+    try {
+      const all = await mockStockGetAll();
+      const db = await openMockDB();
+      let purged = 0;
+      for (const item of all) {
+        const v = validateStockItem(item);
+        if (!v.ok) {
+          console.warn(`[MOCK PURGE] id=${item.id} (${item.part}): ${v.reason}`);
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction("mock","readwrite");
+            tx.objectStore("mock").delete(item.id);
+            tx.oncomplete = () => { purged++; resolve(); };
+            tx.onerror = () => reject(tx.error);
+          });
+        }
+      }
+      if (purged > 0) alert(`🧹 ${purged}件の壊れた模試問題を削除しました`);
+      else alert("✅ 壊れた問題はありませんでした");
+      render();
+    } catch(err) { alert("浄化失敗: "+err.message); }
+  };
   $("mockClearBtn").onclick = async () => {
     if (!confirm("模試データを全て削除しますか？")) return;
     await mockStockClear();
@@ -3251,7 +3332,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16m · mock strict validation + auto-retry</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16n · unified validation + purge tools</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
