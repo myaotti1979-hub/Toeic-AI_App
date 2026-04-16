@@ -883,11 +883,17 @@ function openVocabDB() {
     req.onerror = () => reject(req.error);
   });
 }
-async function vocabSave(word, meaning, context, part, pos) {
+async function vocabSave(word, meaning, context, part, pos, audio, exampleAudio) {
   const db = await openVocabDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("words","readwrite");
-    tx.objectStore("words").add({word, meaning:meaning||"", context:context||"", part:part||"", pos:pos||"other", timestamp:Date.now()});
+    tx.objectStore("words").add({
+      word, meaning:meaning||"", context:context||"", part:part||"",
+      pos:pos||"other",
+      audio: audio||"",          // Opus base64 of word pronunciation
+      exampleAudio: exampleAudio||"",  // Opus base64 of example sentence
+      timestamp:Date.now()
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -950,16 +956,29 @@ async function vocabAutoSave(vocabArr, part) {
         const meanings = (match.meaning||"").split("\n").map(s=>s.trim()).filter(Boolean);
         // Check overlap with any existing meaning
         const hasOverlap = meanings.some(m => meaningsMatch(m, newMeaning));
-        if (hasOverlap) continue; // at least one segment matches → skip
+        if (hasOverlap) {
+          // Same meaning exists - still update audio if missing
+          const updates = {};
+          if (v.audio && !match.audio) updates.audio = v.audio;
+          if (v.example_audio && !match.exampleAudio) updates.exampleAudio = v.example_audio;
+          if (Object.keys(updates).length) {
+            await vocabUpdate(match.id, updates);
+            Object.assign(match, updates);
+          }
+          continue;
+        }
         const updatedMeaning = meanings.concat(newMeaning).join("\n");
         const examples = (match.context||"").split("\n").map(s=>s.trim()).filter(Boolean);
         const updatedContext = examples.concat(newExample).join("\n");
-        await vocabUpdate(match.id, {meaning: updatedMeaning, context: updatedContext});
-        match.meaning = updatedMeaning; match.context = updatedContext;
+        const updates = {meaning: updatedMeaning, context: updatedContext};
+        if (v.audio && !match.audio) updates.audio = v.audio;
+        if (v.example_audio && !match.exampleAudio) updates.exampleAudio = v.example_audio;
+        await vocabUpdate(match.id, updates);
+        Object.assign(match, updates);
       } else {
         const pos = (v.pos||"other").toLowerCase();
-        await vocabSave(v.word, newMeaning, newExample, part, pos);
-        existing.push({id:Date.now(), word:v.word, meaning:newMeaning, context:newExample, pos});
+        await vocabSave(v.word, newMeaning, newExample, part, pos, v.audio||"", v.example_audio||"");
+        existing.push({id:Date.now(), word:v.word, meaning:newMeaning, context:newExample, pos, audio:v.audio||"", exampleAudio:v.example_audio||""});
       }
     }
   } catch(e) { console.warn("vocabAutoSave error:", e); }
@@ -2278,15 +2297,15 @@ async function renderVocab() {
       let detailHtml;
       if (meanings.length <= 1) {
         detailHtml = `${meanings[0]?`<div style="font-size:12px;color:#818cf8">${esc(meanings[0])}</div>`:""}
-          ${examples[0]?`<div style="font-size:11px;color:#94a3b8;margin-top:2px;display:flex;align-items:center;gap:4px"><button class="vocab-play-ex" data-vex="${esc(examples[0])}" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0;flex-shrink:0">🔊</button>${esc(examples[0].slice(0,80))}</div>`:""}`;
+          ${examples[0]?`<div style="font-size:11px;color:#94a3b8;margin-top:2px;display:flex;align-items:center;gap:4px"><button class="vocab-play-ex" data-vex="${esc(examples[0])}" data-vid="${w.id}" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0;flex-shrink:0">🔊</button>${esc(examples[0].slice(0,80))}</div>`:""}`;
       } else {
         detailHtml = meanings.map((m,i) => `<div style="font-size:12px;margin-top:${i?4:0}px">
           <span style="color:#818cf8">${"❶❷❸❹❺"[i]||"•"} ${esc(m)}</span>
-          ${examples[i]?`<span style="color:#94a3b8;font-size:11px"> — <button class="vocab-play-ex" data-vex="${esc(examples[i])}" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0;display:inline">🔊</button>${esc(examples[i].slice(0,60))}</span>`:""}
+          ${examples[i]?`<span style="color:#94a3b8;font-size:11px"> — <button class="vocab-play-ex" data-vex="${esc(examples[i])}" data-vid="${w.id}" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0;display:inline">🔊</button>${esc(examples[i].slice(0,60))}</span>`:""}
         </div>`).join("");
       }
       return `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);display:flex;align-items:start;gap:6px">
-        <button class="vocab-play" data-vword="${esc(w.word)}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;flex-shrink:0">🔊</button>
+        <button class="vocab-play" data-vword="${esc(w.word)}" data-vid="${w.id}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;flex-shrink:0">🔊</button>
         <div style="flex:1">
           <div style="font-size:14px;color:#e2e8f0;font-weight:600">${esc(w.word)} <span style="font-size:10px;color:${posColor};font-weight:400">${posLabel}</span></div>
           ${detailHtml}
@@ -2335,25 +2354,51 @@ async function renderVocab() {
   document.querySelectorAll("[data-vdel]").forEach(el=>{
     el.onclick=async()=>{ await vocabDelete(parseInt(el.dataset.vdel)); render(); };
   });
-  // Pronunciation buttons - words
+  // Play audio from base64 Opus (if stored), else fallback to Gemini TTS
+  async function playVocabAudio(btn, originalLabel, storedAudio, fallbackText) {
+    btn.textContent = "⏳";
+    if (storedAudio) {
+      try {
+        const bin = atob(storedAudio);
+        const bytes = new Uint8Array(bin.length);
+        for (let i=0; i<bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], {type: "audio/webm;codecs=opus"});
+        const url = URL.createObjectURL(blob);
+        const a = new Audio(url);
+        a.onended = () => { URL.revokeObjectURL(url); btn.textContent = originalLabel; };
+        a.onerror = () => { URL.revokeObjectURL(url); btn.textContent = originalLabel; };
+        await a.play();
+        return;
+      } catch(e) {
+        console.warn("Stored audio playback failed, falling back to Gemini:", e);
+      }
+    }
+    // Fallback: Gemini TTS
+    if (!fallbackText) { btn.textContent = originalLabel; return; }
+    try { speakGemini(fallbackText, () => { btn.textContent = originalLabel; }); }
+    catch(e) { btn.textContent = originalLabel; }
+    setTimeout(() => { btn.textContent = originalLabel; }, 500);
+  }
+  // Pronunciation buttons - words (prefer stored audio)
   document.querySelectorAll(".vocab-play").forEach(btn=>{
     btn.onclick=async()=>{
-      const word=btn.dataset.vword;
+      const word = btn.dataset.vword;
+      const wid = parseInt(btn.dataset.vid);
       if(!word)return;
-      btn.textContent="⏳";
-      try { await speakGemini(word, ()=>{ btn.textContent="🔊"; }); btn.textContent="🔊"; }
-      catch(e){ btn.textContent="🔊"; }
+      // Lookup stored audio from DB
+      const w = words.find(w => w.id === wid);
+      await playVocabAudio(btn, "🔊", w?.audio || "", word);
     };
   });
-  // Pronunciation buttons - examples
+  // Pronunciation buttons - examples (prefer stored audio)
   document.querySelectorAll(".vocab-play-ex").forEach(btn=>{
     btn.onclick=async(e)=>{
       e.stopPropagation();
-      const ex=btn.dataset.vex;
+      const ex = btn.dataset.vex;
+      const wid = parseInt(btn.dataset.vid);
       if(!ex)return;
-      btn.textContent="⏳";
-      try { await speakGemini(ex, ()=>{ btn.textContent="🔊"; }); btn.textContent="🔊"; }
-      catch(e2){ btn.textContent="🔊"; }
+      const w = words.find(w => w.id === wid);
+      await playVocabAudio(btn, "🔊", w?.exampleAudio || "", ex);
     };
   });
   $("vocabBackBtn").onclick=()=>{S.screen="home";render();};
@@ -2437,7 +2482,7 @@ async function renderVocabQuiz() {
   if (q.answered !== null) {
     const ex = (q.target.context||"").split("\n")[0] || "";
     html += `<div style="margin-top:12px;padding:12px;background:rgba(129,140,248,0.08);border-radius:10px">`;
-    html += `<div style="font-size:14px;font-weight:600;color:#e2e8f0">${esc(q.target.word)} — <span style="color:#818cf8">${esc(q.tMeaning)}</span></div>`;
+    html += `<div style="font-size:14px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:6px"><button class="btn-s" id="quizPlayWord2" style="font-size:11px;padding:2px 8px">🔊</button>${esc(q.target.word)} — <span style="color:#818cf8">${esc(q.tMeaning)}</span></div>`;
     if (ex) html += `<div style="font-size:12px;color:#94a3b8;margin-top:4px">💬 ${esc(ex)}</div>`;
     html += `<button class="btn-s" id="quizPlayEx" style="margin-top:6px;font-size:11px">🔊 例文を聴く</button>`;
     html += `</div>`;
@@ -2458,17 +2503,62 @@ async function renderVocabQuiz() {
       render();
     };
   });
-  const pw=$("quizPlayWord"); if(pw)pw.onclick=async()=>{
-    pw.textContent="⏳";
-    try { await speakGemini(q.target.word, ()=>{pw.textContent="🔊 発音";}); pw.textContent="🔊 発音"; }
-    catch(e){pw.textContent="🔊 発音";}
+  // Word pronunciation buttons (both the top one for en_ja mode and the answer-block one)
+  const playWord = async (btn, originalText) => {
+    const word = q.target.word;
+    const storedAudio = q.target.audio || "";
+    if (!word) { alert("単語がありません"); return; }
+    btn.textContent="⏳";
+    if (storedAudio) {
+      try {
+        const bin = atob(storedAudio);
+        const bytes = new Uint8Array(bin.length);
+        for (let i=0; i<bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], {type:"audio/webm;codecs=opus"});
+        const url = URL.createObjectURL(blob);
+        const a = new Audio(url);
+        a.onended = () => { URL.revokeObjectURL(url); btn.textContent = originalText; };
+        a.onerror = () => { URL.revokeObjectURL(url); btn.textContent = originalText; };
+        await a.play();
+        return;
+      } catch(e) { console.warn("stored audio fail:", e); }
+    }
+    if (!S.apiKey) { alert("APIキーが設定されていません"); btn.textContent=originalText; return; }
+    try {
+      speakGemini(word, (err)=>{ if(err)alert("音声エラー: "+err); btn.textContent=originalText; });
+      setTimeout(()=>{btn.textContent=originalText;}, 500);
+    } catch(e) {
+      btn.textContent = originalText;
+    }
   };
-  const pe=$("quizPlayEx"); if(pe)pe.onclick=async()=>{
+  const pw = $("quizPlayWord");
+  if (pw) pw.onclick = () => playWord(pw, "🔊 発音");
+  const pw2 = $("quizPlayWord2");
+  if (pw2) pw2.onclick = () => playWord(pw2, "🔊");
+  const pe = $("quizPlayEx");
+  if (pe) pe.onclick = async () => {
     const ex = (q.target.context||"").split("\n")[0];
     if(!ex) return;
+    const storedAudio = q.target.exampleAudio || "";
     pe.textContent="⏳";
-    try { await speakGemini(ex, ()=>{pe.textContent="🔊 例文を聴く";}); pe.textContent="🔊 例文を聴く"; }
-    catch(e){pe.textContent="🔊 例文を聴く";}
+    if (storedAudio) {
+      try {
+        const bin = atob(storedAudio);
+        const bytes = new Uint8Array(bin.length);
+        for (let i=0; i<bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], {type:"audio/webm;codecs=opus"});
+        const url = URL.createObjectURL(blob);
+        const a = new Audio(url);
+        a.onended = () => { URL.revokeObjectURL(url); pe.textContent="🔊 例文を聴く"; };
+        a.onerror = () => { URL.revokeObjectURL(url); pe.textContent="🔊 例文を聴く"; };
+        await a.play();
+        return;
+      } catch(e) { console.warn("stored example audio fail:", e); }
+    }
+    try {
+      speakGemini(ex, ()=>{ pe.textContent="🔊 例文を聴く"; });
+      setTimeout(()=>{pe.textContent="🔊 例文を聴く";}, 500);
+    } catch(e) { pe.textContent="🔊 例文を聴く"; }
   };
   const nb=$("quizNext"); if(nb)nb.onclick=()=>{ S.vocabQuizQ=null; render(); };
   const bb=$("quizBackBtn"); if(bb)bb.onclick=()=>{ S.screen="vocab"; render(); };
@@ -2634,7 +2724,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16 · vocab auto-save · listen mode</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16d · vocab audio cache</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
