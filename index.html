@@ -471,6 +471,7 @@ IMPORTANT: Audio speed, conversation length, and document length are IDENTICAL t
 ${lvGuide}
 Respond with valid JSON ONLY — no markdown, no backticks, no extra text.
 ENGLISH EXPLANATION: For each question, ALSO include an "explanation_en" field — a SHORT 1-2 sentence explanation in English (max 25 words) summarizing WHY the correct answer is right. Concise, spoken-English style. This is separate from explanation_ja (which stays detailed in Japanese).
+CONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointing to the correct choice. The "explanation_ja" and "explanation_en" MUST refer to the SAME letter as "correct" (correct=0→A, correct=1→B, correct=2→C, correct=3→D). NEVER write "正解は(C)" if correct=3. ALWAYS verify the correct letter matches before responding.
 VOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence). Choose words KEY to solving the question.`;
   const t = typeObj || {};
 
