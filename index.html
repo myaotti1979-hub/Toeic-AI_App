@@ -234,13 +234,20 @@ async function geminiText(prompt, model) {
 /* ──────────────────────────────────────────────
    GEMINI IMAGE API
 ────────────────────────────────────────────── */
-async function generateImage(scene) {
+async function generateImage(scene, opts={}) {
+  // opts.isGraphic=true → use 1K size (tables/maps need readable detail)
+  // default Part 1 photos → 512 (small in actual test)
+  const isGraphic = !!opts.isGraphic;
+  const imageSize = isGraphic ? "1K" : "512";
+  const promptText = isGraphic
+    ? `Clean business graphic for a TOEIC test: ${scene}. Simple, professional style. Clear readable text. White background.`
+    : `TOEIC test photograph: ${scene}. Realistic, no text overlay.`;
   const res = await throttledFetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${S.apiKey}`,
     { method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({
-        contents:[{role:"user",parts:[{text:`TOEIC test photograph: ${scene}. Realistic, no text overlay.`}]}],
-        generationConfig:{responseModalities:["TEXT","IMAGE"],imageConfig:{imageSize:"1K"}},
+        contents:[{role:"user",parts:[{text:promptText}]}],
+        generationConfig:{responseModalities:["TEXT","IMAGE"],imageConfig:{imageSize}},
       }) }
   );
   if (!res.ok) throw new Error(`ImgAPI ${res.status}: ${(await res.text()).slice(0,100)}`);
@@ -248,6 +255,19 @@ async function generateImage(scene) {
   const img = (d.candidates?.[0]?.content?.parts||[]).find(p=>p.inlineData);
   if (!img) throw new Error("画像データなし");
   return `data:${img.inlineData.mimeType};base64,${img.inlineData.data}`;
+}
+
+// Build description string for graphic image generation (same logic as Streamlit)
+function buildGraphicDesc(qSet) {
+  if (!qSet || !qSet.graphic) return null;
+  const g = qSet.graphic;
+  let desc = `${g.title || "Business document"}. `;
+  if (g.headers && g.rows && g.rows.length) {
+    desc += `Table with columns: ${g.headers.join(", ")}. `;
+    const sampleRows = g.rows.slice(0, 3).map(r => r.join(", ")).join("; ");
+    desc += `Rows: ${sampleRows}. `;
+  }
+  return desc;
 }
 
 /* ──────────────────────────────────────────────
@@ -1196,10 +1216,18 @@ async function stockSave(part, level, qSet, imgUrl) {
     console.warn(`[STOCK REJECT] part1: photograph question without image`);
     throw new Error(`part1 requires an image but none generated`);
   }
-  // Rule 3: Graphic questions (Part 3/4/7 with graphic field) require image
-  if (qSet && qSet.graphic && !imgUrl) {
-    console.warn(`[STOCK REJECT] ${part}: graphic question without image`);
-    throw new Error(`${part} graphic question requires image`);
+  // Rule 3: Graphic questions require BOTH image AND table data.
+  // Some graphics (maps, floor plans) can't be rendered as tables, so image is mandatory.
+  if (qSet && qSet.graphic) {
+    if (!imgUrl) {
+      console.warn(`[STOCK REJECT] ${part}: graphic question without image`);
+      throw new Error(`${part} graphic question requires an image`);
+    }
+    const g = qSet.graphic;
+    if (!g.headers || !g.rows || !g.rows.length) {
+      console.warn(`[STOCK REJECT] ${part}: graphic missing headers/rows`);
+      throw new Error(`${part} graphic question missing table data`);
+    }
   }
   // Rule 4: questions list non-empty
   if (!qSet || !qSet.questions || qSet.questions.length === 0) {
@@ -1246,12 +1274,25 @@ async function stockGetAll(part) {
 }
 
 // Validation helper (matches stockSave rules)
+// Rules:
+// - Listening parts (1-4) MUST have audio
+// - Part 1 MUST have image
+// - Graphic questions MUST have image (maps, floor plans, etc. can't be rendered as table)
+// - Graphic data (headers+rows) is also required for table display alongside image
+// - questions list non-empty
 function validateStockItem(item) {
   if (!item || !item.part) return {ok:false, reason:"no part"};
   const isListening = ["part1","part2","part3","part4"].includes(item.part);
   if (isListening && !item.audioOpus) return {ok:false, reason:"listening without audio"};
   if (item.part === "part1" && !item.imgUrl) return {ok:false, reason:"part1 without image"};
-  if (item.qSet && item.qSet.graphic && !item.imgUrl) return {ok:false, reason:"graphic without image"};
+  // Graphic questions: require BOTH image AND graphic data
+  if (item.qSet && item.qSet.graphic) {
+    if (!item.imgUrl) return {ok:false, reason:"graphic without image"};
+    const g = item.qSet.graphic;
+    if (!g.headers || !g.rows || !g.rows.length) {
+      return {ok:false, reason:"graphic missing headers/rows"};
+    }
+  }
   if (!item.qSet || !item.qSet.questions || item.qSet.questions.length === 0) return {ok:false, reason:"no questions"};
   return {ok:true};
 }
@@ -1687,8 +1728,16 @@ async function generateOneQuestion(sessionIdx) {
   const qs = await generateQuestionSet(usePartOverride, typeObj);
   let imgUrl=null, imgErr=null;
   if (S.part==="part1" && qs.scene) {
+    // Part 1 photograph
     try { imgUrl = await generateImage(qs.scene); }
     catch(e) { imgErr = e.message; }
+  } else if (qs.graphic) {
+    // Graphic question (Part 3/4/7) — maps, floor plans, charts need actual images
+    const desc = buildGraphicDesc(qs);
+    if (desc) {
+      try { imgUrl = await generateImage(desc, {isGraphic: true}); }
+      catch(e) { imgErr = e.message; }
+    }
   }
   return {qs, imgUrl, imgErr};
 }
@@ -3111,6 +3160,11 @@ async function mockStockImport(items) {
       console.warn("[MOCK IMPORT] Rejecting Part 1 without image");
       rejected++; continue;
     }
+    // Reject graphic questions without image (maps/floorplans can't be tables)
+    if (item.qSet && item.qSet.graphic && !item.imgUrl) {
+      console.warn("[MOCK IMPORT] Rejecting graphic question without image");
+      rejected++; continue;
+    }
     const ts = item.createdAt || Date.now();
     if (seen.has(ts)) { skipped++; continue; }
     seen.add(ts);
@@ -3355,7 +3409,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16q · image 512 + faster retries</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16t · graphic images RESTORED (HTML + Streamlit)</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
