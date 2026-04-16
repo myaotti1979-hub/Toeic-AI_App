@@ -1828,6 +1828,7 @@ function render() {
   else if (S.screen==="vocab") renderVocab();
   else if (S.screen==="vocabQuiz") renderVocabQuiz();
   else if (S.screen==="listenPlay") renderListenPlay();
+  else if (S.screen==="listenSetup") renderListenSetup();
   else                          renderStudy();
 }
 
@@ -2564,6 +2565,65 @@ async function renderVocabQuiz() {
   const bb=$("quizBackBtn"); if(bb)bb.onclick=()=>{ S.screen="vocab"; render(); };
 }
 
+/* ── 流し聞き設定画面 ── */
+function renderListenSetup() {
+  const stocks = S.listenAllStocks || [];
+  const byPart = {part2:[], part3:[], part4:[]};
+  for (const s of stocks) if (byPart[s.part]) byPart[s.part].push(s);
+  const sel = S.listenSetup || {part:"all", random:true, count:20};
+
+  const partBtn = (id, label) => {
+    const n = id==="all" ? stocks.length : (byPart[id]||[]).length;
+    const active = sel.part===id;
+    const disabled = n===0 && id!=="all";
+    return `<button class="btn-s" data-lpart="${id}" ${disabled?"disabled":""} style="flex:1;background:${active?"rgba(129,140,248,0.25)":"rgba(255,255,255,0.03)"};color:${active?"#818cf8":"#94a3b8"};border-color:${active?"rgba(129,140,248,0.5)":"rgba(255,255,255,0.1)"}">${label}<br><span style="font-size:10px;opacity:0.7">${n}問</span></button>`;
+  };
+
+  app.innerHTML = `
+    <div class="header"><h1 style="font-size:20px">🎧 流し聞き設定</h1></div>
+    <div style="margin:16px 0"><div style="font-size:12px;color:#94a3b8;margin-bottom:6px">パート選択</div>
+      <div style="display:flex;gap:6px">${partBtn("all","All")}${partBtn("part2","Part 2")}${partBtn("part3","Part 3")}${partBtn("part4","Part 4")}</div>
+    </div>
+    <div style="margin:16px 0"><div style="font-size:12px;color:#94a3b8;margin-bottom:6px">再生順</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn-s" id="lsRandom" style="flex:1;background:${sel.random?"rgba(244,114,182,0.25)":"rgba(255,255,255,0.03)"};color:${sel.random?"#f472b6":"#94a3b8"};border-color:${sel.random?"rgba(244,114,182,0.5)":"rgba(255,255,255,0.1)"}">🔀 ランダム</button>
+        <button class="btn-s" id="lsSeq" style="flex:1;background:${!sel.random?"rgba(129,140,248,0.25)":"rgba(255,255,255,0.03)"};color:${!sel.random?"#818cf8":"#94a3b8"};border-color:${!sel.random?"rgba(129,140,248,0.5)":"rgba(255,255,255,0.1)"}">📋 順番通り</button>
+      </div>
+    </div>
+    <div style="margin:16px 0"><div style="font-size:12px;color:#94a3b8;margin-bottom:6px">問題数</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${[5,10,20,30,50,100].map(n=>`<button class="btn-s" data-lcount="${n}" style="flex:1;min-width:50px;background:${sel.count===n?"rgba(129,140,248,0.25)":"rgba(255,255,255,0.03)"};color:${sel.count===n?"#818cf8":"#94a3b8"}">${n}問</button>`).join("")}
+      </div>
+    </div>
+    <button class="btn-p" id="listenStartBtn" style="margin-top:20px">🎧 再生開始</button>
+    <button class="btn-s" id="listenCancelBtn" style="margin:12px auto;display:block">← ホームに戻る</button>`;
+
+  S.listenSetup = sel;
+
+  document.querySelectorAll("[data-lpart]").forEach(b=>{
+    b.onclick=()=>{S.listenSetup.part=b.dataset.lpart; render();};
+  });
+  $("lsRandom").onclick=()=>{S.listenSetup.random=true; render();};
+  $("lsSeq").onclick=()=>{S.listenSetup.random=false; render();};
+  document.querySelectorAll("[data-lcount]").forEach(b=>{
+    b.onclick=()=>{S.listenSetup.count=parseInt(b.dataset.lcount); render();};
+  });
+  $("listenStartBtn").onclick=()=>{
+    let pool = sel.part==="all" ? stocks : (byPart[sel.part]||[]);
+    if (pool.length===0) { alert("選択したパートにストックがありません"); return; }
+    pool = [...pool];
+    if (sel.random) pool.sort(()=>Math.random()-0.5);
+    else pool.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+    pool = pool.slice(0, sel.count);
+    S.listenPlaylist = pool;
+    S.listenIdx = 0;
+    S.listenMode = true;
+    S.screen = "listenPlay";
+    render();
+  };
+  $("listenCancelBtn").onclick=()=>{S.screen="home"; render();};
+}
+
 /* ── 流し聞きプレイヤー ── */
 async function renderListenPlay() {
   const playlist = S.listenPlaylist || [];
@@ -2604,7 +2664,14 @@ async function renderListenPlay() {
   async function speak(text, onEnd) {
     return new Promise(resolve=>{
       if(stopped){resolve();return;}
+      // speakGemini calls onEnd only when playback actually ends
       speakGemini(text, (err)=>{ resolve(); });
+    });
+  }
+  async function speakConvWait(text, speakers) {
+    return new Promise(resolve=>{
+      if(stopped){resolve();return;}
+      speakConv(text, (err)=>{ resolve(); }, speakers);
     });
   }
   async function wait(ms) {
@@ -2614,6 +2681,26 @@ async function renderListenPlay() {
     });
   }
 
+  // Play stored stock audio (Opus base64 → blob → Audio). Returns true if played.
+  async function playStoredStock(item) {
+    const audioData = item.audioOpus;
+    if (!audioData) return false;
+    try {
+      const bin = atob(audioData);
+      const bytes = new Uint8Array(bin.length);
+      for (let i=0; i<bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], {type:"audio/webm;codecs=opus"});
+      const url = URL.createObjectURL(blob);
+      return new Promise(resolve => {
+        const a = new Audio(url);
+        _curAudio = a;
+        a.onended = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(true); };
+        a.onerror = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(false); };
+        a.play().catch(e => { URL.revokeObjectURL(url); resolve(false); });
+      });
+    } catch(e) { console.warn("stored stock audio fail:", e); return false; }
+  }
+
   // Play sequence
   try {
     // 1. Announce
@@ -2621,15 +2708,19 @@ async function renderListenPlay() {
     await speak(`Question ${idx+1}.`);
     if(stopped) return;
 
-    // 2. Main audio
+    // 2. Main audio (prefer stored Opus audio, fallback to live TTS)
     const audioText = qs.audio || qs.spoken || qs.talk || qs.conversation || "";
     if(audioText) {
       textEl.textContent = audioText.replace(/\\n/g,"\n");
       statusEl.textContent="🔊 問題再生中...";
-      if(item.part==="part3") {
-        await speakConv(audioText, ()=>{}, qs.speakers);
-      } else {
-        await speak(audioText);
+      const played = await playStoredStock(item);
+      if (!played) {
+        // Fallback to live generation
+        if(item.part==="part3") {
+          await speakConvWait(audioText, qs.speakers);
+        } else {
+          await speak(audioText);
+        }
       }
     }
     if(stopped) return;
@@ -2724,7 +2815,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16d · vocab audio cache</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16e · listen setup + stored audio</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
@@ -2776,12 +2867,8 @@ function renderHome() {
     const allStocks = await stockGetAll();
     const listenStocks = allStocks.filter(s=>["part2","part3","part4"].includes(s.part));
     if(listenStocks.length===0){alert("Listening問題のストックがありません。Part 2/3/4のストックを作成してください。");return;}
-    // Shuffle and start
-    listenStocks.sort(()=>Math.random()-0.5);
-    S.listenPlaylist = listenStocks;
-    S.listenIdx = 0;
-    S.listenMode = true;
-    S.screen = "listenPlay";
+    S.screen = "listenSetup";
+    S.listenAllStocks = listenStocks;
     render();
   };
   const scNum=$("stockCreateNum"); if(scNum) scNum.onchange=()=>{ S.stockCreateTarget=parseInt(scNum.value); };
@@ -2950,6 +3037,7 @@ function renderStudy() {
     if (answered) {
       inner+=`<div class="expl ${isOk?"ok":"ng"}">
         <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":"😥 不正解..."}</div>
+        ${q.explanation_en?`<div style="font-size:12px;color:#94a3b8;font-style:italic;margin-bottom:6px">💡 ${esc(q.explanation_en)}</div>`:""}
         <div class="det">${esc(q.explanation_ja||"")}</div>
       </div>`;
       // 和訳トグル（解説の直後に表示 — Part 3,4,6,7）
