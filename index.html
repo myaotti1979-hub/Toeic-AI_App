@@ -481,7 +481,7 @@ IMPORTANT: Audio speed, conversation length, and document length are IDENTICAL t
   }[level];
   const sys = `You are an expert TOEIC test maker following the official 2018-revised format precisely.
 ${lvGuide}
-Respond with valid JSON ONLY — no markdown, no backticks, no extra text.
+Respond with EXACTLY ONE JSON object ONLY — no arrays, no wrapping, no markdown, no backticks, no extra text. DO NOT wrap the output in {"part1":[...]} or similar. DO NOT produce multiple questions. Output ONLY a single {...} object matching the template below.
 ENGLISH EXPLANATION: For each question, ALSO include an "explanation_en" field — a SHORT 1-2 sentence explanation in English (max 25 words) summarizing WHY the correct answer is right. Concise, spoken-English style. This is separate from explanation_ja (which stays detailed in Japanese).
 CONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointing to the correct choice. The "explanation_ja" and "explanation_en" MUST refer to the SAME letter as "correct" (correct=0→A, correct=1→B, correct=2→C, correct=3→D). NEVER write "正解は(C)" if correct=3. ALWAYS verify the correct letter matches before responding.
 VOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence). Choose words KEY to solving the question.`;
@@ -710,7 +710,30 @@ REQUIRED SET TYPE: **${t.type||"varied"}** — ${t.desc||"three related business
 ────────────────────────────────────────────── */
 function parseJSON(text) {
   const t = text.replace(/```json|```/g,"").trim();
-  try { return JSON.parse(t); } catch(e) {
+  function unwrap(result) {
+    // [obj, ...] → obj
+    if (Array.isArray(result)) {
+      if (result.length === 0) throw new Error("Empty array");
+      console.warn("[PARSE] Array response, using first");
+      return result[0];
+    }
+    // {"part1": [obj]} or {"part1": obj} → obj
+    if (result && typeof result === "object") {
+      const keys = Object.keys(result);
+      const partKeys = keys.filter(k => /^part[1-7][a-z_]*$/.test(k));
+      if (partKeys.length > 0 && partKeys.length === keys.length) {
+        const inner = result[partKeys[0]];
+        console.warn(`[PARSE] Nested {${partKeys[0]}: ...}, unwrapping`);
+        if (Array.isArray(inner)) {
+          if (inner.length === 0) throw new Error("Empty nested array");
+          return inner[0];
+        }
+        return inner;
+      }
+    }
+    return result;
+  }
+  try { return unwrap(JSON.parse(t)); } catch(e) {
     // Fix common issues: unescaped newlines inside strings
     try {
       let out="", inStr=false, esc2=false;
@@ -725,7 +748,7 @@ function parseJSON(text) {
         }
         out+=c;
       }
-      return JSON.parse(out);
+      return unwrap(JSON.parse(out));
     } catch(e2) { throw new Error(`JSON解析エラー: ${e.message}`); }
   }
 }
@@ -3332,7 +3355,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16n · unified validation + purge tools</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16o · nested JSON tolerance + anti-array prompt</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
