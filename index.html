@@ -508,7 +508,7 @@ ${level==="beginner"?`- Use ONLY simple present continuous active voice: "A man 
 - Use advanced vocabulary: scaffolding, docked, paved, stacked, mounted, overlooking
 - Scene: complex scene with multiple people/objects where details matter`}
 
-{"scene":"vivid description for image generation, 20-30 words","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"各誤答のトラップタイプを明記して解説","audio":"(A) statement. (B) statement. (C) statement. (D) statement."}`,
+{"scene":"vivid description for image generation, 20-30 words","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"各誤答のトラップタイプを明記して解説"}`,
 
     part2: () => `${sys}
 Create a TOEIC Part 2 (Question-Response) question.
@@ -540,7 +540,7 @@ CRITICAL — CORRECT ANSWER STYLE: The correct answer should frequently be INDIR
 DISTRACTORS — use at least ONE trap in wrong answers:
   * Repeated word in wrong context * Similar sound (meet/meat, file/while) * Related topic but wrong answer * Wrong tense
 
-{"spoken":"Natural question or statement 5-15 words","choices":["(A) response.","(B) response.","(C) response."],"correct":0,"explanation_ja":"【出題: ${t.type||"?"}】\n和訳: (spoken の日本語訳)\n正解理由と各誤答のトラップタイプを解説","audio":"[spoken]. (A) [response]. (B) [response]. (C) [response]."}`,
+{"spoken":"Natural question or statement 5-15 words","choices":["(A) response.","(B) response.","(C) response."],"correct":0,"explanation_ja":"【出題: ${t.type||"?"}】\n和訳: (spoken の日本語訳)\n正解理由と各誤答のトラップタイプを解説"}`,
 
     part3: () => `${sys}
 Create a TOEIC Part 3 (Conversations) question set.
@@ -570,7 +570,7 @@ ${level==="beginner"?`- Questions: all 3 should be straightforward detail questi
 - Example: "What is implied about the company?" (not directly stated, must infer from context)
 - Vocabulary: sophisticated business language, idiomatic expressions`}
 
-{"conversation":"Man: first line...\\nWoman: response...\\nMan: next...\\nWoman: next...\\nMan: next...\\nWoman: final line...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"audio":"Man: first line... Woman: response...","questions":[{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"..."},{"question":"What does the woman mean when she says, \\"[quote]\\"?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"..."},{"question":"What will the man most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"..."}]}`,
+{"conversation":"Man: first line...\\nWoman: response...\\nMan: next...\\nWoman: next...\\nMan: next...\\nWoman: final line...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"..."},{"question":"What does the woman mean when she says, \\"[quote]\\"?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"..."},{"question":"What will the man most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"..."}]}`,
 
     part3_3p: () => `${sys}
 Create a TOEIC Part 3 (Conversations) with EXACTLY 3 speakers.
@@ -583,7 +583,7 @@ GENDER RULES — STRICTLY ENFORCED:
 - In questions: "the man" or "Man 1/2" = male speaker. "the woman" or "Woman 1/2" = female speaker. NEVER swap.
 - In translation_ja: "Man 1:" = "男性1:", "Man 2:" = "男性2:", "Woman:" = "女性:". NEVER swap.
 
-{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...","speakers":["Man 1","Man 2","Woman"],"audio":"Man 1: ... Woman: ... Man 2: ...","questions":[{"question":"What are the speakers mainly discussing?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"..."},{"question":"What does Man 2 suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"..."},{"question":"What will the woman most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"..."}]}`,
+{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...\\nWoman: ...\\nMan 2: ...\\nMan 1: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{"question":"What are the speakers mainly discussing?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"..."},{"question":"What does Man 2 suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"..."},{"question":"What will the woman most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"..."}]}`,
 
     part4: () => `${sys}
 Create a TOEIC Part 4 (Talks) question set.
@@ -603,7 +603,7 @@ ${level==="beginner"?`- Questions: main purpose + 2 detail questions directly an
 - Distractors include information that is partially mentioned but doesn't answer the question`}
 ${t.type&&t.type.startsWith("graphic")?"- IMPORTANT: Include a 'graphic' object with 'title' (string), 'headers' (array of column names), and 'rows' (array of row arrays). The talk MUST reference information in this graphic. One question MUST begin with 'Look at the graphic.'":""}
 
-{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳をここに書く","talk_type":"${t.type||"talk"}","audio":"[same full text as talk]","questions":[{"question":"What is the purpose of the message?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"和訳と解説"},{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"和訳と解説"},{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"和訳と解説"}]}`,
+{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳をここに書く","talk_type":"${t.type||"talk"}","questions":[{"question":"What is the purpose of the message?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"和訳と解説","explanation_en":"Short 1-2 sentence English explanation"},{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"和訳と解説","explanation_en":"Short English"},{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"和訳と解説","explanation_en":"Short English"}]}`,
 
     part5: () => `${sys}
 Create a TOEIC Part 5 (Incomplete Sentences) question.
@@ -734,17 +734,25 @@ function normalizeSet(raw, part) {
   // Normalize all parts into unified {part, questions:[], audio?, content fields}
   switch(part) {
     case "part1": {
-      const audio = raw.audio || raw.choices.map((c,i)=>`${["A","B","C","D"][i]}. ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
+      // ALWAYS rebuild audio from choices to avoid LLM placeholder bugs
+      const audio = raw.choices.map((c,i)=>`(${["A","B","C","D"][i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
+      if (raw.audio && (raw.audio.includes("[") && raw.audio.includes("]"))) {
+        console.warn("Part1: LLM audio contained placeholders, using reconstructed");
+      }
       return { part, scene:raw.scene, audio,
-        questions:[{question:"Which statement best describes the photograph?", choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja}], vocab:raw.vocab||[] };
+        questions:[{question:"Which statement best describes the photograph?", choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
     }
     case "part2": {
-      const audio = raw.audio || `${raw.spoken}. ${raw.choices.map((c,i)=>`${["A","B","C"][i]}. ${c.replace(/^\([A-C]\)\s*/,"")}`).join(". ")}`;
+      // ALWAYS rebuild audio from spoken + choices
+      const audio = `${raw.spoken}. ${raw.choices.map((c,i)=>`(${["A","B","C"][i]}) ${c.replace(/^\([A-C]\)\s*/,"")}`).join(". ")}`;
+      if (raw.audio && (raw.audio.includes("[") && raw.audio.includes("]"))) {
+        console.warn("Part2: LLM audio contained placeholders, using reconstructed");
+      }
       return { part, spoken:raw.spoken, audio,
-        questions:[{question:raw.spoken, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja}], vocab:raw.vocab||[] };
+        questions:[{question:raw.spoken, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
     }
     case "part3": {
-      // Gender validation: check conversation lines match speaker labels
+      // Gender validation
       const conv = raw.conversation || "";
       const lines = conv.split(/\\n|\n/);
       for (const line of lines) {
@@ -752,7 +760,6 @@ function normalizeSet(raw, part) {
         if (m) {
           const label = m[1].toLowerCase();
           const text = m[2];
-          // Check for obvious gender mismatches
           if (label === "man" && /\bI'm\s+(?:Ms\.|Mrs\.|she|her name is)\b/i.test(text)) {
             console.warn("⚠️ Part 3 gender mismatch: Man line contains female reference:", text.slice(0,60));
           }
@@ -761,19 +768,32 @@ function normalizeSet(raw, part) {
           }
         }
       }
-      // Fix translation_ja labels if swapped
       let tja = raw.translation_ja || null;
       if (tja) {
         tja = tja.replace(/女性(\s*\d?\s*):(.+?)(?=男性|女性|$)/g, (m, n, t) => `女性${n}:${t}`);
         tja = tja.replace(/男性(\s*\d?\s*):(.+?)(?=男性|女性|$)/g, (m, n, t) => `男性${n}:${t}`);
       }
-      return { part, conversation:conv, translation_ja:tja, audio:raw.audio||conv, speakers:raw.speakers||["Man","Woman"], graphic:raw.graphic||null, vocab:raw.vocab||[], questions:raw.questions };
+      // ALWAYS use conversation as audio (ignore LLM's audio field to avoid placeholders)
+      if (raw.audio && raw.audio.trim() !== conv.trim()) {
+        if (raw.audio.includes("[") || raw.audio.length < conv.length * 0.5) {
+          console.warn("Part3: LLM audio differs from conversation, using conversation");
+        }
+      }
+      return { part, conversation:conv, translation_ja:tja, audio:conv, speakers:raw.speakers||["Man","Woman"], graphic:raw.graphic||null, vocab:raw.vocab||[], questions:raw.questions };
     }
-    case "part4":
-      return { part, talk:raw.talk, translation_ja:raw.translation_ja||null, talk_type:raw.talk_type||"", audio:raw.audio||raw.talk, graphic:raw.graphic||null, vocab:raw.vocab||[], questions:raw.questions };
+    case "part4": {
+      // ALWAYS use talk as audio
+      const talk = raw.talk || "";
+      if (raw.audio && raw.audio.trim() !== talk.trim()) {
+        if (raw.audio.includes("[") || raw.audio.length < talk.length * 0.5) {
+          console.warn("Part4: LLM audio differs from talk, using talk");
+        }
+      }
+      return { part, talk, translation_ja:raw.translation_ja||null, talk_type:raw.talk_type||"", audio:talk, graphic:raw.graphic||null, vocab:raw.vocab||[], questions:raw.questions };
+    }
     case "part5":
       return { part,
-        questions:[{question:raw.sentence, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja}], vocab:raw.vocab||[] };
+        questions:[{question:raw.sentence, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
     case "part6":
       return { part, doc_type:raw.doc_type||"", header:raw.header||null, text:raw.text, translation_ja:raw.translation_ja||null, vocab:raw.vocab||[], questions:raw.questions };
     case "part7":
@@ -1140,6 +1160,13 @@ function openStockDB() {
 }
 
 async function stockSave(part, level, qSet, imgUrl) {
+  // Listening parts (1-4) require audio. Reject if no audio available.
+  const isListening = part && ["part1","part2","part3","part4"].includes(part);
+  const hasAudio = !!(qSet._audioOpus || qSet._audioPcm);
+  if (isListening && !hasAudio) {
+    console.warn(`[SKIP] ${part}: listening question without audio - not saving to stock`);
+    throw new Error(`${part} requires audio but none generated`);
+  }
   const db = await openStockDB();
   const data = {
     part, level,
@@ -1714,14 +1741,23 @@ function triggerAutoStock() {
 // ストック作成: 自動保存して次へ
 async function autoStockAndNext() {
   if (!S.stockCreateMode || S.stockCreatePaused || !S.qSet) return;
+  let saved = false;
   try {
     await stockSave(S.part, S.level, S.qSet, S.sceneImgUrl);
+    saved = true;
     // Auto-save vocab from this question set
     if (S.qSet.vocab && S.qSet.vocab.length) {
       await vocabAutoSave(S.qSet.vocab, S.part).catch(e=>console.warn('vocab auto-save failed:', e));
     }
     S.stockCreateCount = (S.stockCreateCount||0) + 1;
-  } catch(e) { console.error("auto-stock error:", e); }
+  } catch(e) {
+    // Listening audio missing = expected skip, not an error
+    if (e.message && e.message.includes("requires audio")) {
+      console.warn(`[SKIP] ${S.part}: no audio generated, retrying with new question`);
+    } else {
+      console.error("auto-stock error:", e);
+    }
+  }
   // 目標達成チェック
   if (S.stockCreateCount >= S.stockCreateTarget) {
     stopSpeak(); S.stockCreateMode=false; S.graphicMode=false; S.screen="home";
@@ -2881,7 +2917,10 @@ function renderMockSetup() {
       const items = JSON.parse(text);
       if (!Array.isArray(items)) { alert("JSONフォーマットが不正です（配列ではありません）"); return; }
       const n = await mockStockImport(items);
-      alert(`✅ ${n.added}セット追加、${n.skipped}セット重複スキップ`);
+      let msg = `✅ ${n.added}セット追加`;
+      if (n.skipped) msg += `、${n.skipped}セット重複スキップ`;
+      if (n.rejected) msg += `\n⚠️ ${n.rejected}セットは音声/画像不完全のため除外されました`;
+      alert(msg);
       render();
     } catch(err) {
       alert("インポートエラー: " + err.message);
@@ -2954,9 +2993,20 @@ async function mockStockImport(items) {
   const db = await openMockDB();
   const existing = await mockStockGetAll();
   const seen = new Set(existing.map(r => r.createdAt));
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, rejected = 0;
   for (const item of items) {
-    if (!item.part || !item.qSet) continue;
+    if (!item.part || !item.qSet) { rejected++; continue; }
+    // Reject listening items without audio
+    const isListening = ["part1","part2","part3","part4"].includes(item.part);
+    if (isListening && !item.audioOpus) {
+      console.warn("[MOCK IMPORT] Rejecting listening item without audio:", item.part);
+      rejected++; continue;
+    }
+    // Reject Part 1 without image
+    if (item.part === "part1" && !item.imgUrl) {
+      console.warn("[MOCK IMPORT] Rejecting Part 1 without image");
+      rejected++; continue;
+    }
     const ts = item.createdAt || Date.now();
     if (seen.has(ts)) { skipped++; continue; }
     seen.add(ts);
@@ -2970,7 +3020,7 @@ async function mockStockImport(items) {
       tx.onerror = () => reject(tx.error);
     });
   }
-  return {added, skipped};
+  return {added, skipped, rejected};
 }
 async function mockStockClear() {
   const db = await openMockDB();
@@ -3201,7 +3251,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16j · mock JSON import</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16m · mock strict validation + auto-retry</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
