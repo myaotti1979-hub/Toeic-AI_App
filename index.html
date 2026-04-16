@@ -108,6 +108,18 @@ const GEMINI_PRO         = "gemini-2.5-pro";
 const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 const GEMINI_TTS_MODEL   = "gemini-2.5-flash-preview-tts";
 
+// ── Tunable constants (was scattered as magic numbers) ──
+const TTS_MAX = 5000;              // Max chars sent to Gemini TTS in one call
+const TTS_CACHE_SIZE = 20;         // LRU cache size for generated audio
+const API_THROTTLE_MS = 300;       // Delay between sequential API requests
+const API_RETRY_DELAY_MS = 3000;   // Wait between retries on 429/500/503
+const LISTEN_THINK_MS = 3000;      // Pause after question audio in listen mode
+const LISTEN_CHOICES_PAUSE_MS = 2500; // Pause after choices read
+const LISTEN_AFTER_ANSWER_MS = 1000;  // Pause after answer announcement
+const LISTEN_AFTER_EXPL_MS = 1500;    // Pause after English explanation
+const LISTEN_BETWEEN_QUESTIONS_MS = 1500; // Pause between sub-questions
+const LISTEN_BETWEEN_ITEMS_MS = 1500;     // Pause before next stock item
+
 // 3段階モデル構成: Lite(単純) / Flash(中程度) / Pro(複雑)
 const PART_MODEL = {
   part1: GEMINI_LITE,   // シーン描写のみ
@@ -175,7 +187,7 @@ async function throttledFetch(url, opts, maxRetries=1) {
   const prev = _apiLock;
   _apiLock = new Promise(r => release = r);
   await prev;
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, API_THROTTLE_MS));
 
   try {
     for (let attempt=0; attempt<=maxRetries; attempt++) {
@@ -183,7 +195,7 @@ async function throttledFetch(url, opts, maxRetries=1) {
       if (res.status === 429 || res.status === 503 || res.status === 500) {
         const errText = await res.text().catch(()=>"");
         console.warn(`${res.status}: ${errText.slice(0,100)} | attempt ${attempt+1}/${maxRetries+1}`);
-        if (attempt < maxRetries) { await new Promise(r => setTimeout(r, 3000)); continue; }
+        if (attempt < maxRetries) { await new Promise(r => setTimeout(r, API_RETRY_DELAY_MS)); continue; }
         throw new Error(`API ${res.status}: ${errText.slice(0,200)}`);
       }
       return res;
@@ -801,7 +813,6 @@ async function generateQuestionSet(partOverride, options) {
 ────────────────────────────────────────────── */
 const TTS_FEMALE = ["Aoede","Zephyr","Kore","Leda","Callirrhoe","Despina","Pulcherrima"];
 const TTS_MALE   = ["Puck","Charon","Fenrir","Orus","Achird","Alnilam","Iapetus"];
-const TTS_MAX    = 5000;
 
 /* ──────────────────────────────────────────────
    STOCK SYSTEM (IndexedDB)
@@ -943,46 +954,88 @@ function meaningsMatch(m1, m2) {
   return false;
 }
 // Auto-save: if ANY segment of new meaning matches existing, treat as same
+// FIX: Read words once, batch updates within single transaction to avoid race conditions
 async function vocabAutoSave(vocabArr, part) {
-  if (!vocabArr || !vocabArr.length) return;
+  if (!vocabArr || !vocabArr.length) return {added:0, updated:0};
   try {
-    const existing = await vocabGetAll();
+    const db = await openVocabDB();
+    // Read all existing words once
+    const existing = await new Promise((resolve, reject) => {
+      const tx = db.transaction("words", "readonly");
+      const req = tx.objectStore("words").getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    // Group existing by lemmatized word for fast lookup
+    const byBase = {};
+    for (const w of existing) {
+      const b = lemmatize(w.word);
+      if (!byBase[b]) byBase[b] = w; // keep first match
+    }
+    // Plan changes
+    const toAdd = [];
+    const toUpdate = [];
     for (const v of vocabArr) {
       if (!v.word) continue;
       const baseWord = lemmatize(v.word);
-      const newMeaning = (v.ja||"").trim();
-      const newExample = (v.example||"").trim();
-      const match = existing.find(e => lemmatize(e.word) === baseWord);
+      const newMeaning = (v.ja || "").trim();
+      const newExample = (v.example || "").trim();
+      const match = byBase[baseWord];
       if (match) {
-        const meanings = (match.meaning||"").split("\n").map(s=>s.trim()).filter(Boolean);
-        // Check overlap with any existing meaning
+        const meanings = (match.meaning || "").split("\n").map(s=>s.trim()).filter(Boolean);
         const hasOverlap = meanings.some(m => meaningsMatch(m, newMeaning));
-        if (hasOverlap) {
-          // Same meaning exists - still update audio if missing
-          const updates = {};
-          if (v.audio && !match.audio) updates.audio = v.audio;
-          if (v.example_audio && !match.exampleAudio) updates.exampleAudio = v.example_audio;
-          if (Object.keys(updates).length) {
-            await vocabUpdate(match.id, updates);
-            Object.assign(match, updates);
-          }
-          continue;
+        const updates = {};
+        if (!hasOverlap && newMeaning) {
+          updates.meaning = meanings.concat(newMeaning).join("\n");
+          const examples = (match.context || "").split("\n").map(s=>s.trim()).filter(Boolean);
+          updates.context = examples.concat(newExample).join("\n");
         }
-        const updatedMeaning = meanings.concat(newMeaning).join("\n");
-        const examples = (match.context||"").split("\n").map(s=>s.trim()).filter(Boolean);
-        const updatedContext = examples.concat(newExample).join("\n");
-        const updates = {meaning: updatedMeaning, context: updatedContext};
         if (v.audio && !match.audio) updates.audio = v.audio;
         if (v.example_audio && !match.exampleAudio) updates.exampleAudio = v.example_audio;
-        await vocabUpdate(match.id, updates);
-        Object.assign(match, updates);
+        if (Object.keys(updates).length > 0) {
+          toUpdate.push({id: match.id, updates});
+          // Update local cache so subsequent vocab in same batch see updates
+          Object.assign(match, updates);
+        }
       } else {
-        const pos = (v.pos||"other").toLowerCase();
-        await vocabSave(v.word, newMeaning, newExample, part, pos, v.audio||"", v.example_audio||"");
-        existing.push({id:Date.now(), word:v.word, meaning:newMeaning, context:newExample, pos, audio:v.audio||"", exampleAudio:v.example_audio||""});
+        const pos = (v.pos || "other").toLowerCase();
+        const newRecord = {
+          word: v.word,
+          meaning: newMeaning,
+          context: newExample,
+          part: part || "",
+          pos,
+          audio: v.audio || "",
+          exampleAudio: v.example_audio || "",
+          timestamp: Date.now()
+        };
+        toAdd.push(newRecord);
+        // Add to local cache so duplicates within same batch are detected
+        byBase[baseWord] = {...newRecord, id: -toAdd.length}; // placeholder id
       }
     }
-  } catch(e) { console.warn("vocabAutoSave error:", e); }
+    // Apply all changes in a single transaction
+    if (toAdd.length || toUpdate.length) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("words", "readwrite");
+        const store = tx.objectStore("words");
+        for (const rec of toAdd) store.add(rec);
+        for (const {id, updates} of toUpdate) {
+          const req = store.get(id);
+          req.onsuccess = () => {
+            const r = req.result;
+            if (r) { Object.assign(r, updates); store.put(r); }
+          };
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+    return {added: toAdd.length, updated: toUpdate.length};
+  } catch(e) {
+    console.warn("vocabAutoSave error:", e);
+    return {added:0, updated:0, error:e.message};
+  }
 }
 async function vocabGetAll() {
   const db = await openVocabDB();
@@ -1010,7 +1063,7 @@ async function vocabRebuildFromStocks() {
     const vocab = item.qSet?.vocab;
     if (vocab && Array.isArray(vocab) && vocab.length > 0) {
       foundVocab += vocab.length;
-      await vocabAutoSave(vocab, item.part).catch(()=>{});
+      await vocabAutoSave(vocab, item.part).catch(e=>console.warn('vocab auto-save failed:', e));
       processed++;
     }
   }
@@ -1094,15 +1147,16 @@ async function stockSave(part, level, qSet, imgUrl) {
     imgUrl: imgUrl || null,
     createdAt: Date.now(),
   };
-  // Opus優先、なければ12kHz+gzipにフォールバック
+  // Opus only (no more gzip fallback - encode PCM to Opus on-the-fly if needed)
   if (qSet._audioOpus) {
     data.audioOpus = qSet._audioOpus;
     data.audioFormat = "opus";
   } else if (qSet._audioPcm) {
-    const ds = downsamplePcm(qSet._audioPcm);
-    data.audioGzip = await compressB64(ds);
-    data.audioRate = 12000;
-    data.audioFormat = "gzip";
+    try {
+      const opus = await encodeOpus(qSet._audioPcm);
+      data.audioOpus = opus;
+      data.audioFormat = "opus";
+    } catch(e) { console.warn("opus encode in stockSave failed:", e); }
   }
   delete data.qSet._audioUrl;
   delete data.qSet._audioPcm;
@@ -1137,7 +1191,9 @@ async function stockDelete(id) {
 
 async function stockUpdateAudio(id, pcm) {
   const db = await openStockDB();
-  const compressed = await compressB64(downsamplePcm(pcm));
+  let opus;
+  try { opus = await encodeOpus(pcm); }
+  catch(e) { console.warn("opus encode in stockUpdateAudio failed:", e); return; }
   return new Promise((resolve, reject) => {
     const tx = db.transaction("questions","readwrite");
     const store = tx.objectStore("questions");
@@ -1145,8 +1201,10 @@ async function stockUpdateAudio(id, pcm) {
     req.onsuccess = () => {
       const item = req.result;
       if (!item) { resolve(); return; }
-      item.audioGzip = compressed;
-      item.audioRate = 12000;
+      item.audioOpus = opus;
+      item.audioFormat = "opus";
+      delete item.audioGzip;
+      delete item.audioRate;
       delete item.audioPcm;
       store.put(item);
     };
@@ -1223,8 +1281,6 @@ async function stockImport(file) {
     existing.add(ts); // 同一ファイル内の重複も防止
     const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts};
     if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
-    else if (item.audioGzip) { data.audioGzip = item.audioGzip; data.audioRate = item.audioRate||12000; data.audioFormat = "gzip"; }
-    else if (item.audioPcm) data.audioPcm = item.audioPcm;
     await new Promise((resolve, reject) => {
       const tx = db.transaction("questions","readwrite");
       tx.objectStore("questions").add(data);
@@ -1244,30 +1300,6 @@ async function stockImport(file) {
   }
   console.log(`[IMPORT] Complete: ${count} items, ${withVocab} with vocab, ${vocabTotal} vocab entries found, ${vocabAdded} new added to dictionary`);
   return {count, skipped, vocabAdded, withVocab, vocabTotal};
-}
-
-// 旧形式（audioPcm）を新形式（audioGzip）に一括変換
-async function stockMigrate() {
-  const all = await stockGetAll();
-  const toMigrate = all.filter(item => item.audioPcm && !item.audioGzip);
-  if (toMigrate.length === 0) return 0;
-  const db = await openStockDB();
-  let count = 0;
-  for (const item of toMigrate) {
-    try {
-      const ds = downsamplePcm(item.audioPcm);
-      item.audioGzip = await compressB64(ds);
-      item.audioRate = 12000;
-      delete item.audioPcm;
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction("questions","readwrite");
-        tx.objectStore("questions").put(item);
-        tx.oncomplete = () => { count++; resolve(); };
-        tx.onerror = () => reject(tx.error);
-      });
-    } catch(e) { console.error("migrate error:", e); }
-  }
-  return count;
 }
 
 async function stockCount() {
@@ -1303,51 +1335,6 @@ function pcmToUrl(b64, rate) {
   v.setUint16(32,ch*bps/8,true); v.setUint16(34,bps,true); ws(36,"data"); v.setUint32(40,bytes.length,true);
   const wav=new Uint8Array(44+bytes.length); wav.set(new Uint8Array(hdr)); wav.set(bytes,44);
   return URL.createObjectURL(new Blob([wav],{type:"audio/wav"}));
-}
-
-// 24kHz→12kHz ダウンサンプル（16bit mono: 2バイト/サンプル、1つ飛ばし）
-function downsamplePcm(b64) {
-  const raw = atob(b64);
-  const srcLen = raw.length;
-  const dst = new Uint8Array(Math.floor(srcLen/2));
-  for (let i=0,j=0; i<srcLen-3; i+=4,j+=2) {
-    dst[j]   = raw.charCodeAt(i);
-    dst[j+1] = raw.charCodeAt(i+1);
-  }
-  let bin=""; for(let i=0;i<dst.length;i++) bin+=String.fromCharCode(dst[i]);
-  return btoa(bin);
-}
-
-// gzip圧縮（base64 → compressed base64）
-async function compressB64(b64) {
-  const raw=atob(b64), bytes=new Uint8Array(raw.length);
-  for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
-  const cs=new CompressionStream("gzip");
-  const w=cs.writable.getWriter();
-  w.write(bytes); w.close();
-  const chunks=[]; const r=cs.readable.getReader();
-  while(true){const{done,value}=await r.read();if(done)break;chunks.push(value);}
-  const blob=new Blob(chunks);
-  const ab=await blob.arrayBuffer();
-  const u8=new Uint8Array(ab);
-  let bin="";for(let i=0;i<u8.length;i++) bin+=String.fromCharCode(u8[i]);
-  return btoa(bin);
-}
-
-// gzip解凍（compressed base64 → base64）
-async function decompressB64(b64) {
-  const raw=atob(b64), bytes=new Uint8Array(raw.length);
-  for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
-  const ds=new DecompressionStream("gzip");
-  const w=ds.writable.getWriter();
-  w.write(bytes); w.close();
-  const chunks=[]; const r=ds.readable.getReader();
-  while(true){const{done,value}=await r.read();if(done)break;chunks.push(value);}
-  const blob=new Blob(chunks);
-  const ab=await blob.arrayBuffer();
-  const u8=new Uint8Array(ab);
-  let bin="";for(let i=0;i<u8.length;i++) bin+=String.fromCharCode(u8[i]);
-  return btoa(bin);
 }
 
 // Opus/WebMエンコード（PCM base64 → Opus base64）バックグラウンド実行
@@ -1422,10 +1409,10 @@ async function speakGemini(text, onEnd) {
     if (!url) {
       const pcm=await callTTS(text,{voiceConfig:{prebuiltVoiceConfig:{voiceName:pickVoice()}}});
       url=pcmToUrl(pcm);
-      if(_ttsCache.size>=20){const k=_ttsCache.keys().next().value;URL.revokeObjectURL(_ttsCache.get(k));_ttsCache.delete(k);}
+      if(_ttsCache.size>=TTS_CACHE_SIZE){const k=_ttsCache.keys().next().value;URL.revokeObjectURL(_ttsCache.get(k));_ttsCache.delete(k);}
       _ttsCache.set(text,url);
-      if(S.qSet&&!S.qSet._audioPcm){S.qSet._audioPcm=pcm;S.qSet._audioUrl=url;if(S.stockMode&&S.stockId)stockUpdateAudio(S.stockId,pcm).catch(()=>{});
-        encodeOpus(pcm).then(opus=>{if(S.qSet)S.qSet._audioOpus=opus;}).catch(()=>{});
+      if(S.qSet&&!S.qSet._audioPcm){S.qSet._audioPcm=pcm;S.qSet._audioUrl=url;if(S.stockMode&&S.stockId)stockUpdateAudio(S.stockId,pcm).catch(e=>console.warn('stock audio update failed:', e));
+        encodeOpus(pcm).then(opus=>{if(S.qSet)S.qSet._audioOpus=opus;}).catch(e=>console.warn('opus encode failed:', e));
       }
     }
     const a=new Audio(url); _curAudio=a;
@@ -1476,10 +1463,10 @@ async function speakConv(text, onEnd, speakers) {
       const pcm=d.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (!pcm) { return speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd); }
       url=pcmToUrl(pcm);
-      if(_ttsCache.size>=20){const k=_ttsCache.keys().next().value;URL.revokeObjectURL(_ttsCache.get(k));_ttsCache.delete(k);}
+      if(_ttsCache.size>=TTS_CACHE_SIZE){const k=_ttsCache.keys().next().value;URL.revokeObjectURL(_ttsCache.get(k));_ttsCache.delete(k);}
       _ttsCache.set(key,url);
-      if(S.qSet&&!S.qSet._audioPcm){S.qSet._audioPcm=pcm;S.qSet._audioUrl=url;if(S.stockMode&&S.stockId)stockUpdateAudio(S.stockId,pcm).catch(()=>{});
-        encodeOpus(pcm).then(opus=>{if(S.qSet)S.qSet._audioOpus=opus;}).catch(()=>{});
+      if(S.qSet&&!S.qSet._audioPcm){S.qSet._audioPcm=pcm;S.qSet._audioUrl=url;if(S.stockMode&&S.stockId)stockUpdateAudio(S.stockId,pcm).catch(e=>console.warn('stock audio update failed:', e));
+        encodeOpus(pcm).then(opus=>{if(S.qSet)S.qSet._audioOpus=opus;}).catch(e=>console.warn('opus encode failed:', e));
       }
     }
     const a=new Audio(url); _curAudio=a;
@@ -1673,7 +1660,7 @@ async function loadNewSet() {
       // ストック作成モード: 3秒後に自動リトライ
       S.loadMsg=`⚠️ 生成失敗…3秒後にリトライ`;
       render();
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, API_RETRY_DELAY_MS));
       S.error=null; loadNewSet(); return;
     }
     S.error = `問題の生成に失敗しました:\n${e.message}`;
@@ -1731,7 +1718,7 @@ async function autoStockAndNext() {
     await stockSave(S.part, S.level, S.qSet, S.sceneImgUrl);
     // Auto-save vocab from this question set
     if (S.qSet.vocab && S.qSet.vocab.length) {
-      await vocabAutoSave(S.qSet.vocab, S.part).catch(()=>{});
+      await vocabAutoSave(S.qSet.vocab, S.part).catch(e=>console.warn('vocab auto-save failed:', e));
     }
     S.stockCreateCount = (S.stockCreateCount||0) + 1;
   } catch(e) { console.error("auto-stock error:", e); }
@@ -1775,7 +1762,7 @@ function handleAnswer(idx) {
   if (S.judgeMode && !S.stockCreateMode) {
     const typePool = _sessionTypes[S.part] || [];
     const typeObj = typePool[S.sessionNum-1] || {};
-    judgeSave(S.part, S.level, typeObj.type, qi, isCorrect, q.question, elapsed).catch(()=>{});
+    judgeSave(S.part, S.level, typeObj.type, qi, isCorrect, q.question, elapsed).catch(e=>console.warn('judge save failed:', e));
     // 不正解 → 苦手問題として自動ストック（同一qSetで1回だけ）
     if (!isCorrect && S.qSet && !S.qSet._weakStocked) {
       S.qSet._weakStocked = true;
@@ -1785,7 +1772,7 @@ function handleAnswer(idx) {
     }
     // ストック学習中: 正解ストリーク追跡（3回連続正解で卒業提案）
     if (S.stockMode && S.stockId) {
-      updateStockStreak(S.stockId, isCorrect).catch(()=>{});
+      updateStockStreak(S.stockId, isCorrect).catch(e=>console.warn('stock streak update failed:', e));
     }
   }
   // Auto-save vocabulary from this question set (once per qSet)
@@ -1830,6 +1817,9 @@ function render() {
   else if (S.screen==="vocabQuiz") renderVocabQuiz();
   else if (S.screen==="listenPlay") renderListenPlay();
   else if (S.screen==="listenSetup") renderListenSetup();
+  else if (S.screen==="mockSetup") renderMockSetup();
+  else if (S.screen==="mockTest") renderMockTest();
+  else if (S.screen==="mockResult") renderMockResult();
   else                          renderStudy();
 }
 
@@ -1858,17 +1848,9 @@ function loadStockItem(item) {
   S.part=item.part; S.level=item.level;
   S.screen="study"; S.stockMode=true; S.stockId=item.id;
   S.stats={correct:0,wrong:0}; S.streak=0;
-  // 音声URLを再生成（Opus / gzip圧縮 / 旧PCM形式に対応）
+  // 音声URLを再生成（Opus形式のみ対応）
   if (item.audioOpus) {
     item.qSet._audioUrl = opusToUrl(item.audioOpus);
-  } else if (item.audioGzip) {
-    decompressB64(item.audioGzip).then(pcm => {
-      item.qSet._audioUrl = pcmToUrl(pcm, item.audioRate||12000);
-      const pa=document.getElementById("playAudio");
-      if(pa){pa.dataset.label="🔊 音声を再生 ✓";pa.textContent="🔊 音声を再生 ✓";}
-    }).catch(()=>{});
-  } else if (item.audioPcm) {
-    item.qSet._audioUrl = pcmToUrl(item.audioPcm, 12000);
   }
   S.qSet=item.qSet;
   S.qSet.part=item.part; // partフィールドを復元
@@ -1876,6 +1858,7 @@ function loadStockItem(item) {
   S.imageError=null;
   S.answers=S.qSet.questions.map(()=>({selected:null,answered:false}));
   S.qIdx=0; S.sessionNum=1;
+  S.timerStart=Date.now(); S.timerFrozen=0;  // Reset timer for new stock item
   S.loading=false; S.error=null;
   render();
 }
@@ -2662,7 +2645,7 @@ async function renderListenPlay() {
     if(paused) stopSpeak();
   };
 
-  async function speak(text, onEnd) {
+  async function speakAndWait(text) {
     return new Promise(resolve=>{
       if(stopped){resolve();return;}
       // speakGemini calls onEnd only when playback actually ends
@@ -2706,7 +2689,7 @@ async function renderListenPlay() {
   try {
     // 1. Announce
     statusEl.textContent=`🔊 Question ${idx+1}`;
-    await speak(`Question ${idx+1}.`);
+    await speakAndWait(`Question ${idx+1}.`);
     if(stopped) return;
 
     // 2. Main audio (prefer stored Opus audio, fallback to live TTS)
@@ -2720,7 +2703,7 @@ async function renderListenPlay() {
         if(item.part==="part3") {
           await speakConvWait(audioText, qs.speakers);
         } else {
-          await speak(audioText);
+          await speakAndWait(audioText);
         }
       }
     }
@@ -2728,7 +2711,7 @@ async function renderListenPlay() {
 
     // 3. Think pause
     statusEl.textContent="⏳ 考え中...";
-    await wait(3000);
+    await wait(LISTEN_THINK_MS);
     if(stopped) return;
 
     // 4. Answers for each question
@@ -2743,8 +2726,8 @@ async function renderListenPlay() {
 
       if(questions.length > 1) {
         statusEl.textContent=`🔊 Q${qi+1}: ${q.question?.slice(0,40)}...`;
-        await speak(q.question || "");
-        await wait(1500);
+        await speakAndWait(q.question || "");
+        await wait(LISTEN_AFTER_EXPL_MS);
         if(stopped) return;
       }
 
@@ -2752,24 +2735,24 @@ async function renderListenPlay() {
       if (choices.length > 0) {
         statusEl.textContent=`🔊 選択肢を読み上げ中...`;
         const choicesText = choices.map((c,i)=>`(${letters[i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
-        await speak(choicesText);
-        await wait(2500); // pause to think
+        await speakAndWait(choicesText);
+        await wait(LISTEN_CHOICES_PAUSE_MS);
         if(stopped) return;
       }
 
       // Answer
       statusEl.textContent=`✅ Answer: ${correctLetter}`;
       textEl.textContent = `Answer: (${correctLetter}) ${correctText}`;
-      await speak(`The answer is ${correctLetter}. ${correctText}`);
-      await wait(1000);
+      await speakAndWait(`The answer is ${correctLetter}. ${correctText}`);
+      await wait(LISTEN_AFTER_ANSWER_MS);
       if(stopped) return;
 
       // English explanation
       const explEn = (q.explanation_en || "").trim();
       if(explEn) {
         statusEl.textContent=`💡 ${explEn.slice(0,40)}...`;
-        await speak(explEn);
-        await wait(1500);
+        await speakAndWait(explEn);
+        await wait(LISTEN_AFTER_EXPL_MS);
         if(stopped) return;
       } else {
         await wait(500);
@@ -2784,6 +2767,408 @@ async function renderListenPlay() {
     console.error("Listen error:", e);
     if(!stopped) { S.listenIdx=idx+1; render(); }
   }
+}
+
+/* ──────────────────────────────────────────────
+   MOCK TEST (実力テスト) — 本番形式の模試
+────────────────────────────────────────────── */
+// TOEIC本番のパート別問題数 (フル200問)
+const MOCK_FULL_DIST = {
+  part1: 6, part2: 25, part3: 39, part4: 30,  // L: 100
+  part5: 30, part6: 16, part7: 54              // R: 100
+};
+// 注: Part 3/4は1セット3問、Part 6は1セット4問、Part 7は1セット2-5問
+// → 必要なストックセット数を計算（切り上げ）
+function calcSetsNeeded(part, questions) {
+  const perSet = {part1:1, part2:1, part3:3, part4:3, part5:1, part6:4, part7:3}; // part7は平均3問/セット
+  return Math.ceil(questions / (perSet[part] || 1));
+}
+
+// 公式問題集5ベース換算表 (素点 → スコア中央値)
+function scoreFromRaw(raw, isListening) {
+  raw = Math.max(0, Math.min(100, raw));
+  // 補間用テーブル: [正答数, スコア中央値]
+  const tableL = [[0,5],[5,15],[10,30],[15,45],[20,60],[25,80],[30,110],[35,135],[40,170],
+                  [45,210],[50,250],[55,290],[60,330],[65,370],[70,400],[75,425],[80,455],
+                  [85,475],[90,485],[95,495],[100,495]];
+  const tableR = [[0,5],[5,15],[10,25],[15,45],[20,60],[25,75],[30,95],[35,120],[40,150],
+                  [45,185],[50,220],[55,255],[60,290],[65,325],[70,355],[75,385],[80,420],
+                  [85,445],[90,470],[95,485],[100,495]];
+  const tbl = isListening ? tableL : tableR;
+  for (let i=0; i<tbl.length-1; i++) {
+    const [r1,s1] = tbl[i], [r2,s2] = tbl[i+1];
+    if (raw >= r1 && raw <= r2) {
+      const ratio = (raw - r1) / (r2 - r1);
+      return Math.round((s1 + (s2-s1)*ratio) / 5) * 5; // 5点刻み
+    }
+  }
+  return 5;
+}
+
+function renderMockSetup() {
+  app.innerHTML = `
+    <div class="header"><h1 style="font-size:20px">🎯 実力テスト（模試）</h1>
+      <div class="sub">本番形式の模試で実力を測定</div></div>
+    <div style="margin:16px 0;padding:12px;background:rgba(251,191,36,0.05);border:1px solid rgba(251,191,36,0.15);border-radius:10px;font-size:12px;color:#fbbf24">
+      📊 ジェネレーターで作成した模試データを使用します。<br>
+      まずジェネレーターの「🎯 模試一括生成」で問題を作成し、JSONをここにインポートしてください。
+    </div>
+
+    <div style="margin:12px 0">
+      <div style="font-size:13px;color:#94a3b8;margin-bottom:6px">📥 模試JSONをインポート</div>
+      <input type="file" id="mockImportFile" accept=".json" style="width:100%;padding:8px;background:#1e293b;color:#e2e8f0;border:1px dashed rgba(255,255,255,0.2);border-radius:8px">
+    </div>
+
+    <div id="mockStockSummary" style="margin:12px 0;padding:10px;background:#1e293b;border-radius:10px;font-size:12px"></div>
+
+    <div style="font-size:13px;color:#94a3b8;margin:12px 0 6px">テスト形式</div>
+    <button class="btn-s" data-mock-mode="full" style="width:100%;margin:4px 0;padding:14px;text-align:left;background:rgba(129,140,248,0.08)">
+      <div style="font-weight:700;font-size:15px;color:#e2e8f0">🏆 本番フォーマット (200問)</div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:2px">L:100問 + R:100問 / 約2時間</div>
+    </button>
+    <button class="btn-s" data-mock-mode="half" style="width:100%;margin:4px 0;padding:14px;text-align:left;background:rgba(244,114,182,0.08)">
+      <div style="font-weight:700;font-size:15px;color:#e2e8f0">⚡ ハーフ模試 (100問)</div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:2px">L:50問 + R:50問 / 約1時間</div>
+    </button>
+
+    <div style="display:flex;gap:6px;margin-top:12px">
+      <button class="btn-s" id="mockClearBtn" style="flex:1;font-size:11px;color:#f87171">🗑️ 模試データをクリア</button>
+      <button class="btn-s" id="mockBackBtn" style="flex:1">← ホームに戻る</button>
+    </div>`;
+
+  // Show mock data summary (uses mockStockGetAll)
+  (async () => {
+    const all = await mockStockGetAll();
+    const counts = {};
+    const byLevel = {};
+    all.forEach(s => {
+      counts[s.part] = (counts[s.part]||0) + 1;
+      const k = `${s.part}/${(s.level||"?").slice(0,3)}`;
+      byLevel[k] = (byLevel[k]||0) + 1;
+    });
+    const required_full = MOCK_FULL_DIST;
+    let html = "<div style='font-weight:600;color:#e2e8f0;margin-bottom:6px'>📦 模試ストック状況</div>";
+    if (all.length === 0) {
+      html += "<div style='color:#64748b;text-align:center;padding:8px'>データがありません。ジェネレーターで模試を生成してJSONをインポートしてください。</div>";
+    } else {
+      html += `<div style='font-size:11px;color:#94a3b8;margin-bottom:4px'>${all.length}セット / ${all.reduce((s,r)=>s+(r.qSet?.questions?.length||0),0)}問</div>`;
+      html += "<div style='display:grid;grid-template-columns:repeat(7,1fr);gap:4px;font-size:10px'>";
+      for (const p of ["part1","part2","part3","part4","part5","part6","part7"]) {
+        const have = counts[p] || 0;
+        const needFull = calcSetsNeeded(p, required_full[p]);
+        const needHalf = Math.ceil(needFull / 2);
+        const okFull = have >= needFull;
+        const okHalf = have >= needHalf;
+        const color = okFull ? "#4ade80" : okHalf ? "#fbbf24" : "#f87171";
+        html += `<div style='text-align:center;padding:4px;background:rgba(255,255,255,0.03);border-radius:4px;color:${color}'>
+          <div style='font-weight:700;color:#94a3b8'>${p.toUpperCase().replace("PART","P")}</div>
+          <div>${have}</div>
+          <div style='font-size:9px;color:#64748b'>要 ${needHalf}/${needFull}</div>
+        </div>`;
+      }
+      html += "</div>";
+      html += "<div style='font-size:10px;color:#64748b;margin-top:6px'>緑=フル可 / 黄=ハーフ可 / 赤=不足</div>";
+    }
+    $("mockStockSummary").innerHTML = html;
+  })();
+
+  // File import
+  $("mockImportFile").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      const items = JSON.parse(text);
+      if (!Array.isArray(items)) { alert("JSONフォーマットが不正です（配列ではありません）"); return; }
+      const n = await mockStockImport(items);
+      alert(`✅ ${n.added}セット追加、${n.skipped}セット重複スキップ`);
+      render();
+    } catch(err) {
+      alert("インポートエラー: " + err.message);
+    }
+  };
+
+  document.querySelectorAll("[data-mock-mode]").forEach(btn => {
+    btn.onclick = async () => {
+      const mode = btn.dataset.mockMode;
+      const all = await mockStockGetAll();
+      if (all.length === 0) { alert("模試データがありません。先にインポートしてください。"); return; }
+      const byPart = {};
+      all.forEach(s => { if(!byPart[s.part]) byPart[s.part]=[]; byPart[s.part].push(s); });
+      const testItems = [];
+      const dist = mode === "full" ? MOCK_FULL_DIST : Object.fromEntries(Object.entries(MOCK_FULL_DIST).map(([k,v])=>[k,Math.ceil(v/2)]));
+      const missing = [];
+      for (const [p, qNeeded] of Object.entries(dist)) {
+        const setsNeeded = calcSetsNeeded(p, qNeeded);
+        const pool = (byPart[p] || []).slice();
+        if (pool.length < setsNeeded) missing.push(`${p}: ${pool.length}/${setsNeeded}セット`);
+        pool.sort(()=>Math.random()-0.5);
+        testItems.push(...pool.slice(0, setsNeeded).map(s => ({...s, _mockTargetQ: qNeeded})));
+      }
+      if (missing.length > 0) {
+        if (!confirm(`以下のパートが不足しています:\n${missing.join('\n')}\n\n不足分はそのまま進めますか？`)) return;
+      }
+      S.mockItems = testItems;
+      S.mockMode = mode;
+      S.mockIdx = 0; S.mockQIdx = 0;
+      S.mockAnswers = [];
+      S.mockStartTime = Date.now();
+      S.screen = "mockTest";
+      render();
+    };
+  });
+
+  $("mockClearBtn").onclick = async () => {
+    if (!confirm("模試データを全て削除しますか？")) return;
+    await mockStockClear();
+    render();
+  };
+  $("mockBackBtn").onclick = () => { S.screen = "home"; render(); };
+}
+
+/* ─ MOCK STOCK (separate IndexedDB store) ─ */
+const MOCK_DB = "toeic-mock-v1";
+function openMockDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(MOCK_DB, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains("mock")) {
+        db.createObjectStore("mock", {keyPath:"id", autoIncrement:true});
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function mockStockGetAll() {
+  const db = await openMockDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("mock","readonly");
+    const req = tx.objectStore("mock").getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function mockStockImport(items) {
+  const db = await openMockDB();
+  const existing = await mockStockGetAll();
+  const seen = new Set(existing.map(r => r.createdAt));
+  let added = 0, skipped = 0;
+  for (const item of items) {
+    if (!item.part || !item.qSet) continue;
+    const ts = item.createdAt || Date.now();
+    if (seen.has(ts)) { skipped++; continue; }
+    seen.add(ts);
+    const data = {part:item.part, level:item.level, qSet:item.qSet,
+                  imgUrl:item.imgUrl||null, audioOpus:item.audioOpus||null,
+                  createdAt: ts};
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("mock","readwrite");
+      tx.objectStore("mock").add(data);
+      tx.oncomplete = () => { added++; resolve(); };
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  return {added, skipped};
+}
+async function mockStockClear() {
+  const db = await openMockDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("mock","readwrite");
+    tx.objectStore("mock").clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function renderMockTest() {
+  const items = S.mockItems || [];
+  if (S.mockIdx >= items.length) { S.screen = "mockResult"; render(); return; }
+  const item = items[S.mockIdx];
+  const qs = item.qSet || {};
+  const questions = qs.questions || [];
+  const q = questions[S.mockQIdx];
+  if (!q) {
+    S.mockIdx++; S.mockQIdx = 0;
+    render(); return;
+  }
+
+  // Total progress
+  let totalQ = 0, doneQ = 0;
+  items.forEach((it, ii) => {
+    const qq = (it.qSet?.questions || []).length;
+    totalQ += qq;
+    if (ii < S.mockIdx) doneQ += qq;
+    else if (ii === S.mockIdx) doneQ += S.mockQIdx;
+  });
+  const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
+  const mm = String(Math.floor(elapsed/60)).padStart(2,"0");
+  const ss = String(elapsed%60).padStart(2,"0");
+
+  let html = `
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:16px">🎯 模試 ${item.part.toUpperCase()}</h1>
+        <div class="sub">${doneQ+1}/${totalQ}問 | ⏱️ ${mm}:${ss}</div></div>
+      <button class="btn-s" id="mockAbortBtn" style="font-size:11px;color:#f87171">中断</button>
+    </div>`;
+
+  // Audio (Part 1-4) — auto-play once on first question of set
+  if (["part1","part2","part3","part4"].includes(item.part) && S.mockQIdx === 0 && item.audioOpus) {
+    html += `<div style="margin:8px 0"><audio controls autoplay style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,${item.audioOpus}"></audio></div>`;
+  }
+
+  // Image
+  if (item.imgUrl) {
+    html += `<div style="margin:8px 0"><img src="${item.imgUrl}" style="width:100%;border-radius:8px"></div>`;
+  }
+
+  // Reading text
+  if (["part6","part7"].includes(item.part)) {
+    if (qs.text || qs.text_1) {
+      const docs = [];
+      if (qs.text_1) {
+        if (qs.header_1) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;white-space:pre-wrap'>${esc(qs.header_1)}</pre>`);
+        docs.push(`<div style='font-size:13px;line-height:1.7'>${esc(qs.text_1)}</div>`);
+        if (qs.text_2) {
+          if (qs.header_2) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;margin-top:12px;white-space:pre-wrap'>${esc(qs.header_2)}</pre>`);
+          docs.push(`<div style='font-size:13px;line-height:1.7;margin-top:8px'>${esc(qs.text_2)}</div>`);
+        }
+        if (qs.text_3) {
+          if (qs.header_3) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;margin-top:12px;white-space:pre-wrap'>${esc(qs.header_3)}</pre>`);
+          docs.push(`<div style='font-size:13px;line-height:1.7;margin-top:8px'>${esc(qs.text_3)}</div>`);
+        }
+      } else {
+        if (qs.header) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;white-space:pre-wrap'>${esc(qs.header)}</pre>`);
+        docs.push(`<div style='font-size:13px;line-height:1.7'>${esc(qs.text)}</div>`);
+      }
+      html += `<div style='margin:8px 0;padding:12px;background:#1e293b;border-radius:10px;max-height:300px;overflow-y:auto'>${docs.join("")}</div>`;
+    }
+  } else if (item.part === "part5") {
+    html += `<div style='margin:12px 0;padding:12px;background:#1e293b;border-radius:10px;font-size:14px;line-height:1.6'>${esc(q.question)}</div>`;
+  }
+
+  // Question
+  if (item.part !== "part5") {
+    html += `<div style='margin:12px 0;font-weight:600;font-size:14px'>Q${S.mockQIdx+1}. ${esc(q.question)}</div>`;
+  }
+
+  // Choices
+  const choices = q.choices || [];
+  choices.forEach((c, ci) => {
+    html += `<button class="mock-choice" data-ci="${ci}" style="display:block;width:100%;text-align:left;padding:10px 12px;margin:4px 0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;font-size:13px;color:#e2e8f0;cursor:pointer">${esc(c)}</button>`;
+  });
+
+  app.innerHTML = html;
+
+  document.querySelectorAll(".mock-choice").forEach(btn => {
+    btn.onclick = () => {
+      const sel = parseInt(btn.dataset.ci);
+      const isCorrect = sel === q.correct;
+      S.mockAnswers.push({part: item.part, correct: isCorrect});
+      // Advance
+      S.mockQIdx++;
+      if (S.mockQIdx >= questions.length) {
+        S.mockIdx++;
+        S.mockQIdx = 0;
+      }
+      // Check if part target reached
+      const targetQ = item._mockTargetQ;
+      const partAnswered = S.mockAnswers.filter(a => a.part === item.part).length;
+      if (targetQ && partAnswered >= targetQ) {
+        // Skip remaining items of this part
+        while (S.mockIdx < S.mockItems.length && S.mockItems[S.mockIdx].part === item.part) {
+          S.mockIdx++;
+        }
+      }
+      render();
+    };
+  });
+  $("mockAbortBtn").onclick = () => {
+    if (confirm("模試を中断してホームに戻りますか？\n途中結果は破棄されます。")) {
+      S.mockMode = null; S.mockItems = []; S.mockAnswers = [];
+      S.screen = "home"; render();
+    }
+  };
+
+  // Auto-update timer
+  setTimeout(() => { if (S.screen === "mockTest") render(); }, 1000);
+}
+
+function renderMockResult() {
+  const answers = S.mockAnswers || [];
+  const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
+  const mm = Math.floor(elapsed / 60);
+
+  // Per-part stats
+  const partStats = {};
+  for (const a of answers) {
+    if (!partStats[a.part]) partStats[a.part] = {correct:0, total:0};
+    partStats[a.part].total++;
+    if (a.correct) partStats[a.part].correct++;
+  }
+
+  // Section totals
+  const lParts = ["part1","part2","part3","part4"];
+  const rParts = ["part5","part6","part7"];
+  let lCorrect=0, lTotal=0, rCorrect=0, rTotal=0;
+  for (const p of lParts) {
+    if (partStats[p]) { lCorrect += partStats[p].correct; lTotal += partStats[p].total; }
+  }
+  for (const p of rParts) {
+    if (partStats[p]) { rCorrect += partStats[p].correct; rTotal += partStats[p].total; }
+  }
+
+  // Score: scale to 100 questions per section, then look up score
+  const lScaled = lTotal > 0 ? Math.round(lCorrect / lTotal * 100) : 0;
+  const rScaled = rTotal > 0 ? Math.round(rCorrect / rTotal * 100) : 0;
+  const lScore = scoreFromRaw(lScaled, true);
+  const rScore = scoreFromRaw(rScaled, false);
+  const totalScore = lScore + rScore;
+
+  // Stylish score display
+  const lLevel = lScore >= 400 ? "🥇" : lScore >= 300 ? "🥈" : lScore >= 200 ? "🥉" : "📚";
+  const rLevel = rScore >= 400 ? "🥇" : rScore >= 300 ? "🥈" : rScore >= 200 ? "🥉" : "📚";
+
+  let partTable = "";
+  for (const p of [...lParts, ...rParts]) {
+    if (!partStats[p]) continue;
+    const s = partStats[p];
+    const pct = Math.round(s.correct/s.total*100);
+    const color = pct >= 80 ? "#4ade80" : pct >= 60 ? "#fbbf24" : "#f87171";
+    partTable += `<div style='display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13px'>
+      <span style='color:#94a3b8'>${p.toUpperCase()}</span>
+      <span style='color:${color};font-weight:600'>${s.correct}/${s.total} (${pct}%)</span>
+    </div>`;
+  }
+
+  app.innerHTML = `
+    <div class="header"><h1 style="font-size:22px">🎯 模試結果</h1>
+      <div class="sub">${S.mockMode === "full" ? "本番フォーマット (200問)" : "ハーフ模試 (100問)"} | ⏱️ ${mm}分</div></div>
+
+    <div style="text-align:center;margin:24px 0;padding:24px;background:linear-gradient(135deg,rgba(129,140,248,0.15),rgba(244,114,182,0.15));border-radius:16px;border:1px solid rgba(129,140,248,0.3)">
+      <div style="font-size:11px;color:#94a3b8;letter-spacing:2px">YOUR ESTIMATED SCORE</div>
+      <div style="font-size:56px;font-weight:900;color:#e2e8f0;margin:8px 0;letter-spacing:-2px">${totalScore}<span style="font-size:24px;color:#64748b">/990</span></div>
+      <div style="display:flex;gap:16px;justify-content:center;margin-top:12px">
+        <div><div style="font-size:11px;color:#94a3b8">${lLevel} Listening</div><div style="font-size:24px;font-weight:700;color:#818cf8">${lScore}</div><div style="font-size:10px;color:#64748b">${lCorrect}/${lTotal} (${Math.round(lCorrect/Math.max(lTotal,1)*100)}%)</div></div>
+        <div><div style="font-size:11px;color:#94a3b8">${rLevel} Reading</div><div style="font-size:24px;font-weight:700;color:#f472b6">${rScore}</div><div style="font-size:10px;color:#64748b">${rCorrect}/${rTotal} (${Math.round(rCorrect/Math.max(rTotal,1)*100)}%)</div></div>
+      </div>
+    </div>
+
+    <div style="margin:16px 0">
+      <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:6px">📊 パート別正答率</div>
+      <div style="background:#1e293b;border-radius:10px;padding:4px 0">${partTable}</div>
+    </div>
+
+    <div style="margin:16px 0;padding:12px;background:rgba(251,191,36,0.05);border:1px solid rgba(251,191,36,0.15);border-radius:10px;font-size:11px;color:#94a3b8">
+      💡 これは公式問題集5の換算表に基づく目安です。実際の本番では±50点程度の誤差があります。
+    </div>
+
+    <button class="btn-p" id="mockRetryBtn" style="margin-top:16px">🔄 もう一度</button>
+    <button class="btn-s" id="mockHomeBtn" style="margin:12px auto;display:block">← ホームに戻る</button>`;
+
+  $("mockRetryBtn").onclick = () => { S.screen = "mockSetup"; render(); };
+  $("mockHomeBtn").onclick = () => { S.screen = "home"; render(); };
 }
 
 function renderHome() {
@@ -2816,7 +3201,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16f · consistency check</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16j · mock JSON import</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
@@ -2835,8 +3220,9 @@ function renderHome() {
         ${[5,10,15,20,25,30].map(n=>`<option value="${n}" ${S.stockCreateTarget===n?"selected":""}>${n}問</option>`).join("")}
       </select>
     </div>
-    <div style="text-align:center;margin-top:6px">
+    <div style="text-align:center;margin-top:6px;display:flex;gap:8px;justify-content:center">
       <button class="btn-s" id="graphicStockBtn" style="font-size:11px;color:#f472b6" ${!S.level?"disabled":""}>🖼️ Graphic問題 作成</button>
+      <button class="btn-s" id="mockTestBtn" style="font-size:11px;color:#fbbf24">🎯 模試（実力テスト）</button>
     </div>
     <div id="stockInfo" style="text-align:center;font-size:11px;color:#64748b;margin-top:4px"></div>
     <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
@@ -2904,6 +3290,7 @@ function renderHome() {
     loadNewSet();
   };
   $("vocabBtn").onclick=()=>{ S.screen="vocab"; render(); };
+  $("mockTestBtn").onclick=()=>{ S.screen="mockSetup"; render(); };
   $("judgeHomeToggle").onclick=()=>{
     S.judgeMode=!S.judgeMode;
     localStorage.setItem("judgeMode",JSON.stringify(S.judgeMode));
@@ -3202,7 +3589,7 @@ function renderStudy() {
     try {
       await stockSave(S.part, S.level, S.qSet, S.sceneImgUrl);
       // Also save vocab to vocab DB
-      if (S.qSet.vocab && S.qSet.vocab.length) await vocabAutoSave(S.qSet.vocab, S.part).catch(()=>{});
+      if (S.qSet.vocab && S.qSet.vocab.length) await vocabAutoSave(S.qSet.vocab, S.part).catch(e=>console.warn('vocab auto-save failed:', e));
       stb.textContent="✅ ストック済み"; stb.disabled=true; stb.style.color="#4ade80";
     } catch(e) { stb.textContent="❌ 保存失敗"; console.error(e); }
   };
