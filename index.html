@@ -3038,6 +3038,7 @@ async function renderListenPlay() {
   // Play stored stock audio (Opus base64 → blob → Audio). Returns true if played.
   async function playStoredStock(item) {
     const audioData = item.audioOpus || item.audioPcm;
+    console.log(`[LISTEN] playStoredStock: part=${item.part}, hasOpus=${!!item.audioOpus}, hasPcm=${!!item.audioPcm}, dataLen=${audioData?audioData.length:0}`);
     if (!audioData) return false;
     try {
       let url;
@@ -3046,14 +3047,15 @@ async function renderListenPlay() {
       } else {
         url = pcmToUrl(item.audioPcm);
       }
+      console.log(`[LISTEN] Playing stored audio: ${url.slice(0,50)}...`);
       return new Promise(resolve => {
         const a = new Audio(url);
         _curAudio = a;
-        a.onended = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(true); };
-        a.onerror = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(false); };
-        a.play().catch(e => { URL.revokeObjectURL(url); resolve(false); });
+        a.onended = () => { console.log("[LISTEN] Audio ended OK"); URL.revokeObjectURL(url); _curAudio=null; resolve(true); };
+        a.onerror = (e) => { console.error("[LISTEN] Audio error:", e); URL.revokeObjectURL(url); _curAudio=null; resolve(false); };
+        a.play().then(() => console.log("[LISTEN] play() started")).catch(e => { console.error("[LISTEN] play() rejected:", e); URL.revokeObjectURL(url); resolve(false); });
       });
-    } catch(e) { console.warn("stored stock audio fail:", e); return false; }
+    } catch(e) { console.error("stored stock audio fail:", e); return false; }
   }
 
   // Play sequence
@@ -3063,18 +3065,43 @@ async function renderListenPlay() {
     await speakAndWait(`Question ${idx+1}.`);
     if(stopped) return;
 
-    // 2. Main audio (prefer stored Opus audio, fallback to live TTS)
+    // 2. Main audio (prefer stored Opus audio, fallback to live TTS, then Web Speech)
     const audioText = qs.audio || qs.spoken || qs.talk || qs.conversation || "";
+    console.log(`[LISTEN] audioText: ${audioText ? audioText.slice(0,60)+"..." : "EMPTY"}, keys: ${Object.keys(qs).join(",")}`);
     if(audioText) {
       textEl.textContent = audioText.replace(/\\n/g,"\n");
       statusEl.textContent="🔊 問題再生中...";
       const played = await playStoredStock(item);
       if (!played) {
-        // Fallback to live generation
-        if(item.part==="part3") {
-          await speakConvWait(audioText, qs.speakers);
-        } else {
-          await speakAndWait(audioText);
+        // No stored audio — try Gemini TTS with short timeout, fallback to Web Speech
+        let ttsOk = false;
+        try {
+          const ttsPromise = new Promise((resolve, reject) => {
+            const isConv = item.part==="part3";
+            if (isConv) {
+              speakConv(audioText, (err) => err ? reject(err) : resolve(), qs.speakers);
+            } else {
+              speakGemini(audioText, (err) => err ? reject(err) : resolve());
+            }
+          });
+          // Give Gemini TTS 15 seconds max, then fallback
+          const timeout = new Promise((_, reject) => setTimeout(() => reject("timeout"), 15000));
+          await Promise.race([ttsPromise, timeout]);
+          ttsOk = true;
+        } catch(e) {
+          console.warn("Listen TTS failed, using Web Speech:", e);
+        }
+        if (!ttsOk && !stopped) {
+          // Web Speech API fallback (browser built-in, works offline)
+          await new Promise(resolve => {
+            if (!window.speechSynthesis) { resolve(); return; }
+            const cleanText = audioText.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,"").replace(/\\n/g," ");
+            const utter = new SpeechSynthesisUtterance(cleanText);
+            utter.lang = "en-US"; utter.rate = 0.95;
+            utter.onend = () => resolve();
+            utter.onerror = () => resolve();
+            speechSynthesis.speak(utter);
+          });
         }
       }
     }
