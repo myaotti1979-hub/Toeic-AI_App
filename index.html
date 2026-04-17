@@ -1399,25 +1399,47 @@ async function stockSave(part, level, qSet, imgUrl) {
     imgUrl: imgUrl || null,
     createdAt: Date.now(),
   };
-  // Opus only (no more gzip fallback - encode PCM to Opus on-the-fly if needed)
+  // Audio: save Opus if available, otherwise save PCM and encode Opus in background
+  let savedId = null;
   if (qSet._audioOpus) {
     data.audioOpus = qSet._audioOpus;
     data.audioFormat = "opus";
   } else if (qSet._audioPcm) {
-    try {
-      const opus = await encodeOpus(qSet._audioPcm);
-      data.audioOpus = opus;
-      data.audioFormat = "opus";
-    } catch(e) { console.warn("opus encode in stockSave failed:", e); }
+    // Save PCM temporarily for immediate storage (fast)
+    data.audioPcm = qSet._audioPcm;
+    data.audioFormat = "pcm_pending";
   }
   delete data.qSet._audioUrl;
   delete data.qSet._audioPcm;
-  return new Promise((resolve, reject) => {
+  delete data.qSet._audioOpus;
+  savedId = await new Promise((resolve, reject) => {
     const tx = db.transaction("questions","readwrite");
-    tx.objectStore("questions").add(data);
-    tx.oncomplete = () => resolve();
+    const store = tx.objectStore("questions");
+    const req = store.add(data);
+    req.onsuccess = () => resolve(req.result);
     tx.onerror = () => reject(tx.error);
   });
+  // Background Opus encoding: convert PCM→Opus and update the record
+  if (data.audioFormat === "pcm_pending" && data.audioPcm && savedId != null) {
+    encodeOpus(data.audioPcm).then(async opus => {
+      try {
+        const db2 = await openStockDB();
+        const tx2 = db2.transaction("questions","readwrite");
+        const store2 = tx2.objectStore("questions");
+        const getReq = store2.get(savedId);
+        getReq.onsuccess = () => {
+          const rec = getReq.result;
+          if (rec) {
+            rec.audioOpus = opus;
+            rec.audioFormat = "opus";
+            delete rec.audioPcm;
+            store2.put(rec);
+            console.log(`[BG OPUS] id=${savedId} encoded OK`);
+          }
+        };
+      } catch(e) { console.warn("[BG OPUS] update failed:", e); }
+    }).catch(e => console.warn("[BG OPUS] encode failed:", e));
+  }
 }
 
 async function stockGetAll(part) {
@@ -1441,7 +1463,7 @@ async function stockGetAll(part) {
 function validateStockItem(item) {
   if (!item || !item.part) return {ok:false, reason:"no part"};
   const isListening = ["part1","part2","part3","part4"].includes(item.part);
-  if (isListening && !item.audioOpus) return {ok:false, reason:"listening without audio"};
+  if (isListening && !item.audioOpus && !item.audioPcm) return {ok:false, reason:"listening without audio"};
   if (item.part === "part1" && !item.imgUrl) return {ok:false, reason:"part1 without image"};
   // Graphic questions: require BOTH image AND graphic data
   if (item.qSet && item.qSet.graphic) {
@@ -1664,6 +1686,13 @@ async function encodeOpus(b64pcm, srcRate=24000) {
   });
 }
 
+
+// Get playable URL from stock item (Opus preferred, PCM fallback)
+function stockAudioUrl(item) {
+  if (item.audioOpus) return opusToUrl(item.audioOpus);
+  if (item.audioPcm) return pcmToUrl(item.audioPcm);
+  return null;
+}
 // Opus base64 → 再生用URL
 function opusToUrl(b64) {
   const raw=atob(b64), bytes=new Uint8Array(raw.length);
@@ -1995,50 +2024,39 @@ function triggerAutoStock() {
   const isL = ["part1","part2","part3","part4"].includes(S.part);
   if (isL) {
     const qs = S.qSet;
-    // If preGenAudio already generated audio, use it directly (no live TTS needed)
+    // Stock creation mode: skip full playback — just verify audio exists and save
     if (qs._audioOpus || qs._audioPcm || qs._audioUrl) {
-      // Audio already exists — play stored audio for preview, then auto-stock
-      const pa = document.getElementById("playAudio");
-      if (pa && qs._audioUrl) {
-        setAudioBtn(pa, "loading");
-        playSeq([qs._audioUrl], () => {
-          setAudioBtn(pa, "idle");
-          autoStockAndNext();
-        });
-      } else {
-        // Audio data exists but no playback URL — skip preview, just save
-        autoStockAndNext();
-      }
+      // Audio exists — save immediately (Opus encoding happens in background via stockSave)
+      autoStockAndNext();
       return;
     }
-    // No stored audio — try live TTS as fallback
+    // No stored audio — try live TTS to generate (not play, just capture)
     if (qs.audio) {
-      const pa = document.getElementById("playAudio");
-      if (pa) {
-        setAudioBtn(pa, "loading");
-        const isConv = S.part==="part3";
-        const fn = isConv ? (t,cb)=>speakConv(t,cb,qs.speakers) : speakGemini;
-        fn(qs.audio, (err) => {
-          setAudioBtn(pa, err?"error":"idle", err?String(err).slice(0,100):"");
-          if (!err) {
+      const isConv = S.part==="part3";
+      // For stock creation, use preGenAudio-style generation instead of playback
+      (async () => {
+        try {
+          await preGenAudio(qs);
+          if (qs._audioPcm || qs._audioUrl) {
             autoStockAndNext();
           } else {
-            // Live TTS failed — skip this question (no audio = can't stock listening)
-            console.warn(`[STOCK SKIP] ${S.part}: live TTS failed, skipping`);
-            setTimeout(()=>{ if(S.stockCreateMode) loadNewSet(); }, 2000);
+            console.warn(`[STOCK SKIP] ${S.part}: TTS generated no audio`);
+            setTimeout(()=>{ if(S.stockCreateMode) loadNewSet(); }, 1000);
           }
-        });
-      }
+        } catch(e) {
+          console.warn(`[STOCK SKIP] ${S.part}: TTS failed: ${e.message}`);
+          setTimeout(()=>{ if(S.stockCreateMode) loadNewSet(); }, 1000);
+        }
+      })();
     } else {
-      // No audio field at all — skip
       console.warn(`[STOCK SKIP] ${S.part}: no audio field`);
       setTimeout(()=>{ if(S.stockCreateMode) loadNewSet(); }, 1000);
     }
   } else {
-    // Readingパート: 2秒プレビュー後に自動ストック
+    // Readingパート: 即座に自動ストック（プレビュー不要）
     setTimeout(()=>{
       if (S.stockCreateMode && !S.stockCreatePaused) autoStockAndNext();
-    }, 2000);
+    }, 500);
   }
 }
 
@@ -2189,8 +2207,8 @@ function loadStockItem(item) {
   S.screen="study"; S.stockMode=true; S.stockId=item.id;
   S.stats={correct:0,wrong:0}; S.streak=0;
   // 音声URLを再生成（Opus形式のみ対応）
-  if (item.audioOpus) {
-    item.qSet._audioUrl = opusToUrl(item.audioOpus);
+  if (item.audioOpus || item.audioPcm) {
+    item.qSet._audioUrl = stockAudioUrl(item);
   }
   S.qSet=item.qSet;
   S.qSet.part=item.part; // partフィールドを復元
@@ -3017,14 +3035,15 @@ async function renderListenPlay() {
 
   // Play stored stock audio (Opus base64 → blob → Audio). Returns true if played.
   async function playStoredStock(item) {
-    const audioData = item.audioOpus;
+    const audioData = item.audioOpus || item.audioPcm;
     if (!audioData) return false;
     try {
-      const bin = atob(audioData);
-      const bytes = new Uint8Array(bin.length);
-      for (let i=0; i<bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const blob = new Blob([bytes], {type:"audio/webm;codecs=opus"});
-      const url = URL.createObjectURL(blob);
+      let url;
+      if (item.audioOpus) {
+        url = opusToUrl(item.audioOpus);
+      } else {
+        url = pcmToUrl(item.audioPcm);
+      }
       return new Promise(resolve => {
         const a = new Audio(url);
         _curAudio = a;
@@ -3388,7 +3407,7 @@ async function mockStockImport(items) {
     if (!item.part || !item.qSet) { rejected++; continue; }
     // Reject listening items without audio
     const isListening = ["part1","part2","part3","part4"].includes(item.part);
-    if (isListening && !item.audioOpus) {
+    if (isListening && !item.audioOpus && !item.audioPcm) {
       console.warn("[MOCK IMPORT] Rejecting listening item without audio:", item.part);
       rejected++; continue;
     }
@@ -3406,7 +3425,7 @@ async function mockStockImport(items) {
     if (seen.has(ts)) { skipped++; continue; }
     seen.add(ts);
     const data = {part:item.part, level:item.level, qSet:item.qSet,
-                  imgUrl:item.imgUrl||null, audioOpus:item.audioOpus||null,
+                  imgUrl:item.imgUrl||null, audioOpus:item.audioOpus||null, audioPcm:item.audioPcm||null,
                   batchId:item.batchId||null, batchLabel:item.batchLabel||null,
                   createdAt: ts};
     await new Promise((resolve, reject) => {
@@ -3477,9 +3496,9 @@ function renderMockTest() {
     </div>`;
 
   // Audio (Part 1-4) — cache blob URL on item to avoid recreating
-  if (["part1","part2","part3","part4"].includes(item.part) && item.audioOpus) {
+  if (["part1","part2","part3","part4"].includes(item.part) && (item.audioOpus || item.audioPcm)) {
     if (!item._blobUrl) {
-      item._blobUrl = opusToUrl(item.audioOpus);
+      item._blobUrl = stockAudioUrl(item);
     }
     // autoplay only on first sub-question of this set
     const autoplay = S.mockQIdx === 0 ? "autoplay" : "";
