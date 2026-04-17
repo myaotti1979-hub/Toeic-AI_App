@@ -938,7 +938,6 @@ function normalizeSet(raw, part) {
 }
 
 function enforceChoiceCount(qs) {
-  // TOEIC format: Part 2 = 3 choices (A-C), all others = 4 choices (A-D). NEVER 5+.
   const maxC = qs.part === "part2" ? 3 : 4;
   for (const q of (qs.questions || [])) {
     if (q.choices && q.choices.length > maxC) {
@@ -950,12 +949,45 @@ function enforceChoiceCount(qs) {
   return qs;
 }
 
+function shuffleAnswerPositions(qs) {
+  const labels = ["(A)","(B)","(C)","(D)"];
+  for (const q of (qs.questions || [])) {
+    const choices = q.choices;
+    const correctIdx = q.correct || 0;
+    if (!choices || correctIdx >= choices.length) continue;
+    const n = choices.length;
+    const order = Array.from({length:n}, (_,i)=>i);
+    for (let i=n-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [order[i],order[j]]=[order[j],order[i]]; }
+    const newChoices = new Array(n);
+    let newCorrect = 0;
+    for (let np=0; np<n; np++) {
+      const op = order[np];
+      const c = choices[op].replace(/^\([A-D]\)\s*/, "");
+      newChoices[np] = `${labels[np]} ${c}`;
+      if (op === correctIdx) newCorrect = np;
+    }
+    const oldLabel = labels[correctIdx] || "(A)";
+    const newLabel = labels[newCorrect];
+    q.choices = newChoices;
+    q.correct = newCorrect;
+    if (oldLabel !== newLabel) {
+      for (const f of ["explanation_ja","explanation_en"]) {
+        if (q[f]) {
+          q[f] = q[f].replaceAll(`正解は${oldLabel}`, `正解は${newLabel}`)
+                      .replaceAll(`answer is ${oldLabel}`, `answer is ${newLabel}`);
+        }
+      }
+    }
+  }
+  return qs;
+}
+
 async function generateQuestionSet(partOverride, options) {
   const usePart = partOverride || S.part;
   const model = PART_MODEL[usePart] || GEMINI_FLASH;
   const raw = await geminiText(getPrompt(S.level, usePart, options), model);
   const parsed = parseJSON(raw);
-  const result = enforceChoiceCount(normalizeSet(parsed, S.part));
+  const result = shuffleAnswerPositions(enforceChoiceCount(normalizeSet(parsed, S.part)));
   console.log("Generated:", S.part, "audio:", !!result.audio, "translation_ja:", !!result.translation_ja, "translation_ja_1:", !!result.translation_ja_1);
   return result;
 }
@@ -3086,6 +3118,8 @@ function renderMockSetup() {
 
     <div id="mockStockSummary" style="margin:12px 0;padding:10px;background:#243040;border-radius:10px;font-size:12px"></div>
 
+    <div id="mockBatchSelect" style="margin:12px 0"></div>
+
     <div style="font-size:13px;color:#a0b4c8;margin:12px 0 6px">テスト形式</div>
     <button class="btn-s" data-mock-mode="full" style="width:100%;margin:4px 0;padding:14px;text-align:left;background:rgba(129,140,248,0.08)">
       <div style="font-weight:700;font-size:15px;color:#dce6f0">🏆 本番フォーマット (200問)</div>
@@ -3106,15 +3140,40 @@ function renderMockSetup() {
   (async () => {
     const all = await mockStockGetAll();
     const counts = {};
-    const byLevel = {};
     const normPart = p => p && p.startsWith("part7") ? "part7" : p;
     all.forEach(s => {
       const np = normPart(s.part);
       counts[np] = (counts[np]||0) + 1;
-      const k = `${np}/${(s.level||"?").slice(0,3)}`;
-      byLevel[k] = (byLevel[k]||0) + 1;
     });
-    const required_full = MOCK_FULL_DIST;
+
+    // ── Batch selector ──
+    const batches = {};
+    all.forEach(s => {
+      const bid = s.batchId || "legacy";
+      if (!batches[bid]) batches[bid] = {label: s.batchLabel || "インポート済み", items: []};
+      batches[bid].items.push(s);
+    });
+    const batchIds = Object.keys(batches);
+    let batchHtml = "";
+    if (batchIds.length > 1) {
+      batchHtml += "<div style='font-size:13px;color:#a0b4c8;margin-bottom:6px'>📋 模試バッチを選択</div>";
+      batchHtml += "<select id='mockBatchSel' style='width:100%;padding:10px;background:#243040;color:#dce6f0;border:1px solid #3a4d63;border-radius:8px;font-size:13px'>";
+      batchHtml += `<option value="__all__">全データ (${all.length}セット)</option>`;
+      for (const bid of batchIds) {
+        const b = batches[bid];
+        const nq = b.items.reduce((s,r) => s + (r.qSet?.questions?.length||0), 0);
+        batchHtml += `<option value="${bid}">${b.label} — ${nq}問 (${b.items.length}セット)</option>`;
+      }
+      batchHtml += "</select>";
+    } else if (batchIds.length === 1 && batchIds[0] !== "legacy") {
+      const b = batches[batchIds[0]];
+      const nq = b.items.reduce((s,r) => s + (r.qSet?.questions?.length||0), 0);
+      batchHtml += `<div style='font-size:12px;color:#a0b4c8;padding:8px;background:#243040;border-radius:8px'>📋 ${b.label} — ${nq}問</div>`;
+    }
+    $("mockBatchSelect").innerHTML = batchHtml;
+
+    // ── Stock summary ──
+    const required_full = {part1:6, part2:25, part3:39, part4:30, part5:30, part6:16, part7:54};
     let html = "<div style='font-weight:600;color:#dce6f0;margin-bottom:6px'>📦 模試ストック状況</div>";
     if (all.length === 0) {
       html += "<div style='color:#7a8ea5;text-align:center;padding:8px'>データがありません。ジェネレーターで模試を生成してJSONをインポートしてください。</div>";
@@ -3162,8 +3221,14 @@ function renderMockSetup() {
   document.querySelectorAll("[data-mock-mode]").forEach(btn => {
     btn.onclick = async () => {
       const mode = btn.dataset.mockMode;
-      const all = await mockStockGetAll();
+      let all = await mockStockGetAll();
       if (all.length === 0) { alert("模試データがありません。先にインポートしてください。"); return; }
+      // Filter by selected batch
+      const selEl = $("mockBatchSel");
+      if (selEl && selEl.value && selEl.value !== "__all__") {
+        all = all.filter(s => (s.batchId || "legacy") === selEl.value);
+        if (all.length === 0) { alert("選択したバッチにデータがありません。"); return; }
+      }
       // Normalize part7s/part7d/part7t → part7 for grouping
       const normPart = p => p && p.startsWith("part7") ? "part7" : p;
       const byPart = {};
@@ -3183,6 +3248,16 @@ function renderMockSetup() {
       }
       S.mockItems = testItems;
       S.mockMode = mode;
+      // Flatten to count total questions, trim to exactly 200 (or 100 for half)
+      let totalQ = testItems.reduce((s,it) => s + (it.qSet?.questions?.length || 0), 0);
+      const targetQ = mode === "full" ? 200 : 100;
+      // If over target, remove questions from the last set
+      while (totalQ > targetQ && testItems.length > 0) {
+        const lastItem = testItems[testItems.length - 1];
+        const qs = lastItem.qSet?.questions;
+        if (qs && qs.length > 1) { qs.pop(); totalQ--; }
+        else { testItems.pop(); totalQ -= (qs?.length || 0); }
+      }
       S.mockIdx = 0; S.mockQIdx = 0;
       S.mockAnswers = [];
       S.mockStartTime = Date.now();
@@ -3567,7 +3642,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.17f · soft dark theme + Part1 30 types + audio-only</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.17f · soft dark theme + batch mock + scoring aligned</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
