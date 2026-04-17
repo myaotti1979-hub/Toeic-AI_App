@@ -124,12 +124,13 @@ const TTS_MAX = 5000;              // Max chars sent to Gemini TTS in one call
 const TTS_CACHE_SIZE = 20;         // LRU cache size for generated audio
 const API_THROTTLE_MS = 300;       // Delay between sequential API requests
 const API_RETRY_DELAY_MS = 3000;   // Wait between retries on 429/500/503
-const LISTEN_THINK_MS = 3000;      // Pause after question audio in listen mode
-const LISTEN_CHOICES_PAUSE_MS = 2500; // Pause after choices read
-const LISTEN_AFTER_ANSWER_MS = 1000;  // Pause after answer announcement
-const LISTEN_AFTER_EXPL_MS = 1500;    // Pause after English explanation
-const LISTEN_BETWEEN_QUESTIONS_MS = 1500; // Pause between sub-questions
-const LISTEN_BETWEEN_ITEMS_MS = 1500;     // Pause before next stock item
+const LISTEN_THINK_MS = 5000;      // Pause after main audio before Q&A (real TOEIC: 5s)
+const LISTEN_Q_TO_CHOICES_MS = 2000;  // Pause between question text and choices reading
+const LISTEN_CHOICES_PAUSE_MS = 5000; // Pause after choices to think (real TOEIC Part 3/4: 8s)
+const LISTEN_AFTER_ANSWER_MS = 2000;  // Pause after answer announcement
+const LISTEN_AFTER_EXPL_MS = 2000;    // Pause after English explanation
+const LISTEN_BETWEEN_QUESTIONS_MS = 1500; // Pause between sub-questions (Part 3/4)
+const LISTEN_BETWEEN_ITEMS_MS = 2000;     // Pause before next stock item
 
 // 3段階モデル構成: Lite(単純) / Flash(中程度) / Pro(複雑)
 const PART_MODEL = {
@@ -654,7 +655,12 @@ CRITICAL — CORRECT ANSWER STYLE: The correct answer should frequently be INDIR
 DISTRACTORS — use at least ONE trap in wrong answers:
   * Repeated word in wrong context * Similar sound (meet/meat, file/while) * Related topic but wrong answer * Wrong tense
 
-{"spoken":"Natural question or statement 5-15 words","choices":["(A) response.","(B) response.","(C) response."],"correct":0,"explanation_ja":"【出題: ${t.type||"?"}】\n和訳: (spoken の日本語訳)\n正解理由と各誤答のトラップタイプを解説"}`,
+{"spoken":"Natural question or statement 5-15 words","choices":["(A) Short response 3-8 words.","(B) Short response 3-8 words.","(C) Short response 3-8 words."],"correct":0,"explanation_ja":"【出題: ${t.type||"?"}】\n和訳: (spoken の日本語訳)\n正解理由と各誤答のトラップタイプを解説"}
+CRITICAL FORMAT RULES:
+- EXACTLY 3 choices only: (A), (B), (C). NEVER include (D).
+- Each response MUST be 3-8 words (short spoken fragments, like real TOEIC).
+- Good: "(A) In the conference room." / "(B) She left early today." / "(C) About thirty minutes."
+- Bad: "(A) I believe the meeting has been rescheduled to next Tuesday because of the holiday." (too long!)`,
 
     part3: () => `${sys}
 Create a TOEIC Part 3 (Conversations) question set.
@@ -875,7 +881,7 @@ function normalizeSet(raw, part) {
   switch(part) {
     case "part1": {
       // ALWAYS rebuild audio from choices to avoid LLM placeholder bugs
-      const audio = raw.choices.map((c,i)=>`(${["A","B","C","D"][i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
+      const audio = raw.choices.map((c,i)=>`(${["A","B","C","D"][i]}) ${c.replace(/^\([A-D]\)\s*/,"").replace(/\.+$/,"")}.`).join(" ... ");
       if (raw.audio && (raw.audio.includes("[") && raw.audio.includes("]"))) {
         console.warn("Part1: LLM audio contained placeholders, using reconstructed");
       }
@@ -884,7 +890,7 @@ function normalizeSet(raw, part) {
     }
     case "part2": {
       // ALWAYS rebuild audio from spoken + choices
-      const audio = `${raw.spoken}. ${raw.choices.map((c,i)=>`(${["A","B","C"][i]}) ${c.replace(/^\([A-C]\)\s*/,"")}`).join(". ")}`;
+      const audio = `${raw.spoken}. ... ${raw.choices.map((c,i)=>`(${["A","B","C"][i]}) ${c.replace(/^\([A-C]\)\s*/,"").replace(/\.+$/,"")}.`).join(" ... ")}`;
       if (raw.audio && (raw.audio.includes("[") && raw.audio.includes("]"))) {
         console.warn("Part2: LLM audio contained placeholders, using reconstructed");
       }
@@ -1006,9 +1012,9 @@ function shuffleAnswerPositions(qs) {
   }
   // Rebuild audio field to match shuffled choices (Part 1/2 include choices in audio)
   if (qs.part === "part1" && qs.questions && qs.questions[0]) {
-    qs.audio = qs.questions[0].choices.map((c,i)=>`(${["A","B","C","D"][i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
+    qs.audio = qs.questions[0].choices.map((c,i)=>`(${["A","B","C","D"][i]}) ${c.replace(/^\([A-D]\)\s*/,"").replace(/\.+$/,"")}.`).join(" ... ");
   } else if (qs.part === "part2" && qs.spoken && qs.questions && qs.questions[0]) {
-    qs.audio = `${qs.spoken}. ${qs.questions[0].choices.map((c,i)=>`(${["A","B","C"][i]}) ${c.replace(/^\([A-C]\)\s*/,"")}`).join(". ")}`;
+    qs.audio = `${qs.spoken}. ... ${qs.questions[0].choices.map((c,i)=>`(${["A","B","C"][i]}) ${c.replace(/^\([A-C]\)\s*/,"").replace(/\.+$/,"")}.`).join(" ... ")}`;
   }
   return qs;
 }
@@ -3071,7 +3077,7 @@ async function renderListenPlay() {
       if(questions.length > 1) {
         statusEl.textContent=`🔊 Q${qi+1}: ${q.question?.slice(0,40)}...`;
         await speakAndWait(q.question || "");
-        await wait(LISTEN_AFTER_EXPL_MS);
+        await wait(LISTEN_Q_TO_CHOICES_MS);
         if(stopped) return;
       }
 
@@ -3081,6 +3087,10 @@ async function renderListenPlay() {
         statusEl.textContent=`🔊 選択肢を読み上げ中...`;
         const choicesText = choices.map((c,i)=>`(${letters[i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
         await speakAndWait(choicesText);
+        await wait(LISTEN_CHOICES_PAUSE_MS);
+        if(stopped) return;
+      } else if (["part1","part2"].includes(item.part)) {
+        // Part 1/2: choices already in main audio, just add think time
         await wait(LISTEN_CHOICES_PAUSE_MS);
         if(stopped) return;
       }
@@ -3106,7 +3116,7 @@ async function renderListenPlay() {
 
     // 5. Auto advance
     statusEl.textContent="➡️ Next...";
-    await wait(1500);
+    await wait(LISTEN_BETWEEN_ITEMS_MS);
     if(!stopped) { S.listenIdx=idx+1; render(); }
   } catch(e) {
     console.error("Listen error:", e);
