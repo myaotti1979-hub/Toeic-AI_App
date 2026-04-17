@@ -2710,14 +2710,36 @@ async function renderVocab() {
         await a.play();
         return;
       } catch(e) {
-        console.warn("Stored audio playback failed, falling back to Gemini:", e);
+        console.warn("Stored audio playback failed:", e);
       }
     }
-    // Fallback: Gemini TTS
+    // Fallback 1: Gemini TTS
     if (!fallbackText) { btn.textContent = originalLabel; return; }
-    try { speakGemini(fallbackText, () => { btn.textContent = originalLabel; }); }
-    catch(e) { btn.textContent = originalLabel; }
-    setTimeout(() => { btn.textContent = originalLabel; }, 500);
+    try {
+      await new Promise((resolve, reject) => {
+        speakGemini(fallbackText, (err) => { if (err) reject(err); else resolve(); });
+      });
+      btn.textContent = originalLabel;
+      return;
+    } catch(e) {
+      console.warn("Gemini TTS failed for vocab:", e);
+    }
+    // Fallback 2: Web Speech API (browser built-in)
+    try {
+      if (window.speechSynthesis) {
+        await new Promise(resolve => {
+          const utter = new SpeechSynthesisUtterance(fallbackText);
+          utter.lang = "en-US"; utter.rate = 0.9;
+          utter.onend = () => resolve();
+          utter.onerror = () => resolve();
+          speechSynthesis.speak(utter);
+        });
+        btn.textContent = originalLabel;
+        return;
+      }
+    } catch(e) {}
+    btn.textContent = "⚠️";
+    setTimeout(() => { btn.textContent = originalLabel; }, 2000);
   }
   // Pronunciation buttons - words (prefer stored audio)
   document.querySelectorAll(".vocab-play").forEach(btn=>{
@@ -4188,8 +4210,30 @@ function renderStudy() {
       const word=btn.dataset.word;
       if(!word)return;
       btn.textContent="⏳";
-      try { await speakGemini(word, ()=>{ btn.textContent="🔊"; }); btn.textContent="🔊"; }
-      catch(e){ btn.textContent="🔊"; }
+      try {
+        await new Promise((resolve, reject) => {
+          speakGemini(word, (err) => { if (err) reject(err); else resolve(); });
+        });
+        btn.textContent="🔊";
+      } catch(e){
+        // Gemini 429 → Web Speech fallback
+        try {
+          if (window.speechSynthesis) {
+            await new Promise(resolve => {
+              const utter = new SpeechSynthesisUtterance(word);
+              utter.lang = "en-US"; utter.rate = 0.9;
+              utter.onend = () => resolve();
+              utter.onerror = () => resolve();
+              speechSynthesis.speak(utter);
+            });
+            btn.textContent="🔊";
+            return;
+          }
+        } catch(e2) {}
+        btn.textContent="⚠️";
+        btn.title=String(e).slice(0,60);
+        setTimeout(()=>{ btn.textContent="🔊"; btn.title="発音"; }, 3000);
+      }
     };
   });
   const pc=$("playChoices");
