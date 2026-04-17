@@ -3349,6 +3349,7 @@ async function mockStockImport(items) {
     seen.add(ts);
     const data = {part:item.part, level:item.level, qSet:item.qSet,
                   imgUrl:item.imgUrl||null, audioOpus:item.audioOpus||null,
+                  batchId:item.batchId||null, batchLabel:item.batchLabel||null,
                   createdAt: ts};
     await new Promise((resolve, reject) => {
       const tx = db.transaction("mock","readwrite");
