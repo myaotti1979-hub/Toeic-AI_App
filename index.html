@@ -868,6 +868,9 @@ function parseJSON(text) {
 }
 
 function normalizeSet(raw, part) {
+  // Normalize subtypes to base part for storage/display
+  if (part === "part3_3p") part = "part3";
+  if (part.startsWith("part7") && part !== "part7") part = "part7";
   // Normalize all parts into unified {part, questions:[], audio?, content fields}
   switch(part) {
     case "part1": {
@@ -2893,40 +2896,7 @@ async function renderVocabQuiz() {
 /* ── 流し聞き設定画面 ── */
 function renderListenSetup() {
   const stocks = S.listenAllStocks || [];
-  const byPart = {part2: [
-    {type:"wh_what_thing", desc:"What + thing/object. 'What kind of printer do we need?'"},
-    {type:"wh_what_action", desc:"What + action/plan. 'What should we do about the leak?'"},
-    {type:"wh_what_time", desc:"What time/day. 'What time does the store close?'"},
-    {type:"wh_which", desc:"Which + choice. 'Which floor is HR on?' / 'Which report?'"},
-    {type:"wh_where_place", desc:"Where + location. 'Where is the supply room?'"},
-    {type:"wh_where_direction", desc:"Where + direction. 'Where should I put these boxes?'"},
-    {type:"wh_when_future", desc:"When + future. 'When will the shipment arrive?'"},
-    {type:"wh_when_past", desc:"When + past. 'When did you last speak with the client?'"},
-    {type:"wh_who_person", desc:"Who + person. 'Who is in charge of the project?'"},
-    {type:"wh_whose", desc:"Whose + possession. 'Whose jacket is this?'"},
-    {type:"wh_why", desc:"Why question. 'Why was the meeting postponed?'"},
-    {type:"wh_how_manner", desc:"How + manner. 'How did the presentation go?'"},
-    {type:"wh_how_long", desc:"How long/far. 'How long will the renovation take?'"},
-    {type:"wh_how_many", desc:"How many/much. 'How many copies do you need?'"},
-    {type:"wh_how_often", desc:"How often/soon. 'How often does this bus run?'"},
-    {type:"yesno_do", desc:"Do/Does/Did question. 'Do you have the agenda?'"},
-    {type:"yesno_be", desc:"Is/Are/Was question. 'Is the report ready?'"},
-    {type:"yesno_have", desc:"Have/Has question. 'Have you finished the proposal?'"},
-    {type:"yesno_can", desc:"Can/Could question. 'Can you work Saturday?'"},
-    {type:"yesno_will", desc:"Will/Would question. 'Will the store be open tomorrow?'"},
-    {type:"yesno_should", desc:"Should question. 'Should we order more supplies?'"},
-    {type:"negative_isnt", desc:"Negative isn't/aren't. 'Isn't the deadline tomorrow?'"},
-    {type:"negative_didnt", desc:"Negative didn't/don't. 'Didn't you attend the workshop?'"},
-    {type:"tag", desc:"Tag question. 'The report is due Friday, isn't it?'"},
-    {type:"choice", desc:"Choice A or B. 'Morning or afternoon session?'"},
-    {type:"embedded", desc:"Embedded question. 'Do you know where the supply room is?'"},
-    {type:"statement_problem", desc:"Statement: problem. 'The printer seems to be jammed.'"},
-    {type:"statement_plan", desc:"Statement: plan/fact. 'I'm visiting the new office tomorrow.'"},
-    {type:"statement_opinion", desc:"Statement: opinion. 'That was an excellent presentation.'"},
-    {type:"statement_news", desc:"Statement: news. 'The CEO just announced a merger.'"},
-    {type:"request", desc:"Request. 'Could you help me carry these boxes?'"},
-    {type:"suggestion_offer", desc:"Suggestion/offer. 'Why don't we take a break?'"}
-  ], part4:[]};
+  const byPart = {part2:[], part3:[], part4:[]};
   for (const s of stocks) if (byPart[s.part]) byPart[s.part].push(s);
   const sel = S.listenSetup || {part:"all", random:true, count:20};
 
@@ -3721,7 +3691,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.17h · 5 critical bug fixes + all Pro + 209 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.17h · 7 bug fixes + all Pro + 209 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
