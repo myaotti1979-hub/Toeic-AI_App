@@ -242,7 +242,7 @@ function formatP6(text, activeBlank) {
 ────────────────────────────────────────────── */
 let _apiLock = Promise.resolve();
 
-async function throttledFetch(url, opts, maxRetries=1) {
+async function throttledFetch(url, opts, maxRetries=2) {
   let release;
   const prev = _apiLock;
   _apiLock = new Promise(r => release = r);
@@ -254,8 +254,9 @@ async function throttledFetch(url, opts, maxRetries=1) {
       const res = await fetch(url, opts);
       if (res.status === 429 || res.status === 503 || res.status === 500) {
         const errText = await res.text().catch(()=>"");
-        console.warn(`${res.status}: ${errText.slice(0,100)} | attempt ${attempt+1}/${maxRetries+1}`);
-        if (attempt < maxRetries) { await new Promise(r => setTimeout(r, API_RETRY_DELAY_MS)); continue; }
+        const wait = API_RETRY_DELAY_MS * Math.pow(2, attempt); // exponential: 3s, 6s, 12s
+        console.warn(`${res.status}: ${errText.slice(0,100)} | retry ${attempt+1}/${maxRetries} in ${wait/1000}s`);
+        if (attempt < maxRetries) { await new Promise(r => setTimeout(r, wait)); continue; }
         throw new Error(`API ${res.status}: ${errText.slice(0,200)}`);
       }
       return res;
@@ -1701,16 +1702,15 @@ function opusToUrl(b64) {
 }
 
 async function callTTS(text, config) {
-  const res = await fetch(
+  const res = await throttledFetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
     { method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({contents:[{parts:[{text:text.slice(0,TTS_MAX)}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:config}}) }
+      body: JSON.stringify({contents:[{parts:[{text:text.slice(0,TTS_MAX)}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:config}}) },
+    3  // maxRetries: 3 for TTS (429 is common)
   );
   if (!res.ok) {
     const errBody = await res.text();
     console.error(`TTS error ${res.status}:`, errBody);
-    if (res.status === 429) throw new Error("⚠️ TTS制限中です。数分待ってから再生してください");
-    if (res.status === 503) throw new Error("⚠️ TTSサーバー混雑中。しばらく待ってから再生してください");
     throw new Error(`TTS ${res.status}: ${errBody.slice(0,150)}`);
   }
   const d = await res.json();
