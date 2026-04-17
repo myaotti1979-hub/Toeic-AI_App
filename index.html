@@ -439,26 +439,40 @@ const TYPES = {
     {type:"graphic_chart", desc:"GRAPHIC: chart with data"}
   ],
   part5: [
-    {type:"word_form_noun_verb", desc:"Word form: noun vs verb"},
-    {type:"word_form_adj_adv", desc:"Word form: adj vs adv"},
-    {type:"word_form_noun_adj", desc:"Word form: noun vs adj"},
-    {type:"verb_tense_present", desc:"Verb tense: present"},
-    {type:"verb_tense_past", desc:"Verb tense: past"},
-    {type:"verb_tense_future", desc:"Verb tense: future"},
-    {type:"subject_verb_agreement", desc:"Subject-verb agreement"},
-    {type:"preposition", desc:"Preposition"},
-    {type:"conjunction", desc:"Conjunction"},
-    {type:"pronoun_relative", desc:"Relative pronoun"},
-    {type:"gerund_infinitive", desc:"Gerund vs infinitive"},
-    {type:"passive_voice", desc:"Passive voice"},
-    {type:"conditional", desc:"Conditional"},
-    {type:"comparative_superlative", desc:"Comparative/superlative"},
-    {type:"article_determiner", desc:"Article/determiner"},
-    {type:"vocabulary_meaning", desc:"Vocabulary: meaning"},
-    {type:"vocabulary_collocation", desc:"Collocation"},
-    {type:"adverb_placement", desc:"Adverb placement"},
-    {type:"parallel_structure", desc:"Parallel structure"},
-    {type:"participle", desc:"Participle: present/past"}
+    {type:"word_form_noun_verb", desc:"Word form: noun vs verb (decision/decide)"},
+    {type:"word_form_adj_adv", desc:"Word form: adj vs adverb (careful/carefully)"},
+    {type:"word_form_noun_adj", desc:"Word form: noun vs adj (confidence/confident)"},
+    {type:"word_form_verb_adj", desc:"Word form: verb vs adj (satisfy/satisfactory)"},
+    {type:"word_form_negative", desc:"Word form: negative prefix (un-/in-/dis-)"},
+    {type:"participle_adj", desc:"Participle: -ing vs -ed (interesting/interested)"},
+    {type:"compound_noun", desc:"Compound modifier (cost-effective, time-consuming)"},
+    {type:"word_form_er_ee", desc:"Word form: -er/-or vs -ee (employer/employee)"},
+    {type:"verb_tense_present", desc:"Verb tense: present simple/continuous"},
+    {type:"verb_tense_past", desc:"Verb tense: past simple/perfect"},
+    {type:"verb_tense_future", desc:"Verb tense: future (will/going to)"},
+    {type:"passive_voice", desc:"Active vs passive (was completed, being reviewed)"},
+    {type:"subject_verb_agreement", desc:"Subject-verb agreement (each IS, a number ARE)"},
+    {type:"preposition_basic", desc:"Basic preposition (in/on/at/for/to/by/with)"},
+    {type:"preposition_idiom", desc:"Prepositional idiom (responsible FOR, comply WITH)"},
+    {type:"conjunction_contrast", desc:"Contrast (although, whereas, despite, nevertheless)"},
+    {type:"conjunction_cause", desc:"Cause/result (because, therefore, due to)"},
+    {type:"conjunction_condition", desc:"Condition (if, unless, provided that, as long as)"},
+    {type:"preposition_vs_conjunction", desc:"Prep vs conj (during/while, because of/because)"},
+    {type:"pronoun_relative", desc:"Relative pronoun (who/which/that/whose/whom)"},
+    {type:"pronoun_reflexive", desc:"Reflexive/possessive (themselves, its, one another)"},
+    {type:"pronoun_indefinite", desc:"Indefinite (anyone, each, either, neither, several)"},
+    {type:"vocab_business", desc:"Business vocab (revenue, acquisition, subsidiary)"},
+    {type:"vocab_office", desc:"Office vocab (submit, forward, distribute, reschedule)"},
+    {type:"vocab_hr", desc:"HR vocab (recruit, promote, resign, compensation)"},
+    {type:"vocab_finance", desc:"Finance vocab (invoice, reimburse, allocate, budget)"},
+    {type:"vocab_marketing", desc:"Marketing vocab (launch, campaign, survey, demographic)"},
+    {type:"vocab_logistics", desc:"Logistics vocab (shipment, warehouse, inventory, vendor)"},
+    {type:"vocab_legal", desc:"Legal vocab (comply, regulation, authorize, mandatory)"},
+    {type:"vocab_collocation", desc:"Collocation (make a reservation, meet a deadline)"},
+    {type:"vocab_phrasal", desc:"Phrasal verb (carry out, look into, set up, turn down)"},
+    {type:"vocab_context", desc:"Context vocab (appropriate, considerable, thorough)"},
+    {type:"gerund_infinitive", desc:"Gerund vs infinitive (enjoy doing, plan to do)"},
+    {type:"comparative_superlative", desc:"Comparative/superlative (more efficient, the most)"}
   ],
   part6: [
     {type:"email_apology", desc:"Apology email"},
@@ -2853,7 +2867,40 @@ async function renderVocabQuiz() {
 /* ── 流し聞き設定画面 ── */
 function renderListenSetup() {
   const stocks = S.listenAllStocks || [];
-  const byPart = {part2:[], part3:[], part4:[]};
+  const byPart = {part2: [
+    {type:"wh_what_thing", desc:"What + thing/object. 'What kind of printer do we need?'"},
+    {type:"wh_what_action", desc:"What + action/plan. 'What should we do about the leak?'"},
+    {type:"wh_what_time", desc:"What time/day. 'What time does the store close?'"},
+    {type:"wh_which", desc:"Which + choice. 'Which floor is HR on?' / 'Which report?'"},
+    {type:"wh_where_place", desc:"Where + location. 'Where is the supply room?'"},
+    {type:"wh_where_direction", desc:"Where + direction. 'Where should I put these boxes?'"},
+    {type:"wh_when_future", desc:"When + future. 'When will the shipment arrive?'"},
+    {type:"wh_when_past", desc:"When + past. 'When did you last speak with the client?'"},
+    {type:"wh_who_person", desc:"Who + person. 'Who is in charge of the project?'"},
+    {type:"wh_whose", desc:"Whose + possession. 'Whose jacket is this?'"},
+    {type:"wh_why", desc:"Why question. 'Why was the meeting postponed?'"},
+    {type:"wh_how_manner", desc:"How + manner. 'How did the presentation go?'"},
+    {type:"wh_how_long", desc:"How long/far. 'How long will the renovation take?'"},
+    {type:"wh_how_many", desc:"How many/much. 'How many copies do you need?'"},
+    {type:"wh_how_often", desc:"How often/soon. 'How often does this bus run?'"},
+    {type:"yesno_do", desc:"Do/Does/Did question. 'Do you have the agenda?'"},
+    {type:"yesno_be", desc:"Is/Are/Was question. 'Is the report ready?'"},
+    {type:"yesno_have", desc:"Have/Has question. 'Have you finished the proposal?'"},
+    {type:"yesno_can", desc:"Can/Could question. 'Can you work Saturday?'"},
+    {type:"yesno_will", desc:"Will/Would question. 'Will the store be open tomorrow?'"},
+    {type:"yesno_should", desc:"Should question. 'Should we order more supplies?'"},
+    {type:"negative_isnt", desc:"Negative isn't/aren't. 'Isn't the deadline tomorrow?'"},
+    {type:"negative_didnt", desc:"Negative didn't/don't. 'Didn't you attend the workshop?'"},
+    {type:"tag", desc:"Tag question. 'The report is due Friday, isn't it?'"},
+    {type:"choice", desc:"Choice A or B. 'Morning or afternoon session?'"},
+    {type:"embedded", desc:"Embedded question. 'Do you know where the supply room is?'"},
+    {type:"statement_problem", desc:"Statement: problem. 'The printer seems to be jammed.'"},
+    {type:"statement_plan", desc:"Statement: plan/fact. 'I'm visiting the new office tomorrow.'"},
+    {type:"statement_opinion", desc:"Statement: opinion. 'That was an excellent presentation.'"},
+    {type:"statement_news", desc:"Statement: news. 'The CEO just announced a merger.'"},
+    {type:"request", desc:"Request. 'Could you help me carry these boxes?'"},
+    {type:"suggestion_offer", desc:"Suggestion/offer. 'Why don't we take a break?'"}
+  ], part4:[]};
   for (const s of stocks) if (byPart[s.part]) byPart[s.part].push(s);
   const sel = S.listenSetup || {part:"all", random:true, count:20};
 
@@ -3032,8 +3079,9 @@ async function renderListenPlay() {
         if(stopped) return;
       }
 
-      // Read choices (all 4 options)
-      if (choices.length > 0) {
+      // Read choices (Part 3/4 only — Part 1/2 already include choices in main audio)
+      const needChoiceRead = !["part1","part2"].includes(item.part);
+      if (needChoiceRead && choices.length > 0) {
         statusEl.textContent=`🔊 選択肢を読み上げ中...`;
         const choicesText = choices.map((c,i)=>`(${letters[i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
         await speakAndWait(choicesText);
