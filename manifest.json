@@ -1,0 +1,13 @@
+{
+  "name": "TOEIC AI Trainer",
+  "short_name": "TOEIC AI",
+  "description": "AI-powered TOEIC L&R practice — all 7 parts, Gemini TTS",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#1a2332",
+  "theme_color": "#5b7cf7",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
