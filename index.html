@@ -177,6 +177,54 @@ const $ = id => document.getElementById(id);
 const app = document.getElementById("app");
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 
+// Normalize text: convert literal \\n to real newlines, trim
+function normText(s) {
+  if (!s) return "";
+  return String(s).replace(/\\n/g, "\n").trim();
+}
+
+// Format passage text for display (handles all doc types)
+// Returns HTML-safe string with proper line breaks and formatting
+function formatPassage(text, docType) {
+  if (!text) return "";
+  let t = normText(text);
+  const escaped = esc(t);
+
+  // For chat/text_message: add extra spacing between messages
+  // Pattern: [time] Name: ... or Name [time]: ...
+  if (docType && /chat|text_message/i.test(docType)) {
+    // Add blank line before each message that starts with [ or a name followed by [
+    return escaped
+      .replace(/\n/g, "<br>")
+      .replace(/<br>(\[)/g, "<br><br>$1")                   // [10:15 AM] style
+      .replace(/<br>((?:[A-Z][a-z]+\s?)+\s*\[)/g, "<br><br>$1") // Name [time] style
+      .replace(/<br>((?:[A-Z][a-z]+\s?)+:)/g, "<br><br>$1");    // Name: style (if no timestamp)
+  }
+
+  // For emails/memos/letters: preserve paragraph breaks (double newline → extra spacing)
+  return escaped
+    .replace(/\n\n+/g, "<br><br>")  // paragraph breaks
+    .replace(/\n/g, "<br>");        // line breaks
+}
+
+// Wrap formatted text in a styled container (consistent across study + mock test)
+function passageBlock(text, docType, headerHtml) {
+  const formatted = formatPassage(text, docType);
+  return `<div class="ctx-block">${headerHtml||""}<div style="font-size:14px;line-height:1.9;color:#c7d2fe">${formatted}</div></div>`;
+}
+
+// Format Part 6 text with blank highlighting (for mock test too)
+function formatP6(text, activeBlank) {
+  const t = normText(text);
+  const escaped = esc(t);
+  const withBlanks = escaped.replace(/\((\d)\)/g, (match, n) => {
+    const num = parseInt(n);
+    const active = num === (activeBlank || 0);
+    return `<span class="blank${active ? " active" : ""}">(${n}) _______</span>`;
+  });
+  return withBlanks.replace(/\n\n+/g, "<br><br>").replace(/\n/g, "<br>");
+}
+
 /* ──────────────────────────────────────────────
    API THROTTLE — 全Geminiリクエストを直列化 + 429リトライ
 ────────────────────────────────────────────── */
@@ -235,10 +283,8 @@ async function geminiText(prompt, model) {
    GEMINI IMAGE API
 ────────────────────────────────────────────── */
 async function generateImage(scene, opts={}) {
-  // opts.isGraphic=true → use 1K size (tables/maps need readable detail)
-  // default Part 1 photos → 512 (small in actual test)
-  const isGraphic = !!opts.isGraphic;
-  const imageSize = isGraphic ? "1K" : "512";
+  // All TOEIC images use 512px (photos and graphics alike)
+  const imageSize = "512";
   const promptText = isGraphic
     ? `Clean business graphic for a TOEIC test: ${scene}. Simple, professional style. Clear readable text. White background.`
     : `TOEIC test photograph: ${scene}. Realistic, no text overlay.`;
@@ -279,18 +325,36 @@ function buildGraphicDesc(qSet) {
 ────────────────────────────────────────────── */
 const TYPES = {
   part1: [
-    {type:"office_single", desc:"One person working at a desk — typing on laptop, reading documents, talking on phone, organizing files"},
-    {type:"meeting_group", desc:"Group of people in a conference/meeting room — presenting, discussing, taking notes around a table"},
-    {type:"restaurant_kitchen", desc:"Restaurant or kitchen scene — chef cooking, waiter serving dishes, barista making coffee"},
-    {type:"retail_store", desc:"Retail store — cashier at register, customer browsing shelves, salesperson helping shopper"},
-    {type:"construction_outdoor", desc:"Construction or outdoor work — worker on scaffolding, painter on ladder, landscaper mowing lawn"},
-    {type:"medical_lab", desc:"Medical or laboratory setting — doctor examining patient, scientist using microscope, pharmacist at counter"},
-    {type:"transportation_scene", desc:"Transportation scene — passengers boarding a bus, people waiting at train platform, travelers at airport gate"},
-    {type:"warehouse_loading", desc:"Warehouse or loading area — worker stacking boxes, forklift in aisle, packages on conveyor belt"},
-    {type:"empty_room_objects", desc:"Empty room or object arrangement (NO people) — empty conference table with chairs, bookshelves in library, tools on workbench"},
-    {type:"outdoor_scenery", desc:"Outdoor scenery (NO people) — boats docked at harbor, bicycles parked in rack, fountain in city plaza, bridge over river"},
-    {type:"hotel_lobby", desc:"Hotel or building lobby — receptionist at front desk, guest checking in, bellhop carrying luggage"},
-    {type:"classroom_workshop", desc:"Classroom or workshop — instructor at whiteboard, students taking notes, musician tuning instrument"},
+    {type:"office_desk", desc:"Person working at desk — typing, reading, organizing"},
+    {type:"meeting_conference", desc:"People in conference room — presenting, discussing"},
+    {type:"restaurant_cafe", desc:"Café or restaurant — waiter serving, people dining, barista"},
+    {type:"retail_shopping", desc:"Store — customer browsing, cashier, trying on clothes"},
+    {type:"construction_site", desc:"Construction — scaffolding, crane, workers with helmets"},
+    {type:"medical_clinic", desc:"Clinic or hospital — doctor, nurse, patient, waiting room"},
+    {type:"train_station", desc:"Train platform — passengers waiting, boarding, luggage"},
+    {type:"airport_terminal", desc:"Airport — check-in counter, gate, luggage carousel"},
+    {type:"warehouse_factory", desc:"Warehouse or factory — forklift, conveyor, stacking boxes"},
+    {type:"park_bench", desc:"Park — person reading on bench, walking dog, jogger"},
+    {type:"street_crosswalk", desc:"City street — pedestrians crossing, traffic, bus stop"},
+    {type:"marina_dock", desc:"Waterfront — boats docked, fishing, loading cargo"},
+    {type:"garden_yard", desc:"Garden — planting flowers, mowing lawn, raking leaves"},
+    {type:"library_bookstore", desc:"Library — shelves of books, person reading, studying"},
+    {type:"parking_lot", desc:"Parking area — cars lined up, person loading trunk"},
+    {type:"supermarket_grocery", desc:"Grocery store — shopping cart, produce aisle, checkout"},
+    {type:"museum_gallery", desc:"Museum or art gallery — paintings on wall, visitors looking"},
+    {type:"gym_sports", desc:"Gym or sports — exercising, swimming pool, tennis court"},
+    {type:"kitchen_cooking", desc:"Kitchen — chef cooking, preparing food, cutting vegetables"},
+    {type:"moving_packing", desc:"Moving — carrying boxes, loading truck, wrapping furniture"},
+    {type:"cleaning_maintenance", desc:"Cleaning — mopping floor, wiping window, vacuum"},
+    {type:"bicycle_cyclist", desc:"Bicycle scene — person riding, bikes parked in rack"},
+    {type:"bridge_river", desc:"Bridge or river — people crossing bridge, riverbank view"},
+    {type:"staircase_hallway", desc:"Building interior — staircase, hallway, elevator area"},
+    {type:"outdoor_market", desc:"Open-air market — vendors, produce stands, shoppers"},
+    {type:"classroom_lecture", desc:"Classroom — teacher at board, students taking notes"},
+    {type:"workshop_tools", desc:"Workshop — carpenter, mechanic, tools on workbench"},
+    {type:"hotel_reception", desc:"Hotel — guest checking in, bellhop, lobby seating"},
+    {type:"food_truck_vendor", desc:"Street food — food cart, vendor serving, customers queueing"},
+    {type:"empty_room_furniture", desc:"Empty room (NO people) — chairs, tables, equipment arranged"}
   ],
   part2: [
     {type:"wh_what", desc:"WH-What question. Example: 'What time does the meeting start?' or 'What kind of printer do we need?'"},
@@ -450,7 +514,8 @@ const TYPES = {
 };
 
 /* ── セッション用タイプシャッフル ── */
-let _sessionTypes = {}; // {part1: [...5 types], part2: [...5 types], ...}
+let _sessionTypes = {}; // {part1: [{"type": "office_desk", "desc": "Person working at desk — typing, reading, organizing"}, {"type": "meeting_conference", "desc": "People in conference room — presenting, discussing"}, {"type": "restaurant_cafe", "desc": "Café or restaurant — waiter serving, people dining, barista"}, {"type": "retail_shopping", "desc": "Store — customer browsing, cashier, trying on clothes"}, {"type": "construction_site", "desc": "Construction — scaffolding, crane, workers with helmets"}, {"type": "medical_clinic", "desc": "Clinic or hospital — doctor, nurse, patient, waiting room"}, {"type": "train_station", "desc": "Train platform — passengers waiting, boarding, luggage"}, {"type": "airport_terminal", "desc": "Airport — check-in counter, gate, luggage carousel"}, {"type": "warehouse_factory", "desc": "Warehouse or factory — forklift, conveyor, stacking boxes"}, {"type": "park_bench", "desc": "Park — person reading on bench, walking dog, jogger"}, {"type": "street_crosswalk", "desc": "City street — pedestrians crossing, traffic, bus stop"}, {"type": "marina_dock", "desc": "Waterfront — boats docked, fishing, loading cargo"}, {"type": "garden_yard", "desc": "Garden — planting flowers, mowing lawn, raking leaves"}, {"type": "library_bookstore", "desc": "Library — shelves of books, person reading, studying"}, {"type": "parking_lot", "desc": "Parking area — cars lined up, person loading trunk"}, {"type": "supermarket_grocery", "desc": "Grocery store — shopping cart, produce aisle, checkout"}, {"type": "museum_gallery", "desc": "Museum or art gallery — paintings on wall, visitors looking"}, {"type": "gym_sports", "desc": "Gym or sports — exercising, swimming pool, tennis court"}, {"type": "kitchen_cooking", "desc": "Kitchen — chef cooking, preparing food, cutting vegetables"}, {"type": "moving_packing", "desc": "Moving — carrying boxes, loading truck, wrapping furniture"}, {"type": "cleaning_maintenance", "desc": "Cleaning — mopping floor, wiping window, vacuum"}, {"type": "bicycle_cyclist", "desc": "Bicycle scene — person riding, bikes parked in rack"}, {"type": "bridge_river", "desc": "Bridge or river — people crossing bridge, riverbank view"}, {"type": "staircase_hallway", "desc": "Building interior — staircase, hallway, elevator area"}, {"type": "outdoor_market", "desc": "Open-air market — vendors, produce stands, shoppers"}, {"type": "classroom_lecture", "desc": "Classroom — teacher at board, students taking notes"}, {"type": "workshop_tools", "desc": "Workshop — carpenter, mechanic, tools on workbench"}, {"type": "hotel_reception", "desc": "Hotel — guest checking in, bellhop, lobby seating"}, {"type": "food_truck_vendor", "desc": "Street food — food cart, vendor serving, customers queueing"}, {"type": "empty_room_furniture", "desc": "Empty room (NO people) — chairs, tables, equipment arranged"}],
+  part2: [...5 types], ...}
 
 function shuffleSessionTypes() {
   _sessionTypes = {};
@@ -504,6 +569,7 @@ ${lvGuide}
 Respond with EXACTLY ONE JSON object ONLY — no arrays, no wrapping, no markdown, no backticks, no extra text. DO NOT wrap the output in {"part1":[...]} or similar. DO NOT produce multiple questions. Output ONLY a single {...} object matching the template below.
 ENGLISH EXPLANATION: For each question, ALSO include an "explanation_en" field — a SHORT 1-2 sentence explanation in English (max 25 words) summarizing WHY the correct answer is right. Concise, spoken-English style. This is separate from explanation_ja (which stays detailed in Japanese).
 CONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointing to the correct choice. The "explanation_ja" and "explanation_en" MUST refer to the SAME letter as "correct" (correct=0→A, correct=1→B, correct=2→C, correct=3→D). NEVER write "正解は(C)" if correct=3. ALWAYS verify the correct letter matches before responding.
+CHOICE COUNT RULE — STRICT: Every question MUST have EXACTLY 4 choices labeled (A), (B), (C), (D). NEVER include (E) or more. Part 2 MUST have EXACTLY 3 choices (A), (B), (C). This is a hard TOEIC format requirement — violating it makes the output INVALID.
 VOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence). Choose words KEY to solving the question.`;
   const t = typeObj || {};
 
@@ -861,12 +927,25 @@ function normalizeSet(raw, part) {
   }
 }
 
+function enforceChoiceCount(qs) {
+  // TOEIC format: Part 2 = 3 choices (A-C), all others = 4 choices (A-D). NEVER 5+.
+  const maxC = qs.part === "part2" ? 3 : 4;
+  for (const q of (qs.questions || [])) {
+    if (q.choices && q.choices.length > maxC) {
+      console.warn(`[FIX] ${qs.part}: truncated ${q.choices.length} choices → ${maxC}`);
+      q.choices = q.choices.slice(0, maxC);
+      if ((q.correct || 0) >= maxC) { q.correct = 0; console.warn("[FIX] correct index reset to 0"); }
+    }
+  }
+  return qs;
+}
+
 async function generateQuestionSet(partOverride, options) {
   const usePart = partOverride || S.part;
   const model = PART_MODEL[usePart] || GEMINI_FLASH;
   const raw = await geminiText(getPrompt(S.level, usePart, options), model);
   const parsed = parseJSON(raw);
-  const result = normalizeSet(parsed, S.part);
+  const result = enforceChoiceCount(normalizeSet(parsed, S.part));
   console.log("Generated:", S.part, "audio:", !!result.audio, "translation_ja:", !!result.translation_ja, "translation_ja_1:", !!result.translation_ja_1);
   return result;
 }
@@ -1726,6 +1805,17 @@ async function generateOneQuestion(sessionIdx) {
   const typeObj = typePool[sessionIdx] || undefined;
 
   const qs = await generateQuestionSet(usePartOverride, typeObj);
+
+  // Pre-generate audio for Listening parts (Part 1-4)
+  const isListening = ["part1","part2","part3","part4"].includes(S.part);
+  if (isListening && qs.audio) {
+    try {
+      await preGenAudio(qs);
+    } catch(e) {
+      console.warn("preGenAudio failed:", e.message);
+    }
+  }
+
   let imgUrl=null, imgErr=null;
   if (S.part==="part1" && qs.scene) {
     // Part 1 photograph
@@ -1951,7 +2041,7 @@ function advanceQuestion() {
    PART 6 TEXT RENDERING (highlight active blank)
 ────────────────────────────────────────────── */
 function renderP6Text(text, activeBlank) {
-  const escaped=esc(text);
+  const escaped=esc(normText(text));
   return escaped.replace(/\((\d)\)/g, (match, n) => {
     const num=parseInt(n);
     const active=num===activeBlank;
@@ -3007,9 +3097,11 @@ function renderMockSetup() {
     const all = await mockStockGetAll();
     const counts = {};
     const byLevel = {};
+    const normPart = p => p && p.startsWith("part7") ? "part7" : p;
     all.forEach(s => {
-      counts[s.part] = (counts[s.part]||0) + 1;
-      const k = `${s.part}/${(s.level||"?").slice(0,3)}`;
+      const np = normPart(s.part);
+      counts[np] = (counts[np]||0) + 1;
+      const k = `${np}/${(s.level||"?").slice(0,3)}`;
       byLevel[k] = (byLevel[k]||0) + 1;
     });
     const required_full = MOCK_FULL_DIST;
@@ -3062,8 +3154,10 @@ function renderMockSetup() {
       const mode = btn.dataset.mockMode;
       const all = await mockStockGetAll();
       if (all.length === 0) { alert("模試データがありません。先にインポートしてください。"); return; }
+      // Normalize part7s/part7d/part7t → part7 for grouping
+      const normPart = p => p && p.startsWith("part7") ? "part7" : p;
       const byPart = {};
-      all.forEach(s => { if(!byPart[s.part]) byPart[s.part]=[]; byPart[s.part].push(s); });
+      all.forEach(s => { const np = normPart(s.part); if(!byPart[np]) byPart[np]=[]; byPart[np].push(s); });
       const testItems = [];
       const dist = mode === "full" ? MOCK_FULL_DIST : Object.fromEntries(Object.entries(MOCK_FULL_DIST).map(([k,v])=>[k,Math.ceil(v/2)]));
       const missing = [];
@@ -3202,6 +3296,23 @@ function renderMockTest() {
     render(); return;
   }
 
+  // Unique key for this question (to detect question change vs timer update)
+  const qKey = `${S.mockIdx}_${S.mockQIdx}`;
+  const isTimerOnly = (S._lastMockQKey === qKey);
+  S._lastMockQKey = qKey;
+
+  // Timer-only update: just refresh the clock, don't rebuild DOM
+  if (isTimerOnly) {
+    const timerEl = document.getElementById("mockTimer");
+    if (timerEl) {
+      const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
+      timerEl.textContent = `⏱️ ${String(Math.floor(elapsed/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
+    }
+    setTimeout(() => { if (S.screen === "mockTest") render(); }, 1000);
+    return;
+  }
+
+  // Full rebuild (question changed)
   // Total progress
   let totalQ = 0, doneQ = 0;
   items.forEach((it, ii) => {
@@ -3217,13 +3328,20 @@ function renderMockTest() {
   let html = `
     <div class="header" style="display:flex;justify-content:space-between;align-items:center">
       <div><h1 style="font-size:16px">🎯 模試 ${item.part.toUpperCase()}</h1>
-        <div class="sub">${doneQ+1}/${totalQ}問 | ⏱️ ${mm}:${ss}</div></div>
+        <div class="sub">${doneQ+1}/${totalQ}問 | <span id="mockTimer">⏱️ ${mm}:${ss}</span></div></div>
       <button class="btn-s" id="mockAbortBtn" style="font-size:11px;color:#f87171">中断</button>
     </div>`;
 
-  // Audio (Part 1-4) — auto-play once on first question of set
-  if (["part1","part2","part3","part4"].includes(item.part) && S.mockQIdx === 0 && item.audioOpus) {
-    html += `<div style="margin:8px 0"><audio controls autoplay style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,${item.audioOpus}"></audio></div>`;
+  // Audio (Part 1-4) — cache blob URL on item to avoid recreating
+  if (["part1","part2","part3","part4"].includes(item.part) && item.audioOpus) {
+    if (!item._blobUrl) {
+      item._blobUrl = opusToUrl(item.audioOpus);
+    }
+    // autoplay only on first sub-question of this set
+    const autoplay = S.mockQIdx === 0 ? "autoplay" : "";
+    html += `<div style="margin:8px 0"><audio id="mockAudio" controls ${autoplay} style="width:100%;height:36px" src="${item._blobUrl}"></audio></div>`;
+  } else if (["part1","part2","part3","part4"].includes(item.part)) {
+    html += `<div style="margin:8px 0;padding:6px;background:#7f1d1d;border-radius:6px;font-size:12px">⚠️ 音声データなし</div>`;
   }
 
   // Image
@@ -3231,40 +3349,64 @@ function renderMockTest() {
     html += `<div style="margin:8px 0"><img src="${item.imgUrl}" style="width:100%;border-radius:8px"></div>`;
   }
 
-  // Reading text
-  if (["part6","part7"].includes(item.part)) {
+  // Graphic table (if available — shown alongside image for reference, or as fallback if no image)
+  if (qs.graphic) {
+    html += renderGraphic(qs.graphic);
+  }
+
+  // Reading text (Part 5/6/7 including part7s/part7d/part7t)
+  const isReadingPart = item.part === "part6" || item.part.startsWith("part7");
+  if (isReadingPart) {
+    const docType = qs.doc_type || qs.doc_type_1 || "";
     if (qs.text || qs.text_1) {
       const docs = [];
       if (qs.text_1) {
-        if (qs.header_1) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;white-space:pre-wrap'>${esc(qs.header_1)}</pre>`);
-        docs.push(`<div style='font-size:13px;line-height:1.7'>${esc(qs.text_1)}</div>`);
+        // Multi-passage (double/triple)
+        const dt1 = qs.doc_type_1 || "";
+        if (qs.header_1) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;white-space:pre-wrap'>${esc(normText(qs.header_1))}</pre>`);
+        docs.push(`<div style='font-size:13px;line-height:1.9;color:#c7d2fe'>${formatPassage(qs.text_1, dt1)}</div>`);
         if (qs.text_2) {
-          if (qs.header_2) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;margin-top:12px;white-space:pre-wrap'>${esc(qs.header_2)}</pre>`);
-          docs.push(`<div style='font-size:13px;line-height:1.7;margin-top:8px'>${esc(qs.text_2)}</div>`);
+          const dt2 = qs.doc_type_2 || "";
+          if (qs.header_2) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;margin-top:12px;white-space:pre-wrap'>${esc(normText(qs.header_2))}</pre>`);
+          docs.push(`<div style='font-size:13px;line-height:1.9;color:#c7d2fe;margin-top:8px'>${formatPassage(qs.text_2, dt2)}</div>`);
         }
         if (qs.text_3) {
-          if (qs.header_3) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;margin-top:12px;white-space:pre-wrap'>${esc(qs.header_3)}</pre>`);
-          docs.push(`<div style='font-size:13px;line-height:1.7;margin-top:8px'>${esc(qs.text_3)}</div>`);
+          const dt3 = qs.doc_type_3 || "";
+          if (qs.header_3) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;margin-top:12px;white-space:pre-wrap'>${esc(normText(qs.header_3))}</pre>`);
+          docs.push(`<div style='font-size:13px;line-height:1.9;color:#c7d2fe;margin-top:8px'>${formatPassage(qs.text_3, dt3)}</div>`);
         }
       } else {
-        if (qs.header) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;white-space:pre-wrap'>${esc(qs.header)}</pre>`);
-        docs.push(`<div style='font-size:13px;line-height:1.7'>${esc(qs.text)}</div>`);
+        // Single passage (or Part 6)
+        if (qs.header) docs.push(`<pre style='background:#0f172a;padding:8px;border-radius:6px;font-size:11px;white-space:pre-wrap'>${esc(normText(qs.header))}</pre>`);
+        if (item.part === "part6") {
+          // Part 6: show blanks
+          docs.push(`<div style='font-size:13px;line-height:1.9;color:#c7d2fe'>${formatP6(qs.text, q.blank||0)}</div>`);
+        } else {
+          docs.push(`<div style='font-size:13px;line-height:1.9;color:#c7d2fe'>${formatPassage(qs.text, docType)}</div>`);
+        }
       }
-      html += `<div style='margin:8px 0;padding:12px;background:#1e293b;border-radius:10px;max-height:300px;overflow-y:auto'>${docs.join("")}</div>`;
+      html += `<div style='margin:8px 0;padding:12px;background:#1e293b;border-radius:10px;max-height:400px;overflow-y:auto'>${docs.join("")}</div>`;
     }
   } else if (item.part === "part5") {
-    html += `<div style='margin:12px 0;padding:12px;background:#1e293b;border-radius:10px;font-size:14px;line-height:1.6'>${esc(q.question)}</div>`;
+    html += `<div style='margin:12px 0;padding:12px;background:#1e293b;border-radius:10px;font-size:14px;line-height:1.6'>${formatPassage(q.question)}</div>`;
   }
 
-  // Question
-  if (item.part !== "part5") {
+  // Question (not shown for Part 1/2 — audio-only in real TOEIC)
+  const isAudioOnlyPart = ["part1","part2"].includes(item.part);
+  if (item.part === "part5") {
+    // Part 5: question IS the sentence
+  } else if (isAudioOnlyPart) {
+    html += `<div style='margin:12px 0;font-size:12px;color:#64748b'>🎧 音声を聴いて正しい選択肢を選んでください</div>`;
+  } else {
     html += `<div style='margin:12px 0;font-weight:600;font-size:14px'>Q${S.mockQIdx+1}. ${esc(q.question)}</div>`;
   }
 
-  // Choices
+  // Choices (Part 1/2: labels only, no English text — matches real TOEIC)
   const choices = q.choices || [];
+  const letters = ["(A)","(B)","(C)","(D)"];
   choices.forEach((c, ci) => {
-    html += `<button class="mock-choice" data-ci="${ci}" style="display:block;width:100%;text-align:left;padding:10px 12px;margin:4px 0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;font-size:13px;color:#e2e8f0;cursor:pointer">${esc(c)}</button>`;
+    const label = isAudioOnlyPart ? letters[ci] : esc(c);
+    html += `<button class="mock-choice" data-ci="${ci}" style="display:block;width:100%;text-align:left;padding:10px 12px;margin:4px 0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;font-size:13px;color:#e2e8f0;cursor:pointer">${label}</button>`;
   });
 
   app.innerHTML = html;
@@ -3273,19 +3415,21 @@ function renderMockTest() {
     btn.onclick = () => {
       const sel = parseInt(btn.dataset.ci);
       const isCorrect = sel === q.correct;
-      S.mockAnswers.push({part: item.part, correct: isCorrect});
+      const normPart = p => p && p.startsWith("part7") ? "part7" : p;
+      S.mockAnswers.push({part: item.part, normPart: normPart(item.part), correct: isCorrect});
       // Advance
       S.mockQIdx++;
       if (S.mockQIdx >= questions.length) {
         S.mockIdx++;
         S.mockQIdx = 0;
       }
-      // Check if part target reached
+      // Check if part target reached (using normalized part for part7s/d/t)
       const targetQ = item._mockTargetQ;
-      const partAnswered = S.mockAnswers.filter(a => a.part === item.part).length;
+      const np = normPart(item.part);
+      const partAnswered = S.mockAnswers.filter(a => (a.normPart||a.part) === np).length;
       if (targetQ && partAnswered >= targetQ) {
-        // Skip remaining items of this part
-        while (S.mockIdx < S.mockItems.length && S.mockItems[S.mockIdx].part === item.part) {
+        // Skip remaining items of this normalized part
+        while (S.mockIdx < S.mockItems.length && normPart(S.mockItems[S.mockIdx].part) === np) {
           S.mockIdx++;
         }
       }
@@ -3308,12 +3452,16 @@ function renderMockResult() {
   const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
   const mm = Math.floor(elapsed / 60);
 
-  // Per-part stats
+  // Normalize part7s/d/t → part7
+  const normPart = p => p && p.startsWith("part7") ? "part7" : p;
+
+  // Per-part stats (normalized)
   const partStats = {};
   for (const a of answers) {
-    if (!partStats[a.part]) partStats[a.part] = {correct:0, total:0};
-    partStats[a.part].total++;
-    if (a.correct) partStats[a.part].correct++;
+    const np = a.normPart || normPart(a.part);
+    if (!partStats[np]) partStats[np] = {correct:0, total:0};
+    partStats[np].total++;
+    if (a.correct) partStats[np].correct++;
   }
 
   // Section totals
@@ -3409,7 +3557,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.16t · graphic images RESTORED (HTML + Streamlit)</div>
+      <div style="font-size:10px;color:#64748b;margin-top:4px">v2026.04.17e · Part1 30 types + 512px all + audio-only display</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
@@ -3527,12 +3675,16 @@ function renderStudy() {
     const answered=ans.answered, isOk=ans.selected===q.correct;
     let inner="";
 
-    // ── Part 1: Scene image ──
+    // ── Part 1: Scene image (photo ONLY — no text description in real TOEIC) ──
     if (S.part==="part1") {
       if (S.sceneImgUrl) inner+=`<div class="scene-img"><img src="${S.sceneImgUrl}" alt="TOEIC Scene"></div>`;
-      else if (qs.scene) {
-        inner+=ctxBlock("📷","写真の場面",qs.scene);
-        if (S.imageError) inner+=`<div style="font-size:11px;color:#f87171;margin:-10px 0 10px;padding:6px 10px;background:rgba(239,68,68,0.08);border-radius:6px">⚠️ ${esc(S.imageError)}</div>`;
+      else {
+        // No image available — show placeholder, NOT the scene text (that would give away the answer)
+        inner+=`<div style="padding:40px;text-align:center;background:#1e293b;border-radius:12px;margin-bottom:12px">
+          <div style="font-size:48px;margin-bottom:8px">📷</div>
+          <div style="font-size:12px;color:#64748b">写真を生成中 または 画像なし</div>
+          ${S.imageError?`<div style="font-size:11px;color:#f87171;margin-top:6px">⚠️ ${esc(S.imageError)}</div>`:""}
+        </div>`;
       }
     }
 
@@ -3567,26 +3719,26 @@ function renderStudy() {
     if (S.part==="part7") {
       if (qs.isTriple) {
         // Triple passage
-        const hdr1=qs.header_1?`<div class="doc-hdr">${esc(qs.header_1)}</div>`:"";
-        const hdr2=qs.header_2?`<div class="doc-hdr">${esc(qs.header_2)}</div>`:"";
-        const hdr3=qs.header_3?`<div class="doc-hdr">${esc(qs.header_3)}</div>`:"";
+        const hdr1=qs.header_1?`<div class="doc-hdr">${esc(normText(qs.header_1))}</div>`:"";
+        const hdr2=qs.header_2?`<div class="doc-hdr">${esc(normText(qs.header_2))}</div>`:"";
+        const hdr3=qs.header_3?`<div class="doc-hdr">${esc(normText(qs.header_3))}</div>`:"";
         inner+=`<div style="font-size:11px;color:#f472b6;background:rgba(244,114,182,0.1);padding:4px 10px;border-radius:6px;margin-bottom:10px;display:inline-block">📄📄📄 トリプルパッセージ</div>`;
-        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書1: ${esc(qs.doc_type_1||"文書")}</div>${hdr1}<div class="passage-txt">${esc(qs.text_1)}</div></div>`;
-        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書2: ${esc(qs.doc_type_2||"文書")}</div>${hdr2}<div class="passage-txt">${esc(qs.text_2)}</div></div>`;
-        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書3: ${esc(qs.doc_type_3||"文書")}</div>${hdr3}<div class="passage-txt">${esc(qs.text_3)}</div></div>`;
+        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書1: ${esc(qs.doc_type_1||"文書")}</div>${hdr1}<div class="passage-txt">${formatPassage(qs.text_1, qs.doc_type_1)}</div></div>`;
+        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書2: ${esc(qs.doc_type_2||"文書")}</div>${hdr2}<div class="passage-txt">${formatPassage(qs.text_2, qs.doc_type_2)}</div></div>`;
+        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書3: ${esc(qs.doc_type_3||"文書")}</div>${hdr3}<div class="passage-txt">${formatPassage(qs.text_3, qs.doc_type_3)}</div></div>`;
         // 和訳は解説の後に表示
       } else if (qs.isDouble) {
         // Double passage
-        const hdr1=qs.header_1?`<div class="doc-hdr">${esc(qs.header_1)}</div>`:"";
-        const hdr2=qs.header_2?`<div class="doc-hdr">${esc(qs.header_2)}</div>`:"";
+        const hdr1=qs.header_1?`<div class="doc-hdr">${esc(normText(qs.header_1))}</div>`:"";
+        const hdr2=qs.header_2?`<div class="doc-hdr">${esc(normText(qs.header_2))}</div>`:"";
         inner+=`<div style="font-size:11px;color:#fbbf24;background:rgba(251,191,36,0.1);padding:4px 10px;border-radius:6px;margin-bottom:10px;display:inline-block">📄📄 ダブルパッセージ</div>`;
-        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書1: ${esc(qs.doc_type_1||"文書")}</div>${hdr1}<div class="passage-txt">${esc(qs.text_1)}</div></div>`;
-        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書2: ${esc(qs.doc_type_2||"文書")}</div>${hdr2}<div class="passage-txt">${esc(qs.text_2)}</div></div>`;
+        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書1: ${esc(qs.doc_type_1||"文書")}</div>${hdr1}<div class="passage-txt">${formatPassage(qs.text_1, qs.doc_type_1)}</div></div>`;
+        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 文書2: ${esc(qs.doc_type_2||"文書")}</div>${hdr2}<div class="passage-txt">${formatPassage(qs.text_2, qs.doc_type_2)}</div></div>`;
         // 和訳は解説の後に表示
       } else if (qs.text) {
         // Single passage
-        const hdr=qs.header?`<div class="doc-hdr">${esc(qs.header)}</div>`:"";
-        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 ${esc(qs.doc_type||"文書")}</div>${hdr}<div class="passage-txt">${esc(qs.text)}</div></div>`;
+        const hdr=qs.header?`<div class="doc-hdr">${esc(normText(qs.header))}</div>`:"";
+        inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 ${esc(qs.doc_type||"文書")}</div>${hdr}<div class="passage-txt">${formatPassage(qs.text, qs.doc_type)}</div></div>`;
         if (qs.graphic) inner+=renderGraphic(qs.graphic);
       }
     }
@@ -3862,7 +4014,7 @@ function renderStudy() {
 }
 
 function ctxBlock(icon, label, text) {
-  return `<div class="ctx-block"><div class="ctx-lbl">${icon} ${label}</div><div class="ctx-txt">${esc(text)}</div></div>`;
+  return `<div class="ctx-block"><div class="ctx-lbl">${icon} ${label}</div><div class="ctx-txt">${esc(normText(text))}</div></div>`;
 }
 
 function renderGraphic(g) {
