@@ -133,13 +133,13 @@ const LISTEN_BETWEEN_ITEMS_MS = 1500;     // Pause before next stock item
 
 // 3段階モデル構成: Lite(単純) / Flash(中程度) / Pro(複雑)
 const PART_MODEL = {
-  part1: GEMINI_LITE,   // シーン描写のみ
-  part2: GEMINI_LITE,   // 短文Q&A
-  part3: GEMINI_FLASH,  part3_3p: GEMINI_FLASH, // 会話生成
-  part4: GEMINI_FLASH,  // モノローグ
-  part5: GEMINI_LITE,   // 単文文法
-  part6: GEMINI_PRO,    // 文書+文挿入
-  part7: GEMINI_PRO,    part7s: GEMINI_PRO,   part7d: GEMINI_PRO,   part7t: GEMINI_PRO, // 長文読解
+  part1: GEMINI_PRO,
+  part2: GEMINI_PRO,
+  part3: GEMINI_PRO,    part3_3p: GEMINI_PRO,
+  part4: GEMINI_PRO,
+  part5: GEMINI_PRO,
+  part6: GEMINI_PRO,
+  part7: GEMINI_PRO,    part7s: GEMINI_PRO,   part7d: GEMINI_PRO,   part7t: GEMINI_PRO,
 };
 
 const LEVELS = [
@@ -269,7 +269,7 @@ async function throttledFetch(url, opts, maxRetries=1) {
    GEMINI TEXT API
 ────────────────────────────────────────────── */
 async function geminiText(prompt, model) {
-  const m = model || GEMINI_LITE;
+  const m = model || GEMINI_PRO;
   const genConfig = {temperature:0.9};
   // thinking制御（2.5系: thinkingBudget、3.x系: thinkingLevel）
   if (m.includes("preview")) {
@@ -294,8 +294,8 @@ async function geminiText(prompt, model) {
    GEMINI IMAGE API
 ────────────────────────────────────────────── */
 async function generateImage(scene, opts={}) {
-  // All TOEIC images use 512px (photos and graphics alike)
   const imageSize = "512";
+  const isGraphic = !!opts.isGraphic;
   const promptText = isGraphic
     ? `Clean business graphic for a TOEIC test: ${scene}. Simple, professional style. Clear readable text. White background.`
     : `TOEIC test photograph: ${scene}. Realistic, no text overlay.`;
@@ -888,6 +888,7 @@ function normalizeSet(raw, part) {
       return { part, spoken:raw.spoken, audio,
         questions:[{question:raw.spoken, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
     }
+    case "part3_3p":
     case "part3": {
       // Gender validation
       const conv = raw.conversation || "";
@@ -933,6 +934,9 @@ function normalizeSet(raw, part) {
         questions:[{question:raw.sentence, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
     case "part6":
       return { part, doc_type:raw.doc_type||"", header:raw.header||null, text:raw.text, translation_ja:raw.translation_ja||null, vocab:raw.vocab||[], questions:raw.questions };
+    case "part7s":
+    case "part7d":
+    case "part7t":
     case "part7":
       // Detect triple passage
       if (raw.text_1 && raw.text_2 && raw.text_3) {
@@ -997,16 +1001,22 @@ function shuffleAnswerPositions(qs) {
       }
     }
   }
+  // Rebuild audio field to match shuffled choices (Part 1/2 include choices in audio)
+  if (qs.part === "part1" && qs.questions && qs.questions[0]) {
+    qs.audio = qs.questions[0].choices.map((c,i)=>`(${["A","B","C","D"][i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
+  } else if (qs.part === "part2" && qs.spoken && qs.questions && qs.questions[0]) {
+    qs.audio = `${qs.spoken}. ${qs.questions[0].choices.map((c,i)=>`(${["A","B","C"][i]}) ${c.replace(/^\([A-C]\)\s*/,"")}`).join(". ")}`;
+  }
   return qs;
 }
 
 async function generateQuestionSet(partOverride, options) {
   const usePart = partOverride || S.part;
-  const model = PART_MODEL[usePart] || GEMINI_FLASH;
+  const model = PART_MODEL[usePart] || GEMINI_PRO;
   const raw = await geminiText(getPrompt(S.level, usePart, options), model);
   const parsed = parseJSON(raw);
-  const result = shuffleAnswerPositions(enforceChoiceCount(normalizeSet(parsed, S.part)));
-  console.log("Generated:", S.part, "audio:", !!result.audio, "translation_ja:", !!result.translation_ja, "translation_ja_1:", !!result.translation_ja_1);
+  const result = shuffleAnswerPositions(enforceChoiceCount(normalizeSet(parsed, usePart)));
+  console.log("Generated:", usePart, "audio:", !!result.audio, "translation_ja:", !!result.translation_ja, "translation_ja_1:", !!result.translation_ja_1);
   return result;
 }
 
@@ -1974,30 +1984,46 @@ async function loadNewSet() {
 function triggerAutoStock() {
   if (!S.stockCreateMode || !S.qSet) return;
   const isL = ["part1","part2","part3","part4"].includes(S.part);
-  if (isL && S.qSet.audio) {
-    // Listeningパート: 音声自動再生 → 完了後に自動ストック
+  if (isL) {
     const qs = S.qSet;
-    const pa = document.getElementById("playAudio");
-    if (pa) {
-      setAudioBtn(pa, "loading");
-      const isConv = S.part==="part3";
-      const fn = isConv ? (t,cb)=>speakConv(t,cb,qs.speakers) : speakGemini;
-      fn(qs.audio, (err) => {
-        setAudioBtn(pa, err?"error":"idle", err?String(err).slice(0,100):"");
-        if (!err) {
+    // If preGenAudio already generated audio, use it directly (no live TTS needed)
+    if (qs._audioOpus || qs._audioPcm || qs._audioUrl) {
+      // Audio already exists — play stored audio for preview, then auto-stock
+      const pa = document.getElementById("playAudio");
+      if (pa && qs._audioUrl) {
+        setAudioBtn(pa, "loading");
+        playSeq([qs._audioUrl], () => {
+          setAudioBtn(pa, "idle");
           autoStockAndNext();
-        } else {
-          setTimeout(()=>{
-            if (!S.stockCreateMode) return;
-            setAudioBtn(pa, "loading");
-            fn(qs.audio, (err2) => {
-              setAudioBtn(pa, err2?"error":"idle", err2?String(err2).slice(0,60):"");
-              if (!err2) { autoStockAndNext(); }
-              else { loadNewSet(); }
-            });
-          }, 3000);
-        }
-      });
+        });
+      } else {
+        // Audio data exists but no playback URL — skip preview, just save
+        autoStockAndNext();
+      }
+      return;
+    }
+    // No stored audio — try live TTS as fallback
+    if (qs.audio) {
+      const pa = document.getElementById("playAudio");
+      if (pa) {
+        setAudioBtn(pa, "loading");
+        const isConv = S.part==="part3";
+        const fn = isConv ? (t,cb)=>speakConv(t,cb,qs.speakers) : speakGemini;
+        fn(qs.audio, (err) => {
+          setAudioBtn(pa, err?"error":"idle", err?String(err).slice(0,100):"");
+          if (!err) {
+            autoStockAndNext();
+          } else {
+            // Live TTS failed — skip this question (no audio = can't stock listening)
+            console.warn(`[STOCK SKIP] ${S.part}: live TTS failed, skipping`);
+            setTimeout(()=>{ if(S.stockCreateMode) loadNewSet(); }, 2000);
+          }
+        });
+      }
+    } else {
+      // No audio field at all — skip
+      console.warn(`[STOCK SKIP] ${S.part}: no audio field`);
+      setTimeout(()=>{ if(S.stockCreateMode) loadNewSet(); }, 1000);
     }
   } else {
     // Readingパート: 2秒プレビュー後に自動ストック
