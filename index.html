@@ -1757,24 +1757,15 @@ async function speakConv(text, onEnd, speakers) {
     const key="conv:"+text;
     let url=_ttsCache.get(key);
     if (!url) {
-      // Build speaker configs from speakers array (max 2 voices for Gemini TTS)
+      // Build speaker configs: ensure 1 male + 1 female (Gemini TTS max 2 configs)
       const spkNames = speakers || ["Man","Woman"];
       const maleVoice = pickVoice("male");
       const femaleVoice = pickVoice("female");
+      const males = spkNames.filter(s => !/woman|female/i.test(s));
+      const females = spkNames.filter(s => /woman|female/i.test(s));
       const voiceConfigs = [];
-      const usedNames = new Set();
-      for (const spk of spkNames) {
-        if (usedNames.has(spk)) continue; // skip duplicates
-        usedNames.add(spk);
-        const isFemale = /woman|female|her|she/i.test(spk);
-        if (voiceConfigs.length < 2) {
-          voiceConfigs.push({
-            speaker: spk,
-            voiceConfig:{prebuiltVoiceConfig:{voiceName: isFemale ? femaleVoice : maleVoice}}
-          });
-        }
-        // 3rd speaker: Gemini TTS only supports 2, so we skip (their lines will be read by closest match)
-      }
+      if (males.length > 0) voiceConfigs.push({speaker:males[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:maleVoice}}});
+      if (females.length > 0) voiceConfigs.push({speaker:females[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:femaleVoice}}});
       const res=await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
         {method:"POST",headers:{"Content-Type":"application/json"},
@@ -1853,16 +1844,12 @@ async function preGenAudio(qs) {
       const spkNames = qs.speakers || ["Man","Woman"];
       const maleVoice = pickVoice("male");
       const femaleVoice = pickVoice("female");
+      // Build voice configs: ensure 1 male + 1 female (Gemini TTS max 2 configs)
+      const males = spkNames.filter(s => !/woman|female/i.test(s));
+      const females = spkNames.filter(s => /woman|female/i.test(s));
       const voiceConfigs = [];
-      const usedNames = new Set();
-      for (const spk of spkNames) {
-        if (usedNames.has(spk)) continue;
-        usedNames.add(spk);
-        const isFemale = /woman|female/i.test(spk);
-        if (voiceConfigs.length < 2) {
-          voiceConfigs.push({speaker:spk, voiceConfig:{prebuiltVoiceConfig:{voiceName:isFemale?femaleVoice:maleVoice}}});
-        }
-      }
+      if (males.length > 0) voiceConfigs.push({speaker:males[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:maleVoice}}});
+      if (females.length > 0) voiceConfigs.push({speaker:females[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:femaleVoice}}});
       try {
         const res=await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
@@ -3015,9 +3002,24 @@ async function renderListenPlay() {
 
   async function speakAndWait(text) {
     return new Promise(resolve=>{
-      if(stopped){resolve();return;}
-      // speakGemini calls onEnd only when playback actually ends
-      speakGemini(text, (err)=>{ resolve(); });
+      if(stopped || !text || !text.trim()){resolve();return;}
+      speakGemini(text, (err)=>{
+        if (err) {
+          // Gemini TTS failed — fallback to browser built-in speech
+          try {
+            if (window.speechSynthesis) {
+              const utter = new SpeechSynthesisUtterance(text);
+              utter.lang = "en-US";
+              utter.rate = 0.95;
+              utter.onend = () => resolve();
+              utter.onerror = () => resolve();
+              speechSynthesis.speak(utter);
+              return;
+            }
+          } catch(e) {}
+        }
+        resolve();
+      });
     });
   }
   async function speakConvWait(text, speakers) {
