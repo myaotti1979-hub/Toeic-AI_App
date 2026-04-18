@@ -204,7 +204,7 @@ def build_prompt(level, part, t):
         "part3": lambda: f'{sys}{R3}\nPart 3 (Conversations). SCENARIO: {tt} — {td}. "Man:"/"Woman:" labels. 5-8 turns, 60-100 words MAXIMUM. Keep conversation SHORT and natural. EXACTLY 3 questions. INCLUDE "translation_ja".\nGENDER RULES — STRICT:\n- "Man:" = MALE character (male names, he/him/his). "Woman:" = FEMALE character (female names, she/her).\n- In questions: "the man" = Man speaker, "the woman" = Woman speaker. NEVER swap.\n- translation_ja: Man = 男性, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated from conversation.\n{{"conversation":"Man: first line...\\nWoman: response...\\nMan: reply...\\nWoman: next...\\nMan: final...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What does the man/woman suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What will the speaker most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
         "part3_3p": lambda: f'{sys}{R3}\nPart 3 (Conversations) with EXACTLY 3 speakers.\nFORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"\nSCENARIO: {tt} — {td}. 7-10 turns, 80-120 words. All 3 speakers must have substantial lines. EXACTLY 3 questions.\nGENDER RULES — STRICT:\n- "Man 1:"/"Man 2:" = MALE. "Woman:"/"Woman 1:"/"Woman 2:" = FEMALE. NEVER swap.\n- translation_ja: Man 1 = 男性1, Man 2 = 男性2, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated.\n{{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...","translation_ja":"男性1: ...\\n女性: ...\\n男性2: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
         "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}. Single-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
-        "part5": lambda: f'{sys}{BLANK_RULE}{R5}\nPart 5 (Incomplete Sentences). CATEGORY: {tt} — {td}.\nBusiness sentence 15-25 words with EXACTLY ONE blank: -------\nAll 4 choices must be plausible. Example: "The new policy will be ------- implemented across all departments."\n{{"sentence":"Business sentence with one ------- blank.","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"日本語で正解理由と各選択肢を分析","explanation_en":"Short English"{VEX}}}',
+        "part5": lambda: f'{sys}{BLANK_RULE}{R5}\nPart 5 (Incomplete Sentences). CATEGORY: {tt} — {td}.\n\nRULES:\n1. Write a business sentence (15-25 words) with EXACTLY ONE blank: -------\n2. The ------- replaces the tested word. Without it, the output is INVALID.\n3. All 4 choices (A-D) must be plausible.\n4. "correct" = index of the right answer (0=A, 1=B, 2=C, 3=D).\n5. explanation_ja MUST name the correct letter first: "正解は(X)..." where X matches "correct".\n\nGOOD: "The ------- of the new policy was announced yesterday."\nBAD: "The implementation of the new policy was announced yesterday." (NO BLANK = REJECTED)\n\n{{"sentence":"The manager asked all employees to ------- the updated safety guidelines before Friday.","choices":["(A) review","(B) reviewing","(C) reviewed","(D) reviewer"],"correct":0,"explanation_ja":"正解は(A) review。ask + 人 + to + 動詞原形の形。(B)はing形、(C)は過去形、(D)は名詞なので不可。","explanation_en":"ask someone to + base verb"{VEX}}}',
         "part6": lambda: f'{sys}{BLANK_RULE6}{R6}\nPart 6 (Text Completion). DOC TYPE: {tt} — {td}.\n150-200 words with EXACTLY 4 blanks: (1)------- (2)------- (3)------- (4)-------.\nBlanks 1-3: word/phrase choices. Blank 4: SENTENCE INSERTION (choices are full sentences).\nINCLUDE "translation_ja" (with answers filled in).\n{{"doc_type":"{tt}","header":"To: ...\\nFrom: ...\\nSubject: ...","text":"Full text 150-200 words with (1)------- and (2)------- and (3)------- and (4)-------","translation_ja":"日本語訳（空所に正解が入った状態）","questions":[{{"blank":1,"question":"Context around blank (1)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"blank":2,"question":"Context around blank (2)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"blank":3,"question":"Context around blank (3)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"blank":4,"question":"Which sentence best fits?","choices":["(A) Full sentence A.","(B) Full sentence B.","(C) Full sentence C.","(D) Full sentence D."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
         "part7s": lambda: f'{sys}{R7s}\nPart 7 Single Passage. DOC TYPE: {tt} — {td}. 150-250 words. Generate 2-4 questions.\nINCLUDE "translation_ja".\n{{"doc_type":"{tt}","header":"document header if applicable","text":"150-250 word passage","translation_ja":"文書全文の日本語訳","questions":[{{"question":"What is the main purpose?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What is indicated/suggested about X?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"According to the document, what...?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
         "part7d": lambda: f'{sys}{R7d}\nPart 7 Double Passage. PAIR: {tt} — {td}. Two related documents, 100-180 words each. EXACTLY 5 questions, including at least 1 CROSS-REFERENCE question requiring info from BOTH documents.\nINCLUDE "translation_ja_1","translation_ja_2".\n{{"doc_type_1":"email/notice/memo","header_1":"...","text_1":"100-180 words","translation_ja_1":"日本語訳1","doc_type_2":"reply/schedule","header_2":"...","text_2":"100-180 words","translation_ja_2":"日本語訳2","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"Cross-reference: based on BOTH documents, ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説（クロスリファレンス問題）","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
@@ -304,10 +304,10 @@ def strip_label(c, labels="A-D"):
 
 def check_answer_consistency(qs, part):
     """Detect if explanation_ja/_en mentions a different answer letter than 'correct'.
-    Looks ONLY at the FIRST sentence of the explanation, since later sentences
-    often discuss distractors like '(A)は不適切'."""
+    Attempts auto-fix: if explanation clearly states a different letter, update 'correct' to match."""
     questions = qs.get("questions", [])
     import re
+    all_ok = True
     for qi, q in enumerate(questions):
         correct = q.get("correct", 0)
         if not isinstance(correct, int) or correct < 0 or correct > 3:
@@ -315,23 +315,33 @@ def check_answer_consistency(qs, part):
         correct_letter = ["A","B","C","D"][correct]
         expl_ja = q.get("explanation_ja","").strip()
         expl_en = q.get("explanation_en","").strip()
-        # Take only first sentence (split by 。.\n) - distractors usually discussed later
         first_ja = re.split(r'[。\n]', expl_ja, maxsplit=1)[0]
         first_en = re.split(r'[.\n]', expl_en, maxsplit=1)[0]
-        # Only check explicit "correct answer is X" patterns, not just "(X)" mentions
+        # Check Japanese explanation
         m_ja = re.search(r'(?:正解は|答えは|正解|答え)\s*[\(（]?([A-D])[\)）]?', first_ja)
         if m_ja:
             mentioned = m_ja.group(1).upper()
             if mentioned != correct_letter:
-                print(f"[WARN] Q{qi+1} {part}: correct={correct_letter} but explanation_ja first sentence says ({mentioned})", flush=True)
-                return False
+                # Auto-fix: trust the explanation, update correct index
+                new_correct = {"A":0,"B":1,"C":2,"D":3}.get(mentioned)
+                if new_correct is not None:
+                    print(f"[FIX] Q{qi+1} {part}: correct={correct_letter}→{mentioned} (matched explanation_ja)", flush=True)
+                    q["correct"] = new_correct
+                else:
+                    all_ok = False
+        # Check English explanation
         m_en = re.search(r'(?:answer is|correct (?:answer )?is)\s*\(?([A-D])\)?', first_en, re.I)
         if m_en:
             mentioned = m_en.group(1).upper()
-            if mentioned != correct_letter:
-                print(f"[WARN] Q{qi+1} {part}: correct={correct_letter} but explanation_en says ({mentioned})", flush=True)
-                return False
-    return True
+            new_letter = ["A","B","C","D"][q.get("correct",0)]
+            if mentioned != new_letter:
+                new_correct = {"A":0,"B":1,"C":2,"D":3}.get(mentioned)
+                if new_correct is not None:
+                    print(f"[FIX] Q{qi+1} {part}: correct→{mentioned} (matched explanation_en)", flush=True)
+                    q["correct"] = new_correct
+                else:
+                    all_ok = False
+    return all_ok
 
 def normalize_set(raw, part):
     vocab = raw.get("vocab", [])  # Preserve vocabulary from LLM output

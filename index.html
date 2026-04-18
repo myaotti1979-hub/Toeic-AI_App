@@ -846,32 +846,28 @@ ${t.type&&t.type.startsWith("graphic")?"- IMPORTANT: Include a 'graphic' object 
 Create a TOEIC Part 5 (Incomplete Sentences) question.
 REQUIRED GRAMMAR CATEGORY: **${t.type||"varied"}** — ${t.desc||"any grammar or vocabulary point"}
 
-CRITICAL BLANK RULE — READ CAREFULLY:
-- The sentence MUST contain EXACTLY ONE blank written as seven hyphens: -------
-- A sentence WITHOUT ------- is INVALID and will be rejected.
-- The blank ------- replaces the word being tested. The correct answer fills this blank.
-- Example: "The company will ------- its new product next month."
-- WRONG (no blank): "The company will launch its new product next month." ← REJECTED
+RULES:
+1. Write a business sentence (15-25 words) with EXACTLY ONE blank: -------
+2. The ------- replaces the tested word. Without it, the output is INVALID.
+3. All 4 choices (A-D) must be plausible.
+4. "correct" = index of the right answer (0=A, 1=B, 2=C, 3=D).
+5. explanation_ja MUST name the correct letter first: "正解は(X)..." where X matches "correct".
 
-SENTENCE RULES:
-- Business-context sentence, 15-25 words, with one blank (-------).
-- All 4 choices must be plausible.
+GOOD: "The ------- of the new policy was announced yesterday."
+BAD: "The implementation of the new policy was announced yesterday." (NO BLANK = REJECTED)
+
 LEVEL-SPECIFIC PART 5 RULES:
-${level==="beginner"?`- Test WORD FORM (noun/verb/adj/adv) or basic PREPOSITIONS — solvable by looking at words around the blank only
-- Example: "The ------- of the new policy was announced yesterday." → (A) implement (B) implementation (C) implemented (D) implementing
-- All 4 choices are forms of the SAME base word (word-form question) OR basic grammar (prepositions, articles)
-- Vocabulary: common business words (meeting, report, schedule, department)`
-:level==="intermediate"?`- Test VERB TENSE, CONJUNCTION, RELATIVE PRONOUN, or GERUND/INFINITIVE — requires reading the full sentence
-- Example: "All employees who ------- the training session will receive a certificate." → (A) attend (B) attended (C) attending (D) will attend
-- Some VOCABULARY questions where 4 different words of the same part of speech are choices
+${level==="beginner"?`- Test WORD FORM (noun/verb/adj/adv) or basic PREPOSITIONS
+- All 4 choices are forms of the SAME base word OR basic grammar
+- Vocabulary: common business words (meeting, report, schedule)`
+:level==="intermediate"?`- Test VERB TENSE, CONJUNCTION, RELATIVE PRONOUN, or GERUND/INFINITIVE
+- Some VOCABULARY questions with 4 different words of the same part of speech
 - Vocabulary: standard business terms (negotiate, implement, quarterly)`
-:`- Test ADVANCED VOCABULARY in context or SUBTLE GRAMMAR (subjunctive, inversion, participle clauses)
-- Example: "The board recommended that the proposal ------- reviewed before final approval." → (A) is (B) be (C) was (D) being (subjunctive)
-- Vocabulary questions with near-synonyms requiring precise context understanding
+:`- Test ADVANCED VOCABULARY in context or SUBTLE GRAMMAR (subjunctive, inversion)
 - 4 choices are all plausible words; only one fits the specific context
-- Vocabulary: formal terms (notwithstanding, contingent, discretionary, forthcoming)`}
+- Vocabulary: formal terms (notwithstanding, contingent, discretionary)`}
 
-{"sentence":"Business sentence 15-25 words with ------- blank.","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"【${t.type||"?"}】正解理由と各選択肢の分析"}`,
+{"sentence":"The manager asked all employees to ------- the updated safety guidelines before Friday.","choices":["(A) review","(B) reviewing","(C) reviewed","(D) reviewer"],"correct":0,"explanation_ja":"正解は(A) review。ask+人+to+動詞原形。(B)ing形(C)過去形(D)名詞は不可。"}`,
 
     part6: () => `${sys}
 Create a TOEIC Part 6 (Text Completion) question set.
