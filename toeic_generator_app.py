@@ -442,40 +442,44 @@ def enforce_choice_count(qs):
 
 def shuffle_answer_positions(qs):
     """Randomly shuffle choice order so correct answer isn't always (A).
-    Updates 'correct' index and explanation references accordingly."""
+    Updates 'correct' index and ALL label references in explanations."""
     labels = ["(A)","(B)","(C)","(D)"]
+    fw_labels = ["（A）","（B）","（C）","（D）"]
     for q in qs.get("questions", []):
         choices = q.get("choices", [])
         correct_idx = q.get("correct", 0)
         if not choices or correct_idx >= len(choices):
             continue
         n = len(choices)
-        # Build index mapping: old → new
         order = list(range(n))
         random.shuffle(order)
         new_choices = [None] * n
         new_correct = 0
+        old_to_new = {}  # old_pos → new_pos
         for new_pos, old_pos in enumerate(order):
-            # Strip old label, add new label
-            c = choices[old_pos]
-            c = re.sub(r'^\([A-D]\)\s*', '', c)
+            c = re.sub(r'^\([A-D]\)\s*', '', choices[old_pos])
             new_choices[new_pos] = f"{labels[new_pos]} {c}"
             if old_pos == correct_idx:
                 new_correct = new_pos
-        old_label = labels[correct_idx] if correct_idx < 4 else "(A)"
-        new_label = labels[new_correct]
+            old_to_new[old_pos] = new_pos
         q["choices"] = new_choices
         q["correct"] = new_correct
-        # Fix explanation references if they mention the old letter
-        for field in ["explanation_ja", "explanation_en"]:
-            if field in q and old_label != new_label:
-                q[field] = q[field].replace(f"正解は{old_label}", f"正解は{new_label}")
-                q[field] = q[field].replace(f"answer is {old_label}", f"answer is {new_label}")
-                q[field] = q[field].replace(f"Answer: {old_label}", f"Answer: {new_label}")
-                # Full-width brackets: 正解は（A）→ 正解は（B）
-                old_fw = old_label.replace("(","（").replace(")","）")
-                new_fw = new_label.replace("(","（").replace(")","）")
-                q[field] = q[field].replace(f"正解は{old_fw}", f"正解は{new_fw}")
+        # Remap ALL label references using placeholders to avoid collision
+        needs_remap = any(old != new for old, new in old_to_new.items())
+        if needs_remap:
+            for field in ["explanation_ja", "explanation_en"]:
+                if field not in q or not q[field]:
+                    continue
+                text = q[field]
+                # Step 1: All labels → placeholders
+                for i in range(n):
+                    text = text.replace(labels[i], f"__LABEL{i}__")
+                    text = text.replace(fw_labels[i], f"__FWLABEL{i}__")
+                # Step 2: Placeholders → remapped labels
+                for old_pos, new_pos in old_to_new.items():
+                    text = text.replace(f"__LABEL{old_pos}__", labels[new_pos])
+                    text = text.replace(f"__FWLABEL{old_pos}__", fw_labels[new_pos])
+                q[field] = text
     # Rebuild audio field to match shuffled choices (Part 1/2 include choices in audio)
     part = qs.get("part","")
     if part == "part1" and qs.get("questions"):
@@ -883,23 +887,69 @@ def gemini_image(scene, api_key, max_retries=2, size="512"):
                 print(f"[IMG] Failed after {max_retries+1} attempts: {type(e).__name__}", flush=True)
                 raise
 
+def _generate_listen_audio(qs, real_part):
+    """Generate Edge TTS audio for listen-mode Q&A.
+    Adds audio_q (question+choices, Part3/4 only) and audio_ans (answer+explanation) to each question."""
+    letters = ["A","B","C","D"]
+    voice = random.choice(EDGE_VF + EDGE_VM)
+    ok = 0
+    for qi, q in enumerate(qs.get("questions",[])):
+        choices = q.get("choices",[])
+        correct = q.get("correct",0)
+        if correct >= len(choices): continue
+        correct_letter = letters[correct]
+        correct_text = strip_label(choices[correct])
+        
+        # Part 3/4: question + choices audio (not needed for Part 1/2, already in main audio)
+        if real_part in ("part3","part3_3p","part4") and not q.get("audio_q"):
+            q_text = q.get("question","")
+            ch_text = ". ".join(f"({letters[i]}) {strip_label(c)}" for i,c in enumerate(choices))
+            full_q = f"{q_text}. {ch_text}"
+            try:
+                mp3 = edge_tts_sync(full_q, voice)
+                if mp3:
+                    o = mp3_to_opus(mp3)
+                    if o: q["audio_q"] = base64.b64encode(o).decode(); ok += 1
+            except Exception as e:
+                print(f"[LISTEN-TTS] audio_q Q{qi+1}: {e}", flush=True)
+        
+        # Answer + explanation audio (all parts)
+        if not q.get("audio_ans"):
+            expl_en = q.get("explanation_en","").strip()
+            ans_text = f"The answer is {correct_letter}. {correct_text}"
+            if expl_en:
+                ans_text += f". {expl_en}"
+            try:
+                mp3 = edge_tts_sync(ans_text, voice)
+                if mp3:
+                    o = mp3_to_opus(mp3)
+                    if o: q["audio_ans"] = base64.b64encode(o).decode(); ok += 1
+            except Exception as e:
+                print(f"[LISTEN-TTS] audio_ans Q{qi+1}: {e}", flush=True)
+    
+    if ok > 0:
+        print(f"[LISTEN-TTS] Generated {ok} Q&A audio clips (Edge)", flush=True)
+
 def generate_one_question(level, actual_part, to, engine, model, url, api_key,
                           do_tts, do_img, tts_eng, is_graphic_mode, idx_seed=0):
     """Generate one question (= one qSet that may contain multiple sub-questions).
     Returns the item dict on success, raises on failure."""
     prompt, ap = build_prompt(level, actual_part, to)
     raw = generate_text(prompt, engine, model, url, api_key)
-    qs = shuffle_answer_positions(enforce_choice_count(normalize_set(parse_json(raw), ap)))
+    qs = enforce_choice_count(normalize_set(parse_json(raw), ap))
     if not qs.get("questions"): raise ValueError("No questions")
+    # Consistency check BEFORE shuffle (letters still match LLM output)
     if not check_answer_consistency(qs, actual_part):
         print(f"[RETRY] Answer/explanation mismatch detected, regenerating...", flush=True)
         time.sleep(2)
         raw2 = generate_text(prompt, engine, model, url, api_key)
-        qs2 = shuffle_answer_positions(enforce_choice_count(normalize_set(parse_json(raw2), ap)))
+        qs2 = enforce_choice_count(normalize_set(parse_json(raw2), ap))
         if qs2.get("questions") and check_answer_consistency(qs2, actual_part):
             qs = qs2
         else:
             print(f"[WARN] Retry also inconsistent, keeping original", flush=True)
+    # Shuffle AFTER consistency check
+    qs = shuffle_answer_positions(qs)
     real_part = qs.get("part", actual_part)
     item = {"part": real_part, "level": level,
             "createdAt": int(time.time()*1000) + idx_seed,
@@ -996,6 +1046,9 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
             except Exception as e:
                 print(f"[VOCAB] {e}", flush=True)
         print(f"[VOCAB] Audio: {w_ok} words, {e_ok} examples ({('Edge' if use_edge_for_vocab else 'Gemini')})", flush=True)
+    # Listen-mode Q&A audio (Edge TTS — free, for answer/explanation/question+choices)
+    if qs.get("questions") and tts_eng != "off" and check_edge_tts():
+        _generate_listen_audio(qs, real_part)
     # Validate: Listening parts REQUIRE audio. If TTS was enabled but audio missing, mark invalid.
     is_listening_part = real_part in ("part1","part2","part3","part4")
     if is_listening_part and do_tts and not item.get("audioOpus"):
@@ -1272,113 +1325,6 @@ if "_init" not in st.session_state:
 # ══════════════════════════════════════
 # Sidebar
 # ══════════════════════════════════════
-with st.sidebar:
-    st.markdown("## ⚙️ Connection")
-    st.text_input("Ollama URL", key="ollama_url")
-    st.text_input("Gemini API Key", key="gemini_key", type="password")
-
-    st.divider()
-    st.markdown("## 🤖 Model")
-    valid = ["auto (per-part recommended)"] + [l for l in MODEL_OPTIONS if MODEL_OPTIONS[l] is not None]
-    st.selectbox("Model", valid, key="model_key")
-    sel = MODEL_OPTIONS.get(st.session_state.model_key)
-    if st.session_state.model_key.startswith("auto"):
-        st.caption("🔄 Auto: Part 2/4/5 → gemma3:12b, Part 1/3/6/7 → gemini-2.5-flash")
-    elif sel:
-        tag = "🖥️ Local" if sel["engine"]=="ollama" else "☁️ Cloud"
-        st.caption(f"{tag} `{sel['model']}`")
-
-    if st.button("🔌 Test"):
-        if st.session_state.model_key.startswith("auto"):
-            # Test both Ollama and Gemini
-            try:
-                r = requests.get(f"{st.session_state.ollama_url}/api/tags",timeout=5)
-                st.success(f"✅ Ollama: {', '.join(m['name'] for m in r.json().get('models',[])[:5])}")
-            except Exception as e: st.error(f"❌ Ollama: {e}")
-            if st.session_state.gemini_key:
-                st.success("✅ Gemini API key set")
-            else:
-                st.warning("⚠️ Gemini API key missing (needed for Part 1/3/6/7)")
-        elif sel and sel["engine"]=="ollama":
-            try:
-                r = requests.get(f"{st.session_state.ollama_url}/api/tags",timeout=5)
-                st.success(f"✅ {', '.join(m['name'] for m in r.json().get('models',[])[:5])}")
-            except Exception as e: st.error(f"❌ {e}")
-        else:
-            st.success("✅ Key set" if st.session_state.gemini_key else "❌ No key")
-
-    st.divider()
-    st.markdown("## 🔊 TTS")
-    edge = check_edge_tts()
-    opts = []
-    if edge: opts.append("edge")
-    opts += ["gemini","off"]
-    # session_stateの値がoptsに含まれない場合はリセット
-    if st.session_state.tts_engine not in opts:
-        st.session_state.tts_engine = opts[0]
-    st.radio("Engine", opts, key="tts_engine",
-             format_func={"edge":"Edge TTS (無料)","gemini":"🌟 Gemini TTS (高品質)","off":"🔇 Off"}.get,
-             horizontal=True)
-    if not edge: st.caption("⚠️ Edge TTS が使えません。インストール: `pip install edge-tts`")
-
-    st.divider()
-    st.markdown(f"**Results: {len(st.session_state.results)}**")
-    st.caption(f"💾 自動保存先: `{RESULTS_FILE.name}`")
-    if st.session_state.results:
-        # Per-part breakdown
-        by_part = {}
-        for r in st.session_state.results:
-            p = r.get("part","?")
-            by_part[p] = by_part.get(p, 0) + 1
-        part_labels = {"part1":"P1","part2":"P2","part3":"P3","part4":"P4","part5":"P5","part6":"P6","part7":"P7"}
-        summary = " / ".join(f"{part_labels.get(p,p)}:{n}" for p,n in sorted(by_part.items()))
-        st.caption(summary)
-
-        # Per-part export/delete
-        selected_part = st.selectbox("パート選択", ["全パート"] + sorted(by_part.keys()),
-            format_func=lambda x: f"全パート ({len(st.session_state.results)})" if x=="全パート" else f"{part_labels.get(x,x)} ({by_part.get(x,0)}問)",
-            key="stock_part_filter")
-
-        ec1, ec2 = st.columns(2)
-        if selected_part == "全パート":
-            filtered = st.session_state.results
-        else:
-            filtered = [r for r in st.session_state.results if r.get("part") == selected_part]
-
-        with ec1:
-            st.download_button(
-                f"📤 Export ({len(filtered)})",
-                json.dumps(filtered, ensure_ascii=False, indent=2),
-                f"toeic-stock-{selected_part}-{datetime.now():%Y%m%d-%H%M}.json",
-                "application/json", use_container_width=True, key="part_export"
-            )
-        with ec2:
-            label = f"🗑️ 削除 ({len(filtered)})" if selected_part != "全パート" else "🗑️ 全削除"
-            if st.button(label, use_container_width=True, key="part_delete"):
-                if selected_part == "全パート":
-                    st.session_state.results = []
-                else:
-                    st.session_state.results = [r for r in st.session_state.results if r.get("part") != selected_part]
-                save_results(RESULTS_FILE, st.session_state.results)
-                st.rerun()
-
-    # Unified export: study + mock stocks → HTML import for 聞き流し
-    all_stocks = list(st.session_state.results) + list(st.session_state.mock_results)
-    audio_count = sum(1 for s in all_stocks if s.get("audioOpus"))
-    if all_stocks:
-        st.divider()
-        st.markdown(f"**📱 HTML連携**")
-        st.caption(f"Study {len(st.session_state.results)} + 模試 {len(st.session_state.mock_results)} = {len(all_stocks)}セット (音声付き: {audio_count})")
-        st.download_button(
-            f"📱 HTML用エクスポート ({len(all_stocks)}セット)",
-            json.dumps(all_stocks, ensure_ascii=False, indent=None),
-            f"toeic-html-{datetime.now():%Y%m%d-%H%M}.json",
-            "application/json", use_container_width=True, key="html_export"
-        )
-
-    st.divider()
-    st.caption("v2026.04.18d · @fragment tabs · 303 types · TTS 2-model · 3-speaker · 429-resilient")
-
 # ══════════════════════════════════════
 # Vocab helper functions (module level for reuse + caching)
 # ══════════════════════════════════════
@@ -1439,6 +1385,304 @@ def meanings_match(m1, m2):
             if len(na) >= 3 and len(nb) >= 3:
                 if na in nb or nb in na: return True
     return False
+
+def repair_stock_answers(results, ollama_url, api_key, regen_all_explanations=False):
+    """LLM-based repair: re-judge correct answers AND regenerate explanations.
+    Phase 1: Fast correct-answer pass (letter only)
+    Phase 2: Regenerate explanation for changed items (or ALL if regen_all_explanations)."""
+    total_items = len(results)
+    total_qs = sum(len(r.get("qSet",{}).get("questions",[])) for r in results)
+    if total_qs == 0:
+        st.warning("修復する問題がありません")
+        return 0
+    
+    fixed_correct = 0
+    fixed_expl = 0
+    errors = 0
+    prog = st.progress(0)
+    stat = st.empty()
+    
+    # ── Phase 1: Re-judge correct answers (fast) ──
+    stat.info(f"🔧 Phase 1/2: 正解を再判定中 ({total_items}セット)...")
+    changed_items = []  # (ri, qi_list) of items needing explanation regen
+    
+    for ri, r in enumerate(results):
+        qs = r.get("qSet", {})
+        part = r.get("part", "?")
+        questions = qs.get("questions", [])
+        if not questions: continue
+        
+        if ri % 20 == 0:
+            prog.progress(min(0.49, ri / total_items * 0.5))
+            stat.info(f"🔧 Phase 1: {ri}/{total_items} ({fixed_correct} fixed)...")
+        
+        # Build context
+        context = ""
+        if part == "part2":
+            context = f"Spoken: {qs.get('spoken','')}\n"
+        elif part in ("part3","part3_3p"):
+            context = f"Conversation:\n{qs.get('conversation','')[:500]}\n\n"
+        elif part == "part4":
+            context = f"Talk:\n{qs.get('talk','')[:500]}\n\n"
+        elif part == "part6":
+            context = f"Text:\n{qs.get('text','')[:500]}\n\n"
+        elif part.startswith("part7"):
+            if qs.get("text"):
+                context = f"Document:\n{qs.get('text','')[:500]}\n\n"
+            elif qs.get("text_1"):
+                context = f"Doc1:\n{qs.get('text_1','')[:300]}\nDoc2:\n{qs.get('text_2','')[:300]}\n"
+                if qs.get("text_3"):
+                    context += f"Doc3:\n{qs.get('text_3','')[:300]}\n"
+                context += "\n"
+        elif part == "part1":
+            context = f"Photo: {qs.get('scene','')}\n"
+        
+        q_lines = []
+        for qi, q in enumerate(questions):
+            choices = q.get("choices", [])
+            if len(choices) < 3: continue
+            q_lines.append(f"Q{qi+1}: {q.get('question','')}\n{' / '.join(choices)}")
+        if not q_lines: continue
+        
+        letters_str = "A/B/C" if part == "part2" else "A/B/C/D"
+        prompt = f"TOEIC {part.upper()}. Correct letter ({letters_str}) for each:\n\n{context}{chr(10).join(q_lines)}\n\nQ1: X\nQ2: X"
+        
+        try:
+            resp = requests.post(f"{ollama_url}/api/generate", json={
+                "model": "gemma3:12b", "prompt": prompt, "stream": False,
+                "options": {"temperature": 0.0, "num_predict": 50, "num_gpu": 99}
+            }, timeout=60)
+            answer = resp.json().get("response", "").strip() if resp.ok else ""
+            if not answer and api_key:
+                resp = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
+                    json={"contents":[{"parts":[{"text":prompt}]}],
+                          "generationConfig":{"temperature":0.0,"maxOutputTokens":50}}, timeout=30)
+                if resp.ok:
+                    answer = resp.json().get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","").strip()
+            
+            matches = re.findall(r'Q(\d+)\s*[:：]\s*\(?([A-Da-d])\)?', answer)
+            if not matches:
+                for li, line in enumerate([l.strip() for l in answer.split("\n") if l.strip()]):
+                    for ch in line.upper():
+                        if ch in "ABCD": matches.append((str(li+1), ch)); break
+            
+            changed_qis = []
+            for m_qi_s, m_letter in matches:
+                qi = int(m_qi_s) - 1
+                if qi < 0 or qi >= len(questions): continue
+                q = questions[qi]
+                letter = m_letter.upper()
+                new_correct = {"A":0,"B":1,"C":2,"D":3}.get(letter)
+                if new_correct is None: continue
+                old_correct = q.get("correct", 0)
+                if new_correct != old_correct:
+                    q["correct"] = new_correct
+                    fixed_correct += 1
+                    changed_qis.append(qi)
+                    if fixed_correct <= 20:
+                        print(f"[REPAIR-1] {part} #{ri} Q{qi+1}: ({['A','B','C','D'][old_correct]})→({letter})", flush=True)
+            if changed_qis:
+                changed_items.append((ri, changed_qis))
+        except Exception as e:
+            errors += 1
+            if errors <= 10: print(f"[REPAIR ERR] #{ri}: {e}", flush=True)
+        
+        if ri > 0 and ri % 200 == 0:
+            save_results(RESULTS_FILE, results)
+    
+    save_results(RESULTS_FILE, results)
+    print(f"[REPAIR-1] Phase 1 done: {fixed_correct} correct fixed, {len(changed_items)} items need explanation regen", flush=True)
+    
+    # ── Phase 2: Regenerate explanations ──
+    if regen_all_explanations:
+        # Regenerate ALL explanations
+        all_items_qis = []
+        for ri, r in enumerate(results):
+            qis = list(range(len(r.get("qSet",{}).get("questions",[]))))
+            if qis: all_items_qis.append((ri, qis))
+        changed_items = all_items_qis
+        stat.info(f"🔧 Phase 2/2: 全{len(changed_items)}セットの解説を再生成中...")
+    
+    if changed_items:
+        stat.info(f"🔧 Phase 2/2: {len(changed_items)}セットの解説を再生成中...")
+        for ci, (ri, qi_list) in enumerate(changed_items):
+            if ci % 10 == 0:
+                prog.progress(0.5 + min(0.49, ci / len(changed_items) * 0.5))
+                stat.info(f"🔧 Phase 2: {ci}/{len(changed_items)} 解説再生成...")
+            
+            r = results[ri]
+            qs = r.get("qSet", {})
+            part = r.get("part", "?")
+            questions = qs.get("questions", [])
+            
+            for qi in qi_list:
+                q = questions[qi]
+                choices = q.get("choices", [])
+                correct = q.get("correct", 0)
+                correct_letter = ["A","B","C","D"][correct]
+                question_text = q.get("question", "")
+                choice_text = "\n".join(choices)
+                
+                # Add brief context for listening/reading parts
+                ctx2 = ""
+                if part == "part2":
+                    ctx2 = f"Spoken: {qs.get('spoken','')}\n"
+                elif part in ("part3","part3_3p") and qs.get("conversation"):
+                    ctx2 = f"Conversation:\n{qs['conversation'][:400]}\n\n"
+                elif part == "part4" and qs.get("talk"):
+                    ctx2 = f"Talk:\n{qs['talk'][:400]}\n\n"
+                
+                prompt2 = f"""TOEIC {part.upper()}. 正解は({correct_letter})。各選択肢を簡潔に解説してください。
+
+{ctx2}{question_text}
+{choice_text}
+
+以下の形式で返してください:
+explanation_ja: 正解は({correct_letter})。[正解の理由]。[各誤答の問題点を1文ずつ]
+explanation_en: [1-2 sentence English explanation]"""
+
+                try:
+                    resp = requests.post(f"{ollama_url}/api/generate", json={
+                        "model": "gemma3:12b", "prompt": prompt2, "stream": False,
+                        "options": {"temperature": 0.2, "num_predict": 400, "num_gpu": 99}
+                    }, timeout=60)
+                    answer2 = resp.json().get("response", "").strip() if resp.ok else ""
+                    
+                    if answer2:
+                        # Parse explanation_ja and explanation_en
+                        m_ja = re.search(r'explanation_ja\s*[:：]\s*(.+?)(?=explanation_en|$)', answer2, re.S)
+                        m_en = re.search(r'explanation_en\s*[:：]\s*(.+?)$', answer2, re.S)
+                        if m_ja:
+                            new_ja = m_ja.group(1).strip()
+                            if len(new_ja) > 20:  # sanity check
+                                q["explanation_ja"] = new_ja
+                                fixed_expl += 1
+                        if m_en:
+                            new_en = m_en.group(1).strip()
+                            if len(new_en) > 10:
+                                q["explanation_en"] = new_en
+                except Exception as e:
+                    if errors <= 15: print(f"[REPAIR-2 ERR] #{ri} Q{qi+1}: {e}", flush=True)
+                    errors += 1
+            
+            if ci > 0 and ci % 50 == 0:
+                save_results(RESULTS_FILE, results)
+    
+    # ── Phase 3: Generate missing listen-mode audio (Edge TTS) ──
+    if check_edge_tts():
+        stat.info(f"🔧 Phase 3/3: 聞き流し用Q&A音声を生成中...")
+        listen_generated = 0
+        for ri, r in enumerate(results):
+            qs = r.get("qSet", {})
+            part = r.get("part", "?")
+            if part not in ("part1","part2","part3","part3_3p","part4"): continue
+            questions = qs.get("questions", [])
+            # Check if any Q&A audio is missing
+            needs_audio = any(not q.get("audio_ans") for q in questions)
+            if part in ("part3","part3_3p","part4"):
+                needs_audio = needs_audio or any(not q.get("audio_q") for q in questions)
+            if not needs_audio: continue
+            
+            if ri % 20 == 0:
+                stat.info(f"🔧 Phase 3: {ri}/{total_items} (Q&A音声 {listen_generated}個生成)...")
+            
+            _generate_listen_audio(qs, part)
+            listen_generated += sum(1 for q in questions if q.get("audio_ans"))
+            
+            if ri > 0 and ri % 100 == 0:
+                save_results(RESULTS_FILE, results)
+        
+        save_results(RESULTS_FILE, results)
+        print(f"[REPAIR-3] Listen audio: {listen_generated} clips generated", flush=True)
+    else:
+        print(f"[REPAIR-3] Edge TTS not available, skipping listen audio", flush=True)
+        listen_generated = 0
+    
+    prog.progress(1.0)
+    save_results(RESULTS_FILE, results)
+    stat.success(f"✅ 修復完了: 正解{fixed_correct}問 + 解説{fixed_expl}問 + Q&A音声{listen_generated}個")
+    print(f"[REPAIR] Done: correct={fixed_correct}, expl={fixed_expl}, listen_audio={listen_generated}, errors={errors}", flush=True)
+    return fixed_correct
+
+def repair_explanations_only(results, ollama_url, api_key):
+    """Regenerate explanation_ja/en for ALL questions without changing correct index."""
+    total_items = len(results)
+    total_qs = sum(len(r.get("qSet",{}).get("questions",[])) for r in results)
+    if total_qs == 0:
+        st.warning("問題がありません"); return 0
+    
+    fixed = 0
+    errors = 0
+    prog = st.progress(0)
+    stat = st.empty()
+    stat.info(f"📝 {total_items}セット ({total_qs}問) の解説を再生成中...")
+    
+    for ri, r in enumerate(results):
+        qs = r.get("qSet", {})
+        part = r.get("part", "?")
+        questions = qs.get("questions", [])
+        if not questions: continue
+        
+        if ri % 10 == 0:
+            prog.progress(min(0.99, ri / total_items))
+            stat.info(f"📝 {ri}/{total_items} ({fixed} regenerated)...")
+        
+        for qi, q in enumerate(questions):
+            choices = q.get("choices", [])
+            if len(choices) < 3: continue
+            correct = q.get("correct", 0)
+            correct_letter = ["A","B","C","D"][correct]
+            question_text = q.get("question", "")
+            choice_text = "\n".join(choices)
+            
+            ctx = ""
+            if part == "part2":
+                ctx = f"Spoken: {qs.get('spoken','')}\n"
+            elif part in ("part3","part3_3p") and qs.get("conversation"):
+                ctx = f"Conversation:\n{qs['conversation'][:400]}\n\n"
+            elif part == "part4" and qs.get("talk"):
+                ctx = f"Talk:\n{qs['talk'][:400]}\n\n"
+            elif part == "part6" and qs.get("text"):
+                ctx = f"Text:\n{qs['text'][:400]}\n\n"
+            
+            prompt = f"""TOEIC {part.upper()}. 正解は({correct_letter})。各選択肢を簡潔に解説してください。
+
+{ctx}{question_text}
+{choice_text}
+
+以下の形式で返してください:
+explanation_ja: 正解は({correct_letter})。[正解の理由]。[各誤答の問題点を1文ずつ]
+explanation_en: [1-2 sentence English explanation]"""
+
+            try:
+                resp = requests.post(f"{ollama_url}/api/generate", json={
+                    "model": "gemma3:12b", "prompt": prompt, "stream": False,
+                    "options": {"temperature": 0.2, "num_predict": 400, "num_gpu": 99}
+                }, timeout=60)
+                answer = resp.json().get("response", "").strip() if resp.ok else ""
+                
+                if answer:
+                    m_ja = re.search(r'explanation_ja\s*[:：]\s*(.+?)(?=explanation_en|$)', answer, re.S)
+                    m_en = re.search(r'explanation_en\s*[:：]\s*(.+?)$', answer, re.S)
+                    if m_ja and len(m_ja.group(1).strip()) > 20:
+                        q["explanation_ja"] = m_ja.group(1).strip()
+                        fixed += 1
+                    if m_en and len(m_en.group(1).strip()) > 10:
+                        q["explanation_en"] = m_en.group(1).strip()
+            except Exception as e:
+                errors += 1
+                if errors <= 10: print(f"[EXPL ERR] #{ri} Q{qi+1}: {e}", flush=True)
+        
+        if ri > 0 and ri % 50 == 0:
+            save_results(RESULTS_FILE, results)
+            print(f"[EXPL] Checkpoint at item {ri} ({fixed} done)", flush=True)
+    
+    prog.progress(1.0)
+    save_results(RESULTS_FILE, results)
+    stat.success(f"✅ 解説再生成完了: {fixed}/{total_qs}問 (エラー: {errors})")
+    print(f"[EXPL] Done: {fixed}/{total_qs}, errors={errors}", flush=True)
+    return fixed
 
 def _do_llm_vocab_cleanup(all_vocab):
     """Use LLM to deduplicate similar meanings for each word."""
@@ -1573,6 +1817,138 @@ def build_vocab_list(results):
 # ══════════════════════════════════════
 # Main — Tabs: Generate / Practice
 # ══════════════════════════════════════
+with st.sidebar:
+    st.markdown("## ⚙️ Connection")
+    st.text_input("Ollama URL", key="ollama_url")
+    st.text_input("Gemini API Key", key="gemini_key", type="password")
+
+    st.divider()
+    st.markdown("## 🤖 Model")
+    valid = ["auto (per-part recommended)"] + [l for l in MODEL_OPTIONS if MODEL_OPTIONS[l] is not None]
+    st.selectbox("Model", valid, key="model_key")
+    sel = MODEL_OPTIONS.get(st.session_state.model_key)
+    if st.session_state.model_key.startswith("auto"):
+        st.caption("🔄 Auto: Part 2/4/5 → gemma3:12b, Part 1/3/6/7 → gemini-2.5-flash")
+    elif sel:
+        tag = "🖥️ Local" if sel["engine"]=="ollama" else "☁️ Cloud"
+        st.caption(f"{tag} `{sel['model']}`")
+
+    if st.button("🔌 Test"):
+        if st.session_state.model_key.startswith("auto"):
+            # Test both Ollama and Gemini
+            try:
+                r = requests.get(f"{st.session_state.ollama_url}/api/tags",timeout=5)
+                st.success(f"✅ Ollama: {', '.join(m['name'] for m in r.json().get('models',[])[:5])}")
+            except Exception as e: st.error(f"❌ Ollama: {e}")
+            if st.session_state.gemini_key:
+                st.success("✅ Gemini API key set")
+            else:
+                st.warning("⚠️ Gemini API key missing (needed for Part 1/3/6/7)")
+        elif sel and sel["engine"]=="ollama":
+            try:
+                r = requests.get(f"{st.session_state.ollama_url}/api/tags",timeout=5)
+                st.success(f"✅ {', '.join(m['name'] for m in r.json().get('models',[])[:5])}")
+            except Exception as e: st.error(f"❌ {e}")
+        else:
+            st.success("✅ Key set" if st.session_state.gemini_key else "❌ No key")
+
+    st.divider()
+    st.markdown("## 🔊 TTS")
+    edge = check_edge_tts()
+    opts = []
+    if edge: opts.append("edge")
+    opts += ["gemini","off"]
+    # session_stateの値がoptsに含まれない場合はリセット
+    if st.session_state.tts_engine not in opts:
+        st.session_state.tts_engine = opts[0]
+    st.radio("Engine", opts, key="tts_engine",
+             format_func={"edge":"Edge TTS (無料)","gemini":"🌟 Gemini TTS (高品質)","off":"🔇 Off"}.get,
+             horizontal=True)
+    if not edge: st.caption("⚠️ Edge TTS が使えません。インストール: `pip install edge-tts`")
+
+    st.divider()
+    st.markdown(f"**Results: {len(st.session_state.results)}**")
+    st.caption(f"💾 自動保存先: `{RESULTS_FILE.name}`")
+    if st.session_state.results:
+        # Per-part breakdown
+        by_part = {}
+        for r in st.session_state.results:
+            p = r.get("part","?")
+            by_part[p] = by_part.get(p, 0) + 1
+        part_labels = {"part1":"P1","part2":"P2","part3":"P3","part4":"P4","part5":"P5","part6":"P6","part7":"P7"}
+        summary = " / ".join(f"{part_labels.get(p,p)}:{n}" for p,n in sorted(by_part.items()))
+        st.caption(summary)
+
+        # Per-part export/delete
+        selected_part = st.selectbox("パート選択", ["全パート"] + sorted(by_part.keys()),
+            format_func=lambda x: f"全パート ({len(st.session_state.results)})" if x=="全パート" else f"{part_labels.get(x,x)} ({by_part.get(x,0)}問)",
+            key="stock_part_filter")
+
+        ec1, ec2 = st.columns(2)
+        if selected_part == "全パート":
+            filtered = st.session_state.results
+        else:
+            filtered = [r for r in st.session_state.results if r.get("part") == selected_part]
+
+        with ec1:
+            st.download_button(
+                f"📤 Export ({len(filtered)})",
+                json.dumps(filtered, ensure_ascii=False, indent=2),
+                f"toeic-stock-{selected_part}-{datetime.now():%Y%m%d-%H%M}.json",
+                "application/json", use_container_width=True, key="part_export"
+            )
+        with ec2:
+            label = f"🗑️ 削除 ({len(filtered)})" if selected_part != "全パート" else "🗑️ 全削除"
+            if st.button(label, use_container_width=True, key="part_delete"):
+                if selected_part == "全パート":
+                    st.session_state.results = []
+                else:
+                    st.session_state.results = [r for r in st.session_state.results if r.get("part") != selected_part]
+                save_results(RESULTS_FILE, st.session_state.results)
+                st.rerun()
+
+    # Unified export: study + mock stocks → HTML import for 聞き流し
+    all_stocks = list(st.session_state.results) + list(st.session_state.mock_results)
+    audio_count = sum(1 for s in all_stocks if s.get("audioOpus"))
+    if all_stocks:
+        st.divider()
+        st.markdown(f"**📱 HTML連携**")
+        st.caption(f"Study {len(st.session_state.results)} + 模試 {len(st.session_state.mock_results)} = {len(all_stocks)}セット (音声付き: {audio_count})")
+        st.download_button(
+            f"📱 HTML用エクスポート ({len(all_stocks)}セット)",
+            json.dumps(all_stocks, ensure_ascii=False, indent=None),
+            f"toeic-html-{datetime.now():%Y%m%d-%H%M}.json",
+            "application/json", use_container_width=True, key="html_export"
+        )
+
+    # Stock repair
+    st.divider()
+    total_qs = sum(len(r.get("qSet",{}).get("questions",[])) for r in st.session_state.results)
+    if total_qs > 0:
+        regen_all = st.checkbox("解説も全問再生成", key="repair_regen_all", value=True,
+                                help="correctが変わらなかった問題の解説も再生成")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            if st.button(f"🔧 正解+解説 ({total_qs}問)", key="repair_btn"):
+                repair_stock_answers(
+                    st.session_state.results,
+                    st.session_state.ollama_url,
+                    st.session_state.gemini_key,
+                    regen_all_explanations=regen_all
+                )
+                st.rerun()
+        with rc2:
+            if st.button("📝 解説のみ再生成", key="repair_expl_only"):
+                repair_explanations_only(
+                    st.session_state.results,
+                    st.session_state.ollama_url,
+                    st.session_state.gemini_key
+                )
+                st.rerun()
+
+    st.divider()
+    st.caption("v2026.04.18e · repair + check→shuffle fix · 303 types · TTS 2-model")
+
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
 tab_gen, tab_practice, tab_vocab, tab_quiz, tab_listen, tab_mock_test = st.tabs(["🔧 Generate", "🎯 Practice", "📚 Vocabulary", "🧠 単語Quiz", "🎧 Listening", "📝 模試テスト"])
@@ -1716,18 +2092,20 @@ with tab_gen:
             try:
                 prompt,ap = build_prompt(level,actual_part,to)
                 raw = generate_text(prompt,engine,model,url,api_key)
-                qs = shuffle_answer_positions(enforce_choice_count(normalize_set(parse_json(raw),ap)))
+                qs = enforce_choice_count(normalize_set(parse_json(raw),ap))
                 if not qs.get("questions"): raise ValueError("No questions")
-                # Consistency check: regenerate once if answer letter mismatches explanation
+                # Consistency check BEFORE shuffle
                 if not check_answer_consistency(qs, actual_part):
                     print(f"[RETRY] Answer/explanation mismatch detected, regenerating...", flush=True)
                     time.sleep(2)
                     raw2 = generate_text(prompt,engine,model,url,api_key)
-                    qs2 = shuffle_answer_positions(enforce_choice_count(normalize_set(parse_json(raw2),ap)))
+                    qs2 = enforce_choice_count(normalize_set(parse_json(raw2),ap))
                     if qs2.get("questions") and check_answer_consistency(qs2, actual_part):
                         qs = qs2
                     else:
                         print(f"[WARN] Retry also inconsistent, keeping original", flush=True)
+                # Shuffle AFTER consistency check
+                qs = shuffle_answer_positions(qs)
                 real_part = qs.get("part", actual_part)
                 item = {"part":real_part,"level":level,"createdAt":int(time.time()*1000)+i,"qSet":qs,"imgUrl":None,"audioOpus":None}
                 if do_tts and qs.get("audio"):
@@ -1820,6 +2198,9 @@ with tab_gen:
                         except Exception as e:
                             print(f"[VOCAB main] {e}", flush=True)
                     print(f"[VOCAB] Audio: {len([v for v in qs['vocab'] if v.get('audio')])} words, {len([v for v in qs['vocab'] if v.get('example_audio')])} examples ({('Edge' if _use_edge_vocab else 'Gemini')})", flush=True)
+                # Listen-mode Q&A audio (Edge TTS)
+                if qs.get("questions") and tts_eng != "off" and check_edge_tts():
+                    _generate_listen_audio(qs, actual_part)
                 # STRICT VALIDATION before saving to stock
                 is_listening_q = actual_part in ("part1","part2","part3","part3_3p","part4")
                 ok, reason = validate_stock_item(

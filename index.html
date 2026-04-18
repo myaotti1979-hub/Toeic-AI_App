@@ -1142,6 +1142,7 @@ function enforceChoiceCount(qs) {
 
 function shuffleAnswerPositions(qs) {
   const labels = ["(A)","(B)","(C)","(D)"];
+  const fwLabels = ["（A）","（B）","（C）","（D）"];
   for (const q of (qs.questions || [])) {
     const choices = q.choices;
     const correctIdx = q.correct || 0;
@@ -1151,27 +1152,36 @@ function shuffleAnswerPositions(qs) {
     for (let i=n-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [order[i],order[j]]=[order[j],order[i]]; }
     const newChoices = new Array(n);
     let newCorrect = 0;
+    // Build old→new position mapping
+    const oldToNew = {};  // oldPos → newPos
     for (let np=0; np<n; np++) {
       const op = order[np];
       const c = choices[op].replace(/^\([A-D]\)\s*/, "");
       newChoices[np] = `${labels[np]} ${c}`;
       if (op === correctIdx) newCorrect = np;
+      oldToNew[op] = np;
     }
-    const oldLabel = labels[correctIdx] || "(A)";
-    const newLabel = labels[newCorrect];
     q.choices = newChoices;
     q.correct = newCorrect;
-    if (oldLabel !== newLabel) {
+    // Remap ALL label references in explanations using placeholders to avoid collision
+    const needsRemap = Object.entries(oldToNew).some(([o,n]) => parseInt(o) !== n);
+    if (needsRemap) {
       for (const f of ["explanation_ja","explanation_en"]) {
-        if (q[f]) {
-          // Half-width
-          q[f] = q[f].replaceAll(`正解は${oldLabel}`, `正解は${newLabel}`)
-                      .replaceAll(`answer is ${oldLabel}`, `answer is ${newLabel}`);
-          // Full-width brackets: 正解は（A）→ 正解は（B）
-          const oldFW = oldLabel.replace("(","（").replace(")","）");
-          const newFW = newLabel.replace("(","（").replace(")","）");
-          q[f] = q[f].replaceAll(`正解は${oldFW}`, `正解は${newFW}`);
+        if (!q[f]) continue;
+        let text = q[f];
+        // Step 1: Replace all labels → placeholders
+        for (let i=0; i<n; i++) {
+          text = text.replaceAll(labels[i], `__LABEL${i}__`);
+          text = text.replaceAll(fwLabels[i], `__FWLABEL${i}__`);
+          // Also handle bare letter references like "(A)" without prefix
         }
+        // Step 2: Replace placeholders → new labels
+        for (let oldPos=0; oldPos<n; oldPos++) {
+          const newPos = oldToNew[oldPos];
+          text = text.replaceAll(`__LABEL${oldPos}__`, labels[newPos]);
+          text = text.replaceAll(`__FWLABEL${oldPos}__`, fwLabels[newPos]);
+        }
+        q[f] = text;
       }
     }
   }
@@ -3299,32 +3309,21 @@ async function renderListenPlay() {
     }
   };
 
-  async function speakAndWait(text) {
-    return new Promise(resolve=>{
-      if(stopped || !text || !text.trim()){resolve();return;}
-      speakGemini(text, (err)=>{
-        if (err) {
-          // Gemini TTS failed — fallback to browser built-in speech
-          try {
-            if (window.speechSynthesis) {
-              const utter = new SpeechSynthesisUtterance(text);
-              utter.lang = "en-US";
-              utter.rate = 0.95;
-              utter.onend = () => resolve();
-              utter.onerror = () => resolve();
-              speechSynthesis.speak(utter);
-              return;
-            }
-          } catch(e) {}
-        }
-        resolve();
-      });
-    });
-  }
-  async function speakConvWait(text, speakers) {
-    return new Promise(resolve=>{
-      if(stopped){resolve();return;}
-      speakConv(text, (err)=>{ resolve(); }, speakers);
+  // Web Speech utility (free, no API calls)
+  async function webSpeak(text) {
+    return new Promise(resolve => {
+      if (stopped || !text || !text.trim()) { resolve(); return; }
+      if (!window.speechSynthesis) { resolve(); return; }
+      const start = () => {
+        if (stopped) { resolve(); return; }
+        if (paused) { setTimeout(start, 200); return; }
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = "en-US"; utter.rate = 0.95;
+        utter.onend = () => resolve();
+        utter.onerror = () => resolve();
+        speechSynthesis.speak(utter);
+      };
+      start();
     });
   }
   async function wait(ms) {
@@ -3334,77 +3333,38 @@ async function renderListenPlay() {
     });
   }
 
-  // Play stored stock audio (Opus base64 → blob → Audio). Returns true if played.
+  // Play stored stock audio (Opus/PCM). Returns true if played.
   async function playStoredStock(item) {
     const audioData = item.audioOpus || item.audioPcm;
-    console.log(`[LISTEN] playStoredStock: part=${item.part}, hasOpus=${!!item.audioOpus}, hasPcm=${!!item.audioPcm}, dataLen=${audioData?audioData.length:0}`);
     if (!audioData) return false;
     try {
-      let url;
-      if (item.audioOpus) {
-        url = opusToUrl(item.audioOpus);
-      } else {
-        url = pcmToUrl(item.audioPcm);
-      }
-      console.log(`[LISTEN] Playing stored audio: ${url.slice(0,50)}...`);
+      const url = item.audioOpus ? opusToUrl(item.audioOpus) : pcmToUrl(item.audioPcm);
       return new Promise(resolve => {
         const a = new Audio(url);
         _curAudio = a;
-        a.onended = () => { console.log("[LISTEN] Audio ended OK"); URL.revokeObjectURL(url); _curAudio=null; resolve(true); };
-        a.onerror = (e) => { console.error("[LISTEN] Audio error:", e); URL.revokeObjectURL(url); _curAudio=null; resolve(false); };
-        a.play().then(() => console.log("[LISTEN] play() started")).catch(e => { console.error("[LISTEN] play() rejected:", e); URL.revokeObjectURL(url); resolve(false); });
+        a.onended = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(true); };
+        a.onerror = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(false); };
+        a.play().catch(e => { URL.revokeObjectURL(url); resolve(false); });
       });
-    } catch(e) { console.error("stored stock audio fail:", e); return false; }
+    } catch(e) { console.warn("stored audio fail:", e); return false; }
   }
 
-  // Play sequence
+  // Play sequence — stored audio + Web Speech ONLY (no Gemini API calls)
   try {
-    // 1. Announce
+    // 1. Announce question number
     statusEl.textContent=`🔊 Question ${idx+1}`;
-    await speakAndWait(`Question ${idx+1}.`);
+    await webSpeak(`Question ${idx+1}.`);
     if(stopped) return;
 
-    // 2. Main audio (prefer stored Opus audio, fallback to live TTS, then Web Speech)
+    // 2. Main audio — STORED ONLY
     const audioText = qs.audio || qs.spoken || qs.talk || qs.conversation || "";
-    console.log(`[LISTEN] audioText: ${audioText ? audioText.slice(0,60)+"..." : "EMPTY"}, keys: ${Object.keys(qs).join(",")}`);
     if(audioText) {
       textEl.textContent = audioText.replace(/\\n/g,"\n");
       statusEl.textContent="🔊 問題再生中...";
       const played = await playStoredStock(item);
       if (!played) {
-        // No stored audio — try Gemini TTS with timeout, fallback to Web Speech
-        let ttsOk = false;
-        const ac = new AbortController();
-        try {
-          const ttsPromise = new Promise((resolve, reject) => {
-            const isConv = item.part==="part3";
-            const onDone = (err) => {
-              if (ac.signal.aborted) { stopSpeak(); return; }
-              err ? reject(err) : resolve();
-            };
-            if (isConv) { speakConv(audioText, onDone, qs.speakers, {signal:ac.signal}); }
-            else { speakGemini(audioText, onDone, {signal:ac.signal}); }
-          });
-          const timeout = new Promise((_, reject) => setTimeout(() => reject("timeout"), 15000));
-          await Promise.race([ttsPromise, timeout]);
-          ttsOk = true;
-        } catch(e) {
-          console.warn("Listen TTS failed/timeout:", e);
-          ac.abort();   // cancel the HTTP request itself
-          stopSpeak();  // kill any in-progress audio
-        }
-        if (!ttsOk && !stopped) {
-          // Web Speech API fallback (browser built-in, works offline)
-          await new Promise(resolve => {
-            if (!window.speechSynthesis) { resolve(); return; }
-            const cleanText = audioText.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,"").replace(/\\n/g," ");
-            const utter = new SpeechSynthesisUtterance(cleanText);
-            utter.lang = "en-US"; utter.rate = 0.95;
-            utter.onend = () => resolve();
-            utter.onerror = () => resolve();
-            speechSynthesis.speak(utter);
-          });
-        }
+        console.warn(`[LISTEN] Q${idx+1}: no stored audio, Web Speech fallback`);
+        await webSpeak(audioText.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,"").replace(/\\n/g," "));
       }
     }
     if(stopped) return;
@@ -3414,7 +3374,22 @@ async function renderListenPlay() {
     await wait(LISTEN_THINK_MS);
     if(stopped) return;
 
-    // 4. Answers for each question
+    // Helper: play stored opus clip, returns true if played
+    async function playClip(b64opus) {
+      if (!b64opus) return false;
+      try {
+        const url = opusToUrl(b64opus);
+        return new Promise(resolve => {
+          const a = new Audio(url);
+          _curAudio = a;
+          a.onended = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(true); };
+          a.onerror = () => { URL.revokeObjectURL(url); _curAudio=null; resolve(false); };
+          a.play().catch(() => { URL.revokeObjectURL(url); resolve(false); });
+        });
+      } catch(e) { return false; }
+    }
+
+    // 4. Answers — stored audio (Edge TTS) preferred, Web Speech fallback
     const letters = ["A","B","C","D"];
     for(let qi=0; qi<questions.length; qi++) {
       if(stopped) return;
@@ -3424,51 +3399,54 @@ async function renderListenPlay() {
       const correctText = (choices[correct]||"").replace(/^\([A-D]\)\s*/,"");
       const correctLetter = letters[correct] || "A";
 
+      // Question + choices (Part 3/4 only)
       if(questions.length > 1) {
         statusEl.textContent=`🔊 Q${qi+1}: ${q.question?.slice(0,40)}...`;
-        await speakAndWait(q.question || "");
-        await wait(LISTEN_Q_TO_CHOICES_MS);
-        if(stopped) return;
-      }
-
-      // Read choices (Part 3/4 only — Part 1/2 already include choices in main audio)
-      const needChoiceRead = !["part1","part2"].includes(item.part);
-      if (needChoiceRead && choices.length > 0) {
-        statusEl.textContent=`🔊 選択肢を読み上げ中...`;
-        const choicesText = choices.map((c,i)=>`(${letters[i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
-        await speakAndWait(choicesText);
+        if (q.audio_q) {
+          await playClip(q.audio_q);
+        } else {
+          await webSpeak(q.question || "");
+          await wait(LISTEN_Q_TO_CHOICES_MS);
+          if(stopped) return;
+          const needChoiceRead = !["part1","part2"].includes(item.part);
+          if (needChoiceRead && choices.length > 0) {
+            statusEl.textContent=`🔊 選択肢...`;
+            const choicesText = choices.map((c,i)=>`(${letters[i]}) ${c.replace(/^\([A-D]\)\s*/,"")}`).join(". ");
+            await webSpeak(choicesText);
+          }
+        }
         await wait(LISTEN_CHOICES_PAUSE_MS);
         if(stopped) return;
       } else if (["part1","part2"].includes(item.part)) {
-        // Part 1/2: choices already in main audio, just add think time
+        // Part 1/2: choices already in main audio, just think time
         await wait(LISTEN_CHOICES_PAUSE_MS);
         if(stopped) return;
       }
 
-      // Answer
+      // Answer + explanation
       statusEl.textContent=`✅ Answer: ${correctLetter}`;
       textEl.textContent = `Answer: (${correctLetter}) ${correctText}`;
-      await speakAndWait(`The answer is ${correctLetter}. ${correctText}`);
-      await wait(LISTEN_AFTER_ANSWER_MS);
-      if(stopped) return;
-
-      // English explanation
-      const explEn = (q.explanation_en || "").trim();
-      if(explEn) {
-        statusEl.textContent=`💡 ${explEn.slice(0,40)}...`;
-        await speakAndWait(explEn);
-        await wait(LISTEN_AFTER_EXPL_MS);
-        if(stopped) return;
+      if (q.audio_ans) {
+        await playClip(q.audio_ans);
       } else {
-        await wait(500);
+        await webSpeak(`The answer is ${correctLetter}. ${correctText}`);
+        await wait(LISTEN_AFTER_ANSWER_MS);
+        if(stopped) return;
+        const explEn = (q.explanation_en || "").trim();
+        if(explEn) {
+          statusEl.textContent=`💡 ${explEn.slice(0,40)}...`;
+          await webSpeak(explEn);
+        }
       }
+      await wait(LISTEN_AFTER_EXPL_MS);
+      if(stopped) return;
     }
 
     // 5. Auto advance
     statusEl.textContent="➡️ Next...";
     await wait(LISTEN_BETWEEN_ITEMS_MS);
     if(!stopped) { S.listenIdx=idx+1; render(); }
-  } catch(e) {
+    } catch(e) {
     console.error("Listen error:", e);
     if(!stopped) { S.listenIdx=idx+1; render(); }
   }
