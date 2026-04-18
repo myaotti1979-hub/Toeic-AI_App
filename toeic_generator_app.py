@@ -707,7 +707,7 @@ def mp3_to_opus(mp3):
         return r.stdout if r.returncode == 0 else None
     except FileNotFoundError: return None
 
-GEMINI_TTS_MODELS = ["gemini-2.5-flash-tts", "gemini-3.1-flash-tts-preview"]
+GEMINI_TTS_MODELS = ["gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview"]
 GEMINI_VOICES_M = ["Puck","Charon","Fenrir","Orus","Achird","Alnilam","Iapetus"]
 GEMINI_VOICES_F = ["Aoede","Zephyr","Kore","Leda","Callirrhoe","Despina","Pulcherrima"]
 
@@ -1426,6 +1426,103 @@ def meanings_match(m1, m2):
             if len(na) >= 3 and len(nb) >= 3:
                 if na in nb or nb in na: return True
     return False
+
+def _do_llm_vocab_cleanup(all_vocab):
+    """Use LLM to deduplicate similar meanings for each word."""
+    # Find words with 2+ meanings
+    multi = [(v["word"], v.get("_meanings",[])) for v in all_vocab if len(v.get("_meanings",[])) >= 2]
+    if not multi:
+        st.info("重複候補の単語がありません")
+        return
+
+    url = st.session_state.ollama_url
+    api_key = st.session_state.gemini_key
+    prog = st.progress(0)
+    stat = st.empty()
+    stat.info(f"🤖 {len(multi)}語の意味を AI で整理中...")
+
+    # Build batches of ~15 words
+    BATCH = 15
+    keep_map = {}  # word → [kept_ja_meanings]
+    for bi in range(0, len(multi), BATCH):
+        batch = multi[bi:bi+BATCH]
+        prompt_lines = []
+        for word, meanings in batch:
+            m_list = "\n".join(f"  {i+1}. {m.get('ja','')}" for i,m in enumerate(meanings))
+            prompt_lines.append(f"{word}:\n{m_list}")
+        prompt = f"""以下の英単語について、日本語の意味が複数あります。
+同じ意味・類義語・活用違いをまとめて、本当に異なる意味だけを残してください。
+
+ルール:
+- 同じ概念の言い換え（例: 「迅速にする」「早める」「迅速化する」）は最も自然な1つにまとめる
+- 本当に異なる意味は両方残す（例: 「連絡係」と「連絡・連携」は異なる）
+- 各単語について残す意味を列挙
+- JSON形式で返す: {{"word1": ["意味1", "意味2"], "word2": ["意味1"]}}
+
+{chr(10).join(prompt_lines)}
+
+JSONのみ返してください:"""
+
+        try:
+            # Try local Ollama first (free)
+            try:
+                resp = requests.post(f"{url}/api/generate", json={
+                    "model":"gemma3:12b","prompt":prompt,"stream":False,
+                    "options":{"temperature":0.1,"num_predict":2048,"num_gpu":99}
+                }, timeout=120)
+                if resp.ok:
+                    raw = resp.json().get("response","")
+                else:
+                    raise RuntimeError(f"Ollama {resp.status_code}")
+            except Exception:
+                # Fallback to Gemini
+                if not api_key: raise
+                resp = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
+                    json={"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.1}},
+                    timeout=60)
+                if not resp.ok: raise RuntimeError(f"Gemini {resp.status_code}")
+                raw = resp.json().get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
+
+            # Parse JSON from response
+            raw = re.sub(r'```json\s*|```\s*', '', raw).strip()
+            parsed = json.loads(raw)
+            for word, kept in parsed.items():
+                if isinstance(kept, list):
+                    keep_map[word.lower().strip()] = [str(k) for k in kept]
+            print(f"[VOCAB-AI] Batch {bi//BATCH+1}: {len(parsed)} words processed", flush=True)
+        except Exception as e:
+            print(f"[VOCAB-AI] Batch error: {e}", flush=True)
+        prog.progress(min(1.0, (bi+BATCH)/len(multi)))
+
+    if not keep_map:
+        stat.warning("⚠️ AI整理に失敗しました")
+        return
+
+    # Apply: remove meanings not in keep_map
+    cleaned = 0
+    for r in st.session_state.results:
+        qs = r.get("qSet", {})
+        vocab = qs.get("vocab", [])
+        if not vocab: continue
+        new_vocab = []
+        for v in vocab:
+            word = v.get("word","").strip()
+            ja = v.get("ja","").strip()
+            base = word.lower().strip()
+            if base in keep_map:
+                kept_list = keep_map[base]
+                # Check if this ja matches any kept meaning
+                is_kept = any(meanings_match(ja, k) or ja in k or k in ja for k in kept_list)
+                if not is_kept:
+                    cleaned += 1
+                    continue
+            new_vocab.append(v)
+        qs["vocab"] = new_vocab
+
+    save_results(RESULTS_FILE, st.session_state.results)
+    stat.success(f"✅ AI整理完了: {cleaned}件の重複意味を削除 ({len(keep_map)}語を分析)")
+    st.rerun()
 
 def build_vocab_list(results):
     """Build merged vocab list from results. Cached to avoid rebuilding on every rerun."""
@@ -2323,36 +2420,39 @@ with tab_vocab:
         else:
             st.subheader(f"📚 Vocabulary ({len(all_vocab)} words)")
 
-            # Cleanup button
-            if st.button("🧹 重複意味を整理", key="vocab_cleanup", help="全ストックの同一語の類似意味をまとめます"):
-                cleaned = 0
-                # Build a map: base_word → list of seen meanings
-                seen_meanings = {}  # base_word → [ja1, ja2, ...]
-                for r in st.session_state.results:
-                    qs = r.get("qSet", {})
-                    vocab = qs.get("vocab", [])
-                    if not vocab: continue
-                    new_vocab = []
-                    for v in vocab:
-                        word = v.get("word","").strip()
-                        if not word: new_vocab.append(v); continue
-                        base = lemmatize(word)
-                        ja = v.get("ja","").strip()
-                        if base not in seen_meanings:
-                            seen_meanings[base] = [ja] if ja else []
-                            new_vocab.append(v)
-                        else:
-                            # Check if this meaning is already seen
-                            is_dup = any(meanings_match(existing, ja) for existing in seen_meanings[base])
-                            if is_dup:
-                                cleaned += 1
-                            else:
-                                if ja: seen_meanings[base].append(ja)
+            # Cleanup buttons
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                if st.button("🧹 簡易整理 (ルールベース)", key="vocab_cleanup_simple", help="正規表現で類似意味を統合"):
+                    cleaned = 0
+                    seen_meanings = {}
+                    for r in st.session_state.results:
+                        qs = r.get("qSet", {})
+                        vocab = qs.get("vocab", [])
+                        if not vocab: continue
+                        new_vocab = []
+                        for v in vocab:
+                            word = v.get("word","").strip()
+                            if not word: new_vocab.append(v); continue
+                            base = lemmatize(word)
+                            ja = v.get("ja","").strip()
+                            if base not in seen_meanings:
+                                seen_meanings[base] = [ja] if ja else []
                                 new_vocab.append(v)
-                    qs["vocab"] = new_vocab
-                save_results(RESULTS_FILE, st.session_state.results)
-                st.success(f"✅ {cleaned}件の重複意味を削除しました")
-                st.rerun()
+                            else:
+                                is_dup = any(meanings_match(existing, ja) for existing in seen_meanings[base])
+                                if is_dup:
+                                    cleaned += 1
+                                else:
+                                    if ja: seen_meanings[base].append(ja)
+                                    new_vocab.append(v)
+                        qs["vocab"] = new_vocab
+                    save_results(RESULTS_FILE, st.session_state.results)
+                    st.success(f"✅ {cleaned}件の重複を削除")
+                    st.rerun()
+            with cc2:
+                if st.button("🤖 AI整理 (LLM類推)", key="vocab_cleanup_llm", help="LLMで意味の重複を高精度に判定"):
+                    _do_llm_vocab_cleanup(all_vocab)
 
             # POS tabs
             POS_LABELS = {"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ","other":"その他"}
