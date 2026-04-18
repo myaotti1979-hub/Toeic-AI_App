@@ -243,19 +243,22 @@ function formatP6(text, activeBlank) {
 ────────────────────────────────────────────── */
 let _apiLock = Promise.resolve();
 
-async function throttledFetch(url, opts, maxRetries=2) {
+async function throttledFetch(url, opts, maxRetries=2, signal=null) {
   let release;
   const prev = _apiLock;
   _apiLock = new Promise(r => release = r);
   await prev;
+  if (signal?.aborted) { release(); throw new DOMException("Aborted","AbortError"); }
   await new Promise(r => setTimeout(r, API_THROTTLE_MS));
 
   try {
     for (let attempt=0; attempt<=maxRetries; attempt++) {
-      const res = await fetch(url, opts);
+      if (signal?.aborted) throw new DOMException("Aborted","AbortError");
+      const fetchOpts = signal ? {...opts, signal} : opts;
+      const res = await fetch(url, fetchOpts);
       if (res.status === 429 || res.status === 503 || res.status === 500) {
         const errText = await res.text().catch(()=>"");
-        const wait = API_RETRY_DELAY_MS * Math.pow(2, attempt); // exponential: 3s, 6s, 12s
+        const wait = API_RETRY_DELAY_MS * Math.pow(2, attempt);
         console.warn(`${res.status}: ${errText.slice(0,100)} | retry ${attempt+1}/${maxRetries} in ${wait/1000}s`);
         if (attempt < maxRetries) { await new Promise(r => setTimeout(r, wait)); continue; }
         throw new Error(`API ${res.status}: ${errText.slice(0,200)}`);
@@ -1814,26 +1817,27 @@ function opusToUrl(b64) {
   return URL.createObjectURL(new Blob([bytes],{type:"audio/webm;codecs=opus"}));
 }
 
-async function callTTS(text, config) {
+async function callTTS(text, config, signal=null) {
   const body = JSON.stringify({contents:[{parts:[{text:text.slice(0,TTS_MAX)}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:config}});
-  // Try primary model, fallback to secondary on failure
   for (const model of [GEMINI_TTS_MODEL, GEMINI_TTS_MODEL_2]) {
     try {
+      if (signal?.aborted) throw new DOMException("Aborted","AbortError");
       const res = await throttledFetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${S.apiKey}`,
         { method:"POST", headers:{"Content-Type":"application/json"}, body },
-        2  // retries per model
+        2, signal
       );
       if (!res.ok) {
         const errBody = await res.text();
         console.warn(`TTS ${model} error ${res.status}:`, errBody.slice(0,100));
-        continue;  // try next model
+        continue;
       }
       const d = await res.json();
       const pcm = d.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (!pcm) { console.warn(`TTS ${model}: no audio data`); continue; }
       return pcm;
     } catch(e) {
+      if (e.name === "AbortError") throw e;  // propagate abort
       console.warn(`TTS ${model} failed:`, e.message);
       continue;
     }
@@ -1849,12 +1853,12 @@ let _curAudio=null;
 const _ttsCache=new Map();
 let _seqId=0;
 
-async function speakGemini(text, onEnd) {
+async function speakGemini(text, onEnd, {signal}={}) {
   stopSpeak();
   try {
     let url=_ttsCache.get(text);
     if (!url) {
-      const pcm=await callTTS(text,{voiceConfig:{prebuiltVoiceConfig:{voiceName:pickVoice()}}});
+      const pcm=await callTTS(text,{voiceConfig:{prebuiltVoiceConfig:{voiceName:pickVoice()}}}, signal);
       url=pcmToUrl(pcm);
       if(_ttsCache.size>=TTS_CACHE_SIZE){const k=_ttsCache.keys().next().value;URL.revokeObjectURL(_ttsCache.get(k));_ttsCache.delete(k);}
       _ttsCache.set(text,url);
@@ -1873,7 +1877,7 @@ async function speakGemini(text, onEnd) {
 }
 
 /* ── Gemini TTS (multi-speaker for conversations) ── */
-async function speakConv(text, onEnd, speakers) {
+async function speakConv(text, onEnd, speakers, {signal}={}) {
   stopSpeak();
   try {
     const key="conv:"+text;
@@ -1895,12 +1899,12 @@ async function speakConv(text, onEnd, speakers) {
            generationConfig:{responseModalities:["AUDIO"],speechConfig:{
              multiSpeakerVoiceConfig:{speakerVoiceConfigs:voiceConfigs}
            }}})},
-        3
+        3, signal
       );
-      if (!res.ok) { return speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd); }
+      if (!res.ok) { return speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd, {signal}); }
       const d=await res.json();
       const pcm=d.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!pcm) { return speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd); }
+      if (!pcm) { return speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd, {signal}); }
       url=pcmToUrl(pcm);
       if(_ttsCache.size>=TTS_CACHE_SIZE){const k=_ttsCache.keys().next().value;URL.revokeObjectURL(_ttsCache.get(k));_ttsCache.delete(k);}
       _ttsCache.set(key,url);
@@ -1913,8 +1917,9 @@ async function speakConv(text, onEnd, speakers) {
     a.onerror=()=>{_curAudio=null;onEnd&&onEnd();};
     await a.play();
   } catch(e) {
+    if (e.name === "AbortError") { if(onEnd)onEnd("aborted"); return; }
     console.warn("Multi-speaker TTS failed, trying single voice");
-    try { return await speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd); }
+    try { return await speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd, {signal}); }
     catch(e2) { console.error("TTS failed:", e2.message); if(onEnd)onEnd("⚠️ 音声生成に失敗: " + e2.message); }
   }
 }
@@ -3297,24 +3302,24 @@ async function renderListenPlay() {
       if (!played) {
         // No stored audio — try Gemini TTS with timeout, fallback to Web Speech
         let ttsOk = false;
-        let ttsCancelled = false;
+        const ac = new AbortController();
         try {
           const ttsPromise = new Promise((resolve, reject) => {
             const isConv = item.part==="part3";
             const onDone = (err) => {
-              if (ttsCancelled) { stopSpeak(); return; } // late arrival — kill it
+              if (ac.signal.aborted) { stopSpeak(); return; }
               err ? reject(err) : resolve();
             };
-            if (isConv) { speakConv(audioText, onDone, qs.speakers); }
-            else { speakGemini(audioText, onDone); }
+            if (isConv) { speakConv(audioText, onDone, qs.speakers, {signal:ac.signal}); }
+            else { speakGemini(audioText, onDone, {signal:ac.signal}); }
           });
           const timeout = new Promise((_, reject) => setTimeout(() => reject("timeout"), 15000));
           await Promise.race([ttsPromise, timeout]);
           ttsOk = true;
         } catch(e) {
-          console.warn("Listen TTS failed/timeout, using Web Speech:", e);
-          ttsCancelled = true;  // tell late callback to self-destruct
-          stopSpeak();          // kill any in-progress audio NOW
+          console.warn("Listen TTS failed/timeout:", e);
+          ac.abort();   // cancel the HTTP request itself
+          stopSpeak();  // kill any in-progress audio
         }
         if (!ttsOk && !stopped) {
           // Web Speech API fallback (browser built-in, works offline)
@@ -3974,7 +3979,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.18b · 303 types + TTS 2-model fallback + 3-speaker + abort-safe listen</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.18c · 303 types + TTS 2-model fallback + 3-speaker + AbortController listen</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
