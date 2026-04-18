@@ -1830,9 +1830,16 @@ async function stockCount() {
 }
 
 async function stockCountByPart() {
-  const all = await stockGetAll();
+  const db = await openStockDB();
+  const parts = ["part1","part2","part3","part3_3p","part4","part5","part6","part7"];
   const counts = {};
-  all.forEach(q => { counts[q.part] = (counts[q.part]||0) + 1; });
+  const tx = db.transaction("questions","readonly");
+  const idx = tx.objectStore("questions").index("part");
+  await Promise.all(parts.map(p => new Promise((resolve) => {
+    const req = idx.count(p);
+    req.onsuccess = () => { if(req.result > 0) counts[p] = req.result; resolve(); };
+    req.onerror = () => resolve();
+  })));
   return counts;
 }
 
@@ -4029,7 +4036,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.18d · @fragment tabs + 4 review fixes + AbortController</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19a · listen audio playClip · check→shuffle fix · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
@@ -4078,9 +4085,11 @@ function renderHome() {
   });
   $("stockStudyBtn").onclick=()=>{ S.screen="stockSelect"; render(); };
   $("listenModeBtn").onclick=async()=>{
-    // Load listening stocks (Part 2/3/4)
-    const allStocks = await stockGetAll();
-    const listenStocks = allStocks.filter(s=>["part2","part3","part4"].includes(s.part));
+    // Load listening stocks (Part 2/3/4 only — don't load Part 5/6/7)
+    const [p2, p3, p4] = await Promise.all([
+      stockGetAll("part2"), stockGetAll("part3"), stockGetAll("part4")
+    ]);
+    const listenStocks = [...p2, ...p3, ...p4];
     if(listenStocks.length===0){alert("Listening問題のストックがありません。Part 2/3/4のストックを作成してください。");return;}
     S.screen = "listenSetup";
     S.listenAllStocks = listenStocks;

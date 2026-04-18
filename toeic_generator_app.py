@@ -1046,14 +1046,15 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
             except Exception as e:
                 print(f"[VOCAB] {e}", flush=True)
         print(f"[VOCAB] Audio: {w_ok} words, {e_ok} examples ({('Edge' if use_edge_for_vocab else 'Gemini')})", flush=True)
-    # Listen-mode Q&A audio (Edge TTS — free, for answer/explanation/question+choices)
-    if qs.get("questions") and tts_eng != "off" and check_edge_tts():
+    # Listen-mode Q&A audio (Edge TTS — only for listening parts)
+    if real_part in ("part1","part2","part3","part3_3p","part4") and qs.get("questions") and tts_eng != "off" and check_edge_tts():
         _generate_listen_audio(qs, real_part)
     # Validate: Listening parts REQUIRE audio. If TTS was enabled but audio missing, mark invalid.
     is_listening_part = real_part in ("part1","part2","part3","part4")
     if is_listening_part and do_tts and not item.get("audioOpus"):
         item["_invalid"] = "listening_no_audio"
         print(f"[VALIDATE] Part={real_part}: SKIP (no audio generated)", flush=True)
+    _strip_audio(item)  # Move audio to _audio_store for lightweight session_state
     return item
 
 
@@ -1184,41 +1185,80 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 RESULTS_FILE = SCRIPT_DIR / "results.json"
 MOCK_DIR = SCRIPT_DIR / "mock_data"  # Each batch = separate file
 
+# ── Audio store: separate from session_state for performance ──
+# session_state holds lightweight items (no audioOpus)
+# _audio_store holds audioOpus keyed by createdAt
+_audio_store = {}  # {createdAt: audioOpus_base64}
+
+def _strip_audio(item):
+    """Remove audioOpus from item, store in _audio_store. Returns lightweight item."""
+    ts = item.get("createdAt", 0)
+    if item.get("audioOpus"):
+        _audio_store[ts] = item.pop("audioOpus")
+        item.pop("audioFormat", None)
+    return item
+
+def _restore_audio(item):
+    """Restore audioOpus from _audio_store into item for save/export."""
+    ts = item.get("createdAt", 0)
+    if ts in _audio_store:
+        item["audioOpus"] = _audio_store[ts]
+        item["audioFormat"] = "opus"
+    return item
+
+def get_audio(item):
+    """Get audioOpus for an item (from _audio_store or item itself)."""
+    ts = item.get("createdAt", 0)
+    return _audio_store.get(ts) or item.get("audioOpus")
+
 def load_results(filepath):
-    """Load results from JSON file, return [] if not found or corrupted.
-    Items were validated at save time, so we only do minimal sanity checks here."""
+    """Load results from JSON file. Strips audioOpus into _audio_store for lightweight session_state."""
+    global _audio_store
     try:
         if filepath.exists():
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    # Minimal check: only reject items with no part or no questions
                     cleaned = []
                     purged = 0
+                    audio_count = 0
                     for item in data:
                         qs = item.get("qSet", {})
                         if not item.get("part") or not qs.get("questions"):
                             purged += 1
                             continue
+                        if item.get("audioOpus"):
+                            audio_count += 1
+                        _strip_audio(item)
                         cleaned.append(item)
                     if purged > 0:
                         try:
+                            # Save cleaned full version (with audio restored)
+                            full = [_restore_audio(dict(**i)) for i in cleaned]
                             with open(filepath, "w", encoding="utf-8") as fw:
-                                json.dump(cleaned, fw, ensure_ascii=False)
+                                json.dump(full, fw, ensure_ascii=False)
+                            # Re-strip after save
+                            for i in cleaned: _strip_audio(i)
                         except Exception: pass
-                    print(f"[PERSIST] Loaded {len(cleaned)} items from {filepath.name}" + (f" (purged {purged} broken)" if purged else ""), flush=True)
+                    print(f"[PERSIST] Loaded {len(cleaned)} items from {filepath.name} ({audio_count} with audio, {len(_audio_store)} in audio_store)" + (f" (purged {purged})" if purged else ""), flush=True)
                     return cleaned
     except Exception as e:
         print(f"[PERSIST] Load error {filepath.name}: {e}", flush=True)
     return []
 
 def save_results(filepath, items):
-    """Save results to JSON file (atomic write)."""
+    """Save results to JSON file. Merges audioOpus back from _audio_store."""
     try:
+        # Reconstruct full items with audio for saving
+        full_items = []
+        for item in items:
+            full = json.loads(json.dumps(item, ensure_ascii=False))  # deep copy
+            _restore_audio(full)
+            full_items.append(full)
         tmp = filepath.with_suffix(".tmp.json")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(items, f, ensure_ascii=False)
-        tmp.replace(filepath)  # atomic on most filesystems
+            json.dump(full_items, f, ensure_ascii=False)
+        tmp.replace(filepath)
     except Exception as e:
         print(f"[PERSIST] Save error {filepath.name}: {e}", flush=True)
 
@@ -1238,9 +1278,15 @@ def save_mock_batch(batch_id, items):
         return
     fp = _mock_batch_path(batch_id)
     try:
+        # Restore audio from _audio_store for saving
+        full_items = []
+        for item in batch_items:
+            full = json.loads(json.dumps(item, ensure_ascii=False))
+            _restore_audio(full)
+            full_items.append(full)
         tmp = fp.with_suffix(".tmp.json")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(batch_items, f, ensure_ascii=False)
+            json.dump(full_items, f, ensure_ascii=False)
         tmp.replace(fp)
         print(f"[MOCK] Saved batch {batch_id} → {fp.name} ({len(batch_items)} items)", flush=True)
     except Exception as e:
@@ -1293,6 +1339,7 @@ def load_all_mock_batches():
                     ok, reason = validate_stock_item(item, require_tts=False, require_image_for_part1=False,
                                                      require_image_for_graphic=False, require_vocab_audio=False)
                     if ok:
+                        _strip_audio(item)
                         valid.append(item)
                 all_items.extend(valid)
                 print(f"[MOCK] Loaded {fp.name}: {len(valid)} items", flush=True)
@@ -1386,303 +1433,6 @@ def meanings_match(m1, m2):
                 if na in nb or nb in na: return True
     return False
 
-def repair_stock_answers(results, ollama_url, api_key, regen_all_explanations=False):
-    """LLM-based repair: re-judge correct answers AND regenerate explanations.
-    Phase 1: Fast correct-answer pass (letter only)
-    Phase 2: Regenerate explanation for changed items (or ALL if regen_all_explanations)."""
-    total_items = len(results)
-    total_qs = sum(len(r.get("qSet",{}).get("questions",[])) for r in results)
-    if total_qs == 0:
-        st.warning("修復する問題がありません")
-        return 0
-    
-    fixed_correct = 0
-    fixed_expl = 0
-    errors = 0
-    prog = st.progress(0)
-    stat = st.empty()
-    
-    # ── Phase 1: Re-judge correct answers (fast) ──
-    stat.info(f"🔧 Phase 1/2: 正解を再判定中 ({total_items}セット)...")
-    changed_items = []  # (ri, qi_list) of items needing explanation regen
-    
-    for ri, r in enumerate(results):
-        qs = r.get("qSet", {})
-        part = r.get("part", "?")
-        questions = qs.get("questions", [])
-        if not questions: continue
-        
-        if ri % 20 == 0:
-            prog.progress(min(0.49, ri / total_items * 0.5))
-            stat.info(f"🔧 Phase 1: {ri}/{total_items} ({fixed_correct} fixed)...")
-        
-        # Build context
-        context = ""
-        if part == "part2":
-            context = f"Spoken: {qs.get('spoken','')}\n"
-        elif part in ("part3","part3_3p"):
-            context = f"Conversation:\n{qs.get('conversation','')[:500]}\n\n"
-        elif part == "part4":
-            context = f"Talk:\n{qs.get('talk','')[:500]}\n\n"
-        elif part == "part6":
-            context = f"Text:\n{qs.get('text','')[:500]}\n\n"
-        elif part.startswith("part7"):
-            if qs.get("text"):
-                context = f"Document:\n{qs.get('text','')[:500]}\n\n"
-            elif qs.get("text_1"):
-                context = f"Doc1:\n{qs.get('text_1','')[:300]}\nDoc2:\n{qs.get('text_2','')[:300]}\n"
-                if qs.get("text_3"):
-                    context += f"Doc3:\n{qs.get('text_3','')[:300]}\n"
-                context += "\n"
-        elif part == "part1":
-            context = f"Photo: {qs.get('scene','')}\n"
-        
-        q_lines = []
-        for qi, q in enumerate(questions):
-            choices = q.get("choices", [])
-            if len(choices) < 3: continue
-            q_lines.append(f"Q{qi+1}: {q.get('question','')}\n{' / '.join(choices)}")
-        if not q_lines: continue
-        
-        letters_str = "A/B/C" if part == "part2" else "A/B/C/D"
-        prompt = f"TOEIC {part.upper()}. Correct letter ({letters_str}) for each:\n\n{context}{chr(10).join(q_lines)}\n\nQ1: X\nQ2: X"
-        
-        try:
-            resp = requests.post(f"{ollama_url}/api/generate", json={
-                "model": "gemma3:12b", "prompt": prompt, "stream": False,
-                "options": {"temperature": 0.0, "num_predict": 50, "num_gpu": 99}
-            }, timeout=60)
-            answer = resp.json().get("response", "").strip() if resp.ok else ""
-            if not answer and api_key:
-                resp = requests.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
-                    json={"contents":[{"parts":[{"text":prompt}]}],
-                          "generationConfig":{"temperature":0.0,"maxOutputTokens":50}}, timeout=30)
-                if resp.ok:
-                    answer = resp.json().get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","").strip()
-            
-            matches = re.findall(r'Q(\d+)\s*[:：]\s*\(?([A-Da-d])\)?', answer)
-            if not matches:
-                for li, line in enumerate([l.strip() for l in answer.split("\n") if l.strip()]):
-                    for ch in line.upper():
-                        if ch in "ABCD": matches.append((str(li+1), ch)); break
-            
-            changed_qis = []
-            for m_qi_s, m_letter in matches:
-                qi = int(m_qi_s) - 1
-                if qi < 0 or qi >= len(questions): continue
-                q = questions[qi]
-                letter = m_letter.upper()
-                new_correct = {"A":0,"B":1,"C":2,"D":3}.get(letter)
-                if new_correct is None: continue
-                old_correct = q.get("correct", 0)
-                if new_correct != old_correct:
-                    q["correct"] = new_correct
-                    fixed_correct += 1
-                    changed_qis.append(qi)
-                    if fixed_correct <= 20:
-                        print(f"[REPAIR-1] {part} #{ri} Q{qi+1}: ({['A','B','C','D'][old_correct]})→({letter})", flush=True)
-            if changed_qis:
-                changed_items.append((ri, changed_qis))
-        except Exception as e:
-            errors += 1
-            if errors <= 10: print(f"[REPAIR ERR] #{ri}: {e}", flush=True)
-        
-        if ri > 0 and ri % 200 == 0:
-            save_results(RESULTS_FILE, results)
-    
-    save_results(RESULTS_FILE, results)
-    print(f"[REPAIR-1] Phase 1 done: {fixed_correct} correct fixed, {len(changed_items)} items need explanation regen", flush=True)
-    
-    # ── Phase 2: Regenerate explanations ──
-    if regen_all_explanations:
-        # Regenerate ALL explanations
-        all_items_qis = []
-        for ri, r in enumerate(results):
-            qis = list(range(len(r.get("qSet",{}).get("questions",[]))))
-            if qis: all_items_qis.append((ri, qis))
-        changed_items = all_items_qis
-        stat.info(f"🔧 Phase 2/2: 全{len(changed_items)}セットの解説を再生成中...")
-    
-    if changed_items:
-        stat.info(f"🔧 Phase 2/2: {len(changed_items)}セットの解説を再生成中...")
-        for ci, (ri, qi_list) in enumerate(changed_items):
-            if ci % 10 == 0:
-                prog.progress(0.5 + min(0.49, ci / len(changed_items) * 0.5))
-                stat.info(f"🔧 Phase 2: {ci}/{len(changed_items)} 解説再生成...")
-            
-            r = results[ri]
-            qs = r.get("qSet", {})
-            part = r.get("part", "?")
-            questions = qs.get("questions", [])
-            
-            for qi in qi_list:
-                q = questions[qi]
-                choices = q.get("choices", [])
-                correct = q.get("correct", 0)
-                correct_letter = ["A","B","C","D"][correct]
-                question_text = q.get("question", "")
-                choice_text = "\n".join(choices)
-                
-                # Add brief context for listening/reading parts
-                ctx2 = ""
-                if part == "part2":
-                    ctx2 = f"Spoken: {qs.get('spoken','')}\n"
-                elif part in ("part3","part3_3p") and qs.get("conversation"):
-                    ctx2 = f"Conversation:\n{qs['conversation'][:400]}\n\n"
-                elif part == "part4" and qs.get("talk"):
-                    ctx2 = f"Talk:\n{qs['talk'][:400]}\n\n"
-                
-                prompt2 = f"""TOEIC {part.upper()}. 正解は({correct_letter})。各選択肢を簡潔に解説してください。
-
-{ctx2}{question_text}
-{choice_text}
-
-以下の形式で返してください:
-explanation_ja: 正解は({correct_letter})。[正解の理由]。[各誤答の問題点を1文ずつ]
-explanation_en: [1-2 sentence English explanation]"""
-
-                try:
-                    resp = requests.post(f"{ollama_url}/api/generate", json={
-                        "model": "gemma3:12b", "prompt": prompt2, "stream": False,
-                        "options": {"temperature": 0.2, "num_predict": 400, "num_gpu": 99}
-                    }, timeout=60)
-                    answer2 = resp.json().get("response", "").strip() if resp.ok else ""
-                    
-                    if answer2:
-                        # Parse explanation_ja and explanation_en
-                        m_ja = re.search(r'explanation_ja\s*[:：]\s*(.+?)(?=explanation_en|$)', answer2, re.S)
-                        m_en = re.search(r'explanation_en\s*[:：]\s*(.+?)$', answer2, re.S)
-                        if m_ja:
-                            new_ja = m_ja.group(1).strip()
-                            if len(new_ja) > 20:  # sanity check
-                                q["explanation_ja"] = new_ja
-                                fixed_expl += 1
-                        if m_en:
-                            new_en = m_en.group(1).strip()
-                            if len(new_en) > 10:
-                                q["explanation_en"] = new_en
-                except Exception as e:
-                    if errors <= 15: print(f"[REPAIR-2 ERR] #{ri} Q{qi+1}: {e}", flush=True)
-                    errors += 1
-            
-            if ci > 0 and ci % 50 == 0:
-                save_results(RESULTS_FILE, results)
-    
-    # ── Phase 3: Generate missing listen-mode audio (Edge TTS) ──
-    if check_edge_tts():
-        stat.info(f"🔧 Phase 3/3: 聞き流し用Q&A音声を生成中...")
-        listen_generated = 0
-        for ri, r in enumerate(results):
-            qs = r.get("qSet", {})
-            part = r.get("part", "?")
-            if part not in ("part1","part2","part3","part3_3p","part4"): continue
-            questions = qs.get("questions", [])
-            # Check if any Q&A audio is missing
-            needs_audio = any(not q.get("audio_ans") for q in questions)
-            if part in ("part3","part3_3p","part4"):
-                needs_audio = needs_audio or any(not q.get("audio_q") for q in questions)
-            if not needs_audio: continue
-            
-            if ri % 20 == 0:
-                stat.info(f"🔧 Phase 3: {ri}/{total_items} (Q&A音声 {listen_generated}個生成)...")
-            
-            _generate_listen_audio(qs, part)
-            listen_generated += sum(1 for q in questions if q.get("audio_ans"))
-            
-            if ri > 0 and ri % 100 == 0:
-                save_results(RESULTS_FILE, results)
-        
-        save_results(RESULTS_FILE, results)
-        print(f"[REPAIR-3] Listen audio: {listen_generated} clips generated", flush=True)
-    else:
-        print(f"[REPAIR-3] Edge TTS not available, skipping listen audio", flush=True)
-        listen_generated = 0
-    
-    prog.progress(1.0)
-    save_results(RESULTS_FILE, results)
-    stat.success(f"✅ 修復完了: 正解{fixed_correct}問 + 解説{fixed_expl}問 + Q&A音声{listen_generated}個")
-    print(f"[REPAIR] Done: correct={fixed_correct}, expl={fixed_expl}, listen_audio={listen_generated}, errors={errors}", flush=True)
-    return fixed_correct
-
-def repair_explanations_only(results, ollama_url, api_key):
-    """Regenerate explanation_ja/en for ALL questions without changing correct index."""
-    total_items = len(results)
-    total_qs = sum(len(r.get("qSet",{}).get("questions",[])) for r in results)
-    if total_qs == 0:
-        st.warning("問題がありません"); return 0
-    
-    fixed = 0
-    errors = 0
-    prog = st.progress(0)
-    stat = st.empty()
-    stat.info(f"📝 {total_items}セット ({total_qs}問) の解説を再生成中...")
-    
-    for ri, r in enumerate(results):
-        qs = r.get("qSet", {})
-        part = r.get("part", "?")
-        questions = qs.get("questions", [])
-        if not questions: continue
-        
-        if ri % 10 == 0:
-            prog.progress(min(0.99, ri / total_items))
-            stat.info(f"📝 {ri}/{total_items} ({fixed} regenerated)...")
-        
-        for qi, q in enumerate(questions):
-            choices = q.get("choices", [])
-            if len(choices) < 3: continue
-            correct = q.get("correct", 0)
-            correct_letter = ["A","B","C","D"][correct]
-            question_text = q.get("question", "")
-            choice_text = "\n".join(choices)
-            
-            ctx = ""
-            if part == "part2":
-                ctx = f"Spoken: {qs.get('spoken','')}\n"
-            elif part in ("part3","part3_3p") and qs.get("conversation"):
-                ctx = f"Conversation:\n{qs['conversation'][:400]}\n\n"
-            elif part == "part4" and qs.get("talk"):
-                ctx = f"Talk:\n{qs['talk'][:400]}\n\n"
-            elif part == "part6" and qs.get("text"):
-                ctx = f"Text:\n{qs['text'][:400]}\n\n"
-            
-            prompt = f"""TOEIC {part.upper()}. 正解は({correct_letter})。各選択肢を簡潔に解説してください。
-
-{ctx}{question_text}
-{choice_text}
-
-以下の形式で返してください:
-explanation_ja: 正解は({correct_letter})。[正解の理由]。[各誤答の問題点を1文ずつ]
-explanation_en: [1-2 sentence English explanation]"""
-
-            try:
-                resp = requests.post(f"{ollama_url}/api/generate", json={
-                    "model": "gemma3:12b", "prompt": prompt, "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 400, "num_gpu": 99}
-                }, timeout=60)
-                answer = resp.json().get("response", "").strip() if resp.ok else ""
-                
-                if answer:
-                    m_ja = re.search(r'explanation_ja\s*[:：]\s*(.+?)(?=explanation_en|$)', answer, re.S)
-                    m_en = re.search(r'explanation_en\s*[:：]\s*(.+?)$', answer, re.S)
-                    if m_ja and len(m_ja.group(1).strip()) > 20:
-                        q["explanation_ja"] = m_ja.group(1).strip()
-                        fixed += 1
-                    if m_en and len(m_en.group(1).strip()) > 10:
-                        q["explanation_en"] = m_en.group(1).strip()
-            except Exception as e:
-                errors += 1
-                if errors <= 10: print(f"[EXPL ERR] #{ri} Q{qi+1}: {e}", flush=True)
-        
-        if ri > 0 and ri % 50 == 0:
-            save_results(RESULTS_FILE, results)
-            print(f"[EXPL] Checkpoint at item {ri} ({fixed} done)", flush=True)
-    
-    prog.progress(1.0)
-    save_results(RESULTS_FILE, results)
-    stat.success(f"✅ 解説再生成完了: {fixed}/{total_qs}問 (エラー: {errors})")
-    print(f"[EXPL] Done: {fixed}/{total_qs}, errors={errors}", flush=True)
-    return fixed
 
 def _do_llm_vocab_cleanup(all_vocab):
     """Use LLM to deduplicate similar meanings for each word."""
@@ -1885,69 +1635,64 @@ with st.sidebar:
             key="stock_part_filter")
 
         ec1, ec2 = st.columns(2)
-        if selected_part == "全パート":
-            filtered = st.session_state.results
-        else:
-            filtered = [r for r in st.session_state.results if r.get("part") == selected_part]
-
         with ec1:
-            st.download_button(
-                f"📤 Export ({len(filtered)})",
-                json.dumps(filtered, ensure_ascii=False, indent=2),
-                f"toeic-stock-{selected_part}-{datetime.now():%Y%m%d-%H%M}.json",
-                "application/json", use_container_width=True, key="part_export"
-            )
+            # Export: read from file (has full audio), not session_state (stripped)
+            if st.button(f"📤 Export ({by_part.get(selected_part, len(st.session_state.results))})", use_container_width=True, key="part_export_btn"):
+                try:
+                    with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+                        full_data = json.load(f)
+                    if selected_part != "全パート":
+                        full_data = [r for r in full_data if r.get("part") == selected_part]
+                    st.session_state._export_data = json.dumps(full_data, ensure_ascii=False, indent=None)
+                except Exception as e:
+                    st.session_state._export_data = "[]"
+                    print(f"[EXPORT ERR] {e}", flush=True)
+                st.session_state._export_name = f"toeic-stock-{selected_part}-{datetime.now():%Y%m%d-%H%M}.json"
+            if st.session_state.get("_export_data"):
+                st.download_button("💾 Download", st.session_state._export_data,
+                    st.session_state._export_name, "application/json", key="part_dl")
         with ec2:
-            label = f"🗑️ 削除 ({len(filtered)})" if selected_part != "全パート" else "🗑️ 全削除"
+            label = f"🗑️ 削除 ({by_part.get(selected_part, len(st.session_state.results))})" if selected_part != "全パート" else "🗑️ 全削除"
             if st.button(label, use_container_width=True, key="part_delete"):
                 if selected_part == "全パート":
                     st.session_state.results = []
                 else:
                     st.session_state.results = [r for r in st.session_state.results if r.get("part") != selected_part]
                 save_results(RESULTS_FILE, st.session_state.results)
+                st.session_state.pop("_export_data", None)
                 st.rerun()
 
-    # Unified export: study + mock stocks → HTML import for 聞き流し
-    all_stocks = list(st.session_state.results) + list(st.session_state.mock_results)
-    audio_count = sum(1 for s in all_stocks if s.get("audioOpus"))
-    if all_stocks:
+    # HTML export — lazy (don't json.dumps until clicked)
+    total_all = len(st.session_state.results) + len(st.session_state.mock_results)
+    if total_all > 0:
         st.divider()
-        st.markdown(f"**📱 HTML連携**")
-        st.caption(f"Study {len(st.session_state.results)} + 模試 {len(st.session_state.mock_results)} = {len(all_stocks)}セット (音声付き: {audio_count})")
-        st.download_button(
-            f"📱 HTML用エクスポート ({len(all_stocks)}セット)",
-            json.dumps(all_stocks, ensure_ascii=False, indent=None),
-            f"toeic-html-{datetime.now():%Y%m%d-%H%M}.json",
-            "application/json", use_container_width=True, key="html_export"
-        )
+        st.markdown(f"**📱 HTML連携** ({total_all}セット)")
+        if st.button("📱 エクスポート準備", use_container_width=True, key="html_prep"):
+            # Read study from file (has full audio)
+            try:
+                with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+                    full_study = json.load(f)
+            except Exception:
+                full_study = []
+            # Restore mock audio from _audio_store
+            full_mock = []
+            for item in st.session_state.mock_results:
+                full = json.loads(json.dumps(item, ensure_ascii=False))
+                _restore_audio(full)
+                full_mock.append(full)
+            all_stocks = full_study + full_mock
+            st.session_state._html_export = json.dumps(all_stocks, ensure_ascii=False, indent=None)
+            del all_stocks, full_study, full_mock
+        if st.session_state.get("_html_export"):
+            st.download_button("💾 HTML用ダウンロード",
+                st.session_state._html_export,
+                f"toeic-html-{datetime.now():%Y%m%d-%H%M}.json",
+                "application/json", use_container_width=True, key="html_export")
 
-    # Stock repair
-    st.divider()
-    total_qs = sum(len(r.get("qSet",{}).get("questions",[])) for r in st.session_state.results)
-    if total_qs > 0:
-        regen_all = st.checkbox("解説も全問再生成", key="repair_regen_all", value=True,
-                                help="correctが変わらなかった問題の解説も再生成")
-        rc1, rc2 = st.columns(2)
-        with rc1:
-            if st.button(f"🔧 正解+解説 ({total_qs}問)", key="repair_btn"):
-                repair_stock_answers(
-                    st.session_state.results,
-                    st.session_state.ollama_url,
-                    st.session_state.gemini_key,
-                    regen_all_explanations=regen_all
-                )
-                st.rerun()
-        with rc2:
-            if st.button("📝 解説のみ再生成", key="repair_expl_only"):
-                repair_explanations_only(
-                    st.session_state.results,
-                    st.session_state.ollama_url,
-                    st.session_state.gemini_key
-                )
-                st.rerun()
+
 
     st.divider()
-    st.caption("v2026.04.18e · repair + check→shuffle fix · 303 types · TTS 2-model")
+    st.caption("v2026.04.19a · check→shuffle fix · listen audio(Edge) · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -1998,6 +1743,7 @@ with tab_gen:
                             skipped += 1
                             continue
                         existing_ts.add(ts)
+                        _strip_audio(item)  # Move audio to _audio_store
                         st.session_state.results.append(item)
                         added += 1
                     if added > 0:
@@ -2198,8 +1944,8 @@ with tab_gen:
                         except Exception as e:
                             print(f"[VOCAB main] {e}", flush=True)
                     print(f"[VOCAB] Audio: {len([v for v in qs['vocab'] if v.get('audio')])} words, {len([v for v in qs['vocab'] if v.get('example_audio')])} examples ({('Edge' if _use_edge_vocab else 'Gemini')})", flush=True)
-                # Listen-mode Q&A audio (Edge TTS)
-                if qs.get("questions") and tts_eng != "off" and check_edge_tts():
+                # Listen-mode Q&A audio (Edge TTS — only for listening parts)
+                if actual_part in ("part1","part2","part3","part3_3p","part4") and qs.get("questions") and tts_eng != "off" and check_edge_tts():
                     _generate_listen_audio(qs, actual_part)
                 # STRICT VALIDATION before saving to stock
                 is_listening_q = actual_part in ("part1","part2","part3","part3_3p","part4")
@@ -2216,6 +1962,7 @@ with tab_gen:
                     print(f"[SKIP] [{i+1}/{count}] validation failed: {reason}", flush=True)
                     log.warning(f"⏭️ [{i+1}/{count}] {tt} - {reason}")
                     continue
+                _strip_audio(item)  # Move audio to _audio_store
                 st.session_state.results.append(item); gen+=1
                 save_results(RESULTS_FILE, st.session_state.results)  # auto-save
                 print(f"[OK] [{i+1}/{count}]",flush=True); log.success(f"✅ [{i+1}/{count}] {tt}")
@@ -2495,7 +2242,7 @@ with tab_gen:
                     consecutive_503 = 0  # Reset on success
                     if is_g:
                         graphic_got[part_p] = graphic_got.get(part_p, 0) + 1
-                    has_audio = "🔊" if item.get("audioOpus") else ""
+                    has_audio = "🔊" if get_audio(item) else ""
                     has_img = "🖼️" if item.get("imgUrl") else ""
                     has_graphic = "📊" if is_g else ""
                     log.success(f"✅ [{part_p}/{lv}] {got}/{need_count} ({tt}) {has_audio}{has_img}{has_graphic}")
@@ -2605,72 +2352,76 @@ with tab_practice:
         if not results:
             st.info("まだ問題がありません。Generate タブで問題を作成してください。")
         else:
-            # Filters
+            # Cached part list (avoid iterating 1000+ items every click)
+            if "_prac_parts" not in st.session_state or st.session_state.get("_prac_len") != len(results):
+                st.session_state._prac_parts = sorted(set(r.get("part","?") for r in results))
+                st.session_state._prac_len = len(results)
+            
             fc1, fc2 = st.columns([1,1])
             with fc1:
-                all_parts = sorted(set(r.get("part","?") for r in results))
-                filt_part = st.selectbox("Filter Part", ["All"] + all_parts, key="prac_filt_part")
+                filt_part = st.selectbox("Filter Part", ["All"] + st.session_state._prac_parts, key="prac_filt_part")
             with fc2:
                 st.metric("Total", len(results))
 
-            filtered = [r for r in results if filt_part=="All" or r.get("part")==filt_part]
-
-            if not filtered:
+            # Cached filtered indices (not full items — just indices)
+            cache_key = f"_pf_{filt_part}_{len(results)}"
+            if st.session_state.get("_prac_cache_key") != cache_key:
+                if filt_part == "All":
+                    st.session_state._prac_indices = list(range(len(results)))
+                else:
+                    st.session_state._prac_indices = [i for i, r in enumerate(results) if r.get("part") == filt_part]
+                st.session_state._prac_cache_key = cache_key
+            
+            indices = st.session_state._prac_indices
+            if not indices:
                 st.warning("フィルタに一致する問題がありません")
             else:
-                # Question selector
                 if "prac_idx" not in st.session_state: st.session_state.prac_idx = 0
                 if "prac_answered" not in st.session_state: st.session_state.prac_answered = {}
 
-                idx = st.session_state.prac_idx
-                if idx >= len(filtered): idx = 0; st.session_state.prac_idx = 0
+                pidx = st.session_state.prac_idx
+                if pidx >= len(indices): pidx = 0; st.session_state.prac_idx = 0
 
-                # Navigation
+                # Navigation (no st.rerun — fragment auto-reruns on state change)
                 nav1, nav2, nav3 = st.columns([1,3,1])
                 with nav1:
-                    if st.button("◀ Prev", use_container_width=True, disabled=idx<=0):
-                        st.session_state.prac_idx = max(0, idx-1)
+                    if st.button("◀", use_container_width=True, disabled=pidx<=0, key="prac_prev"):
+                        st.session_state.prac_idx = pidx - 1
                         st.session_state.prac_answered = {}
-                        st.rerun()
                 with nav2:
-                    st.markdown(f"<div style='text-align:center;font-size:18px;padding:4px'><b>{idx+1}</b> / {len(filtered)}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align:center;font-size:18px;padding:4px'><b>{pidx+1}</b> / {len(indices)}</div>", unsafe_allow_html=True)
                 with nav3:
-                    if st.button("Next ▶", use_container_width=True, disabled=idx>=len(filtered)-1):
-                        st.session_state.prac_idx = min(len(filtered)-1, idx+1)
+                    if st.button("▶", use_container_width=True, disabled=pidx>=len(indices)-1, key="prac_next"):
+                        st.session_state.prac_idx = pidx + 1
                         st.session_state.prac_answered = {}
-                        st.rerun()
 
-                item = filtered[idx]
+                # Load current item only
+                real_idx = indices[pidx]
+                item = results[real_idx]
                 qs = item.get("qSet", {})
                 part = item.get("part","?")
                 level = item.get("level","?")
                 lv_colors = {"beginner":"🟢","intermediate":"🟡","advanced":"🔴"}
                 st.caption(f"{part.upper()} | {lv_colors.get(level,'')} {level}")
 
-                # Audio - リスニング問題には必ず音声が存在するはず
-                if item.get("audioOpus"):
-                    import streamlit.components.v1 as components
-                    opus_b64 = item["audioOpus"]
-                    audio_html = f'''
-                    <audio controls style="width:100%;height:40px" src="data:audio/webm;codecs=opus;base64,{opus_b64}"></audio>
-                    '''
-                    components.html(audio_html, height=50)
+                # Audio — use get_audio() (lightweight: audio stored outside session_state)
+                _opus = get_audio(item)
+                if _opus:
+                    try:
+                        raw = base64.b64decode(_opus)
+                        st.audio(raw, format="audio/webm")
+                    except: pass
                 elif part in ("part1","part2","part3","part4"):
-                    # リスニング問題なのに音声がない = データ破損状態
-                    st.error("⚠️ この問題には音声が含まれていません（データ破損）。削除を推奨します。")
-                    if st.button("🗑️ このセットを削除", key=f"del_broken_{idx}"):
-                        st.session_state.results = [r for r in st.session_state.results if r.get("createdAt") != item.get("createdAt")]
-                        save_results(RESULTS_FILE, st.session_state.results)
-                        st.rerun()
+                    st.warning("⚠️ 音声なし")
 
                 # Image (Part 1)
                 if item.get("imgUrl"):
                     st.image(item["imgUrl"], use_container_width=True)
 
-                # Content display
+                # Content display (minimal — no heavy rendering)
                 if part == "part1" and qs.get("scene"):
                     st.caption(f"🖼️ Scene: {qs['scene']}")
-                elif part == "part3" and qs.get("conversation"):
+                elif part in ("part3","part3_3p") and qs.get("conversation"):
                     with st.expander("💬 Conversation", expanded=True):
                         st.text(qs["conversation"])
                     if qs.get("translation_ja"):
@@ -2682,8 +2433,6 @@ with tab_practice:
                     if qs.get("translation_ja"):
                         with st.expander("🇯🇵 和訳"):
                             st.text(qs["translation_ja"])
-                elif part == "part5":
-                    pass  # question is the sentence itself, shown below
                 elif part == "part6":
                     if qs.get("header"):
                         st.code(qs["header"], language=None)
@@ -2693,10 +2442,9 @@ with tab_practice:
                         with st.expander("🇯🇵 和訳"):
                             st.text(qs["translation_ja"])
                 elif part == "part7":
-                    # Single/Double/Triple — show all documents first, then translations
                     if qs.get("isTriple"):
                         for d in range(1,4):
-                            with st.expander(f"📄 Document {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
+                            with st.expander(f"📄 Doc {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
                                 if qs.get(f"header_{d}"): st.code(qs[f"header_{d}"], language=None)
                                 st.markdown(qs.get(f"text_{d}",""))
                         for d in range(1,4):
@@ -2705,7 +2453,7 @@ with tab_practice:
                                     st.text(qs[f"translation_ja_{d}"])
                     elif qs.get("isDouble"):
                         for d in range(1,3):
-                            with st.expander(f"📄 Document {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
+                            with st.expander(f"📄 Doc {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
                                 if qs.get(f"header_{d}"): st.code(qs[f"header_{d}"], language=None)
                                 st.markdown(qs.get(f"text_{d}",""))
                         for d in range(1,3):
@@ -2735,7 +2483,7 @@ with tab_practice:
                 answered = st.session_state.prac_answered
 
                 for qi, q in enumerate(questions):
-                    qkey = f"q_{idx}_{qi}"
+                    qkey = f"q_{real_idx}_{qi}"
                     st.markdown(f"**Q{qi+1}.** {q.get('question','')}")
                     choices = q.get("choices", [])
                     correct = q.get("correct", 0)
@@ -2760,58 +2508,14 @@ with tab_practice:
                         if q.get("explanation_ja"):
                             st.info(f"📝 {q['explanation_ja']}")
 
-                # Vocabulary from this question
+                # Vocabulary (simplified — no inline TTS buttons)
                 vocab = qs.get("vocab", [])
                 if vocab:
-                    st.divider()
-                    st.markdown("**📚 Key Vocabulary**")
-                    for vi, v in enumerate(vocab):
-                        vc1, vc2 = st.columns([3,7])
-                        with vc1:
-                            word = v.get("word","")
-                            pos = v.get("pos","")
-                            st.markdown(f"**{word}** <span style='font-size:10px;color:#64748b'>{pos}</span>", unsafe_allow_html=True)
-                            # Word pronunciation - use pre-generated if available
-                            word_audio = v.get("audio","")
-                            if word_audio:
-                                if st.button("🔊 単語", key=f"voc_play_{idx}_{vi}"):
-                                    import streamlit.components.v1 as comp
-                                    comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{word_audio}"></audio>', height=0)
-                            elif check_edge_tts():
-                                if st.button("🔊 単語", key=f"voc_play_{idx}_{vi}"):
-                                    try:
-                                        mp3 = edge_tts_sync(word, random.choice(EDGE_VF+EDGE_VM))
-                                        import streamlit.components.v1 as comp
-                                        opus = mp3_to_opus(mp3)
-                                        if opus:
-                                            comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(opus).decode()}"></audio>', height=0)
-                                    except: pass
-                        with vc2:
-                            st.markdown(f"🇯🇵 **{v.get('ja','')}**")
-                            ex = v.get('example','')
-                            if ex:
-                                ec1, ec2 = st.columns([8,1])
-                                with ec1:
-                                    st.caption(f"💬 {ex}")
-                                with ec2:
-                                    ex_audio = v.get("example_audio","")
-                                    if ex_audio:
-                                        if st.button("🔊", key=f"voc_ex_{idx}_{vi}"):
-                                            import streamlit.components.v1 as comp
-                                            comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{ex_audio}"></audio>', height=0)
-                                    elif check_edge_tts():
-                                        if st.button("🔊", key=f"voc_ex_{idx}_{vi}"):
-                                            try:
-                                                mp3 = edge_tts_sync(ex, random.choice(EDGE_VF+EDGE_VM))
-                                                import streamlit.components.v1 as comp
-                                                o = mp3_to_opus(mp3)
-                                                if o:
-                                                    comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(o).decode()}"></audio>', height=0)
-                                            except: pass
-
-                # JSON preview
-                with st.expander("🔍 JSON Data"):
-                    st.json(qs, expanded=False)
+                    with st.expander(f"📚 Key Vocabulary ({len(vocab)})", expanded=False):
+                        for vi, v in enumerate(vocab):
+                            st.markdown(f"**{v.get('word','')}** ({v.get('pos','')}) — {v.get('ja','')}")
+                            if v.get("example"):
+                                st.caption(f"  💬 {v['example']}")
 
     _practice_frag()
 
@@ -2821,7 +2525,12 @@ with tab_practice:
 with tab_vocab:
     @_fragment
     def _vocab_frag():
-        all_vocab = build_vocab_list(st.session_state.results)
+        # Cache vocab list — only rebuild when results count changes
+        rv = len(st.session_state.results)
+        if st.session_state.get("_vocab_ver") != rv:
+            st.session_state._vocab_cache = build_vocab_list(st.session_state.results)
+            st.session_state._vocab_ver = rv
+        all_vocab = st.session_state._vocab_cache
 
         if not all_vocab:
             st.info("まだ単語がありません。Generate タブで問題を作成すると自動で単語帳が作られます。")
@@ -3488,11 +3197,12 @@ with tab_mock_test:
                         st.metric("⏱️", f"{elapsed_min}:{elapsed_sec:02d}")
 
                     # ── Audio ──
-                    if is_listening and item.get("audioOpus"):
-                        import streamlit.components.v1 as comp
-                        opus_b64 = item["audioOpus"]
-                        # Show audio player on every question (user needs to re-listen for Part 3/4 multi-Q sets)
-                        comp.html(f'<audio controls style="width:100%;height:40px" src="data:audio/webm;codecs=opus;base64,{opus_b64}"></audio>', height=50)
+                    _mock_opus = get_audio(item)
+                    if is_listening and _mock_opus:
+                        try:
+                            raw = base64.b64decode(_mock_opus)
+                            st.audio(raw, format="audio/webm")
+                        except: pass
                     elif is_listening:
                         st.warning("⚠️ この問題には音声データがありません")
 
