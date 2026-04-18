@@ -845,6 +845,15 @@ ${t.type&&t.type.startsWith("graphic")?"- IMPORTANT: Include a 'graphic' object 
     part5: () => `${sys}
 Create a TOEIC Part 5 (Incomplete Sentences) question.
 REQUIRED GRAMMAR CATEGORY: **${t.type||"varied"}** — ${t.desc||"any grammar or vocabulary point"}
+
+CRITICAL BLANK RULE — READ CAREFULLY:
+- The sentence MUST contain EXACTLY ONE blank written as seven hyphens: -------
+- A sentence WITHOUT ------- is INVALID and will be rejected.
+- The blank ------- replaces the word being tested. The correct answer fills this blank.
+- Example: "The company will ------- its new product next month."
+- WRONG (no blank): "The company will launch its new product next month." ← REJECTED
+
+SENTENCE RULES:
 - Business-context sentence, 15-25 words, with one blank (-------).
 - All 4 choices must be plausible.
 LEVEL-SPECIFIC PART 5 RULES:
@@ -1055,9 +1064,24 @@ function normalizeSet(raw, part) {
       }
       return { part, talk, translation_ja:raw.translation_ja||null, talk_type:raw.talk_type||"", audio:talk, graphic:raw.graphic||null, vocab:raw.vocab||[], questions:raw.questions };
     }
-    case "part5":
+    case "part5": {
+      // Validate: sentence MUST contain blank (-------)
+      let sentence = raw.sentence || "";
+      if (!sentence.includes("-------")) {
+        // Try to fix: insert blank at correct answer position if possible
+        const correct = raw.correct || 0;
+        const correctWord = (raw.choices?.[correct] || "").replace(/^\([A-D]\)\s*/, "");
+        if (correctWord && sentence.includes(correctWord)) {
+          sentence = sentence.replace(correctWord, "-------");
+          console.warn(`[Part5] Fixed missing blank: inserted ------- for "${correctWord}"`);
+        } else {
+          console.warn("[Part5] INVALID: no blank in sentence:", sentence.slice(0,60));
+          throw new Error("Part 5: sentence has no blank (-------)");
+        }
+      }
       return { part,
-        questions:[{question:raw.sentence, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
+        questions:[{question:sentence, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
+    }
     case "part6":
       return { part, doc_type:raw.doc_type||"", header:raw.header||null, text:raw.text, translation_ja:raw.translation_ja||null, vocab:raw.vocab||[], questions:raw.questions };
     case "part7s":

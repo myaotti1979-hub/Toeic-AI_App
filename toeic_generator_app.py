@@ -121,7 +121,7 @@ IMPORTANT: Audio speed, conversation length, and document length are IDENTICAL t
 # ══════════════════════════════════════
 JA = '\nCRITICAL: ALL "explanation_ja" and "translation_ja" fields MUST be written in 日本語 (Japanese). NEVER write explanations in English.'
 EN_EXPL = '\nENGLISH EXPLANATION: For each question, ALSO include an "explanation_en" field — a SHORT 1-2 sentence explanation in English (max 25 words) summarizing WHY the correct answer is right. Concise, clear, spoken-English style. This is separate from explanation_ja (which stays detailed in Japanese).'
-BLANK_RULE = '\nCRITICAL: The blank MUST appear as exactly seven hyphens: ------- in the sentence. A question without ------- is INVALID.'
+BLANK_RULE = '\nCRITICAL BLANK RULE — The sentence MUST contain EXACTLY ONE blank written as seven hyphens: -------. The blank replaces the word being tested. A sentence WITHOUT ------- is INVALID and will be REJECTED. WRONG: "The company will launch its product." RIGHT: "The company will ------- its product."'
 BLANK_RULE6 = '\nCRITICAL: The text MUST contain exactly 4 blanks written as (1)------- (2)------- (3)------- (4)-------. Without these blanks the output is INVALID.'
 ANSWER_POSITION = '\nANSWER POSITION RULE — CRITICAL: The correct answer MUST be RANDOMLY distributed across positions. Do NOT always put the correct answer at (A)/index 0. Vary the "correct" field: use 0, 1, 2, 3 with roughly equal frequency. If generating multiple questions, NEVER make them all the same position.'
 CHOICE_RULE = '\nCHOICE COUNT RULE — STRICT: Every question MUST have EXACTLY 4 choices labeled (A), (B), (C), (D). NEVER include (E) or more. Part 2 MUST have EXACTLY 3 choices (A), (B), (C). This is a hard TOEIC format requirement — violating it makes the output INVALID.'
@@ -384,7 +384,17 @@ def normalize_set(raw, part):
                 "graphic":raw.get("graphic"),"vocab":vocab,"questions":raw.get("questions",[])}
     if part == "part5":
         s = raw.get("sentence","")
-        if "-------" not in s: print(f"[WARN] Part5: no blank in sentence!", flush=True)
+        if "-------" not in s:
+            # Try to fix: insert blank at correct answer position
+            correct = raw.get("correct", 0)
+            choices = raw.get("choices", [])
+            correct_word = re.sub(r'^\([A-D]\)\s*', '', choices[correct] if correct < len(choices) else "")
+            if correct_word and correct_word in s:
+                s = s.replace(correct_word, "-------", 1)
+                print(f"[Part5] Fixed missing blank: inserted ------- for '{correct_word}'", flush=True)
+            else:
+                print(f"[WARN] Part5: no blank in sentence and cannot auto-fix!", flush=True)
+                raise ValueError("Part 5: sentence has no blank (-------)")
         return {"part":part,"vocab":vocab,"questions":[{"question":s,"choices":raw.get("choices",[]),"correct":raw.get("correct",0),"explanation_ja":raw.get("explanation_ja",""),"explanation_en":raw.get("explanation_en","")}]}
     if part == "part6":
         t = raw.get("text","")
@@ -2283,7 +2293,7 @@ with tab_vocab:
                         st.markdown(f"**{v.get('word','')}**<br><span style='font-size:10px;color:{pos_color}'>{pos_badge}</span>", unsafe_allow_html=True)
                     with lc2:
                         for mi, m in enumerate(meanings):
-                            prefix = f"{'❶❷❸❹❺'[mi]} " if len(meanings)>1 else ""
+                            prefix = f"{'❶❷❸❹❺❻❼❽❾❿'[mi]} " if len(meanings)>1 and mi<10 else f"({mi+1}) " if len(meanings)>1 else ""
                             ex_audio = m.get("example_audio","")
                             ex_text = m.get("example","")
                             st.markdown(f"{prefix}**{m.get('ja','')}**")
@@ -2354,7 +2364,7 @@ with tab_vocab:
                             st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
                 else:
                     meanings = v.get("_meanings",[])
-                    mhtml = "".join(f"<div style='margin:6px 0'><span style='font-size:20px;color:#818cf8'>{'❶❷❸❹❺'[i] if len(meanings)>1 else ''} {m.get('ja','')}</span><br><span style='font-size:13px;color:#94a3b8'>💬 {m.get('example','')}</span></div>" for i,m in enumerate(meanings))
+                    mhtml = "".join(f"<div style='margin:6px 0'><span style='font-size:20px;color:#818cf8'>{'❶❷❸❹❺❻❼❽❾❿'[i] if len(meanings)>1 and i<10 else ''} {m.get('ja','')}</span><br><span style='font-size:13px;color:#94a3b8'>💬 {m.get('example','')}</span></div>" for i,m in enumerate(meanings))
                     st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{mhtml}</div>", unsafe_allow_html=True)
                     fc1, fc2 = st.columns(2)
                     with fc1:
