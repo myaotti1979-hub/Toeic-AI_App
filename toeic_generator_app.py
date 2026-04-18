@@ -43,6 +43,13 @@ if not getattr(st, "_toeic_app_initialized", False):
 
 st.set_page_config(page_title="TOEIC Generator", page_icon="📝", layout="wide")
 
+# Fragment decorator for tab isolation (Streamlit 1.33+)
+try:
+    _fragment = st.fragment
+except AttributeError:
+    _fragment = lambda f: f  # no-op fallback for older Streamlit
+
+
 # ══════════════════════════════════════
 # Model Definitions
 # ══════════════════════════════════════
@@ -465,6 +472,10 @@ def shuffle_answer_positions(qs):
                 q[field] = q[field].replace(f"正解は{old_label}", f"正解は{new_label}")
                 q[field] = q[field].replace(f"answer is {old_label}", f"answer is {new_label}")
                 q[field] = q[field].replace(f"Answer: {old_label}", f"Answer: {new_label}")
+                # Full-width brackets: 正解は（A）→ 正解は（B）
+                old_fw = old_label.replace("(","（").replace(")","）")
+                new_fw = new_label.replace("(","（").replace(")","）")
+                q[field] = q[field].replace(f"正解は{old_fw}", f"正解は{new_fw}")
     # Rebuild audio field to match shuffled choices (Part 1/2 include choices in audio)
     part = qs.get("part","")
     if part == "part1" and qs.get("questions"):
@@ -1353,7 +1364,101 @@ with st.sidebar:
         )
 
     st.divider()
-    st.caption("v2026.04.18c · 303 types · TTS 2-model fallback · 3-speaker · 429-resilient")
+    st.caption("v2026.04.18d · @fragment tabs · 303 types · TTS 2-model · 3-speaker · 429-resilient")
+
+# ══════════════════════════════════════
+# Vocab helper functions (module level for reuse + caching)
+# ══════════════════════════════════════
+def lemmatize(w):
+    """Basic English lemmatization to dictionary form."""
+    w = w.lower().strip()
+    if w.endswith("ied") and len(w)>4: return w[:-3]+"y"
+    if w.endswith("ing") and len(w)>5 and w[-4]==w[-5]: return w[:-4]
+    if w.endswith("ting") and len(w)>5: return w[:-4]+"te"
+    if w.endswith("ing") and len(w)>4: return w[:-3]
+    if w.endswith("ed") and len(w)>4 and w[-3]==w[-4]: return w[:-3]
+    if w.endswith("ed") and len(w)>3: return w[:-2]
+    if w.endswith("es") and len(w)>4: return w[:-2]
+    if w.endswith("s") and not w.endswith("ss") and len(w)>3: return w[:-1]
+    return w
+
+def norm_meaning(m):
+    if not m: return ""
+    return re.split(r'[、,（(]', m.strip())[0].strip()
+
+def meaning_segments(m):
+    if not m: return set()
+    return set(s.strip() for s in re.split(r'[、,（()]', m.strip()) if s.strip())
+
+def _ja_normalize(s):
+    """Normalize Japanese text for fuzzy comparison.
+    Strips particles, normalizes verb endings, removes common prefixes."""
+    s = s.strip()
+    # Remove ～ prefix
+    s = s.lstrip("～〜")
+    # Normalize verb endings: して→する, した→する, させる→する, される→する, etc.
+    s = re.sub(r'(する|して|した|している|させる|される|しない|すること|するもの)$', 'する', s)
+    s = re.sub(r'(いる|いて|いた|いない)$', 'いる', s)
+    s = re.sub(r'(れる|れて|れた)$', 'れる', s)
+    s = re.sub(r'(ある|あって|あった)$', 'ある', s)
+    # Remove trailing particles
+    s = re.sub(r'[をにがでとのはも]+$', '', s)
+    return s
+
+def meanings_match(m1, m2):
+    """Check if two Japanese meanings are semantically similar.
+    Uses segment overlap + substring containment + normalized form matching."""
+    if not m1 or not m2: return False
+    # Exact match
+    if m1.strip() == m2.strip(): return True
+    # Segment overlap (split by 、,（)
+    s1 = meaning_segments(m1)
+    s2 = meaning_segments(m2)
+    if s1 & s2: return True
+    # Normalized form matching
+    n1 = {_ja_normalize(s) for s in s1}
+    n2 = {_ja_normalize(s) for s in s2}
+    if n1 & n2: return True
+    # Substring containment (either direction, min 3 chars)
+    for a in s1:
+        for b in s2:
+            na, nb = _ja_normalize(a), _ja_normalize(b)
+            if len(na) >= 3 and len(nb) >= 3:
+                if na in nb or nb in na: return True
+    return False
+
+def build_vocab_list(results):
+    """Build merged vocab list from results. Cached to avoid rebuilding on every rerun."""
+    all_vocab = []
+    word_map = {}
+    for r in results:
+        qs = r.get("qSet", {})
+        part = r.get("part","?")
+        level = r.get("level","?")
+        for v in qs.get("vocab", []):
+            word = v.get("word","").strip()
+            ja = v.get("ja","").strip()
+            example = v.get("example","").strip()
+            pos = v.get("pos","other").strip().lower()
+            audio = v.get("audio","")
+            if not word: continue
+            base = lemmatize(word)
+            if base in word_map:
+                idx = word_map[base]
+                existing_meanings = all_vocab[idx].get("_meanings",[])
+                has_overlap = any(meanings_match(m["ja"], ja) for m in existing_meanings)
+                if ja and not has_overlap:
+                    existing_meanings.append({"ja":ja,"example":example,"example_audio":v.get("example_audio","")})
+                    all_vocab[idx]["_meanings"] = existing_meanings
+                if audio and not all_vocab[idx].get("_audio"):
+                    all_vocab[idx]["_audio"] = audio
+            else:
+                entry = {"word":word, "ja":ja, "example":example, "_part":part, "_level":level,
+                         "_pos":pos, "_audio":audio, "_example_audio":v.get("example_audio",""),
+                         "_meanings":[{"ja":ja,"example":example,"example_audio":v.get("example_audio","")}]}
+                word_map[base] = len(all_vocab)
+                all_vocab.append(entry)
+    return all_vocab
 
 # ══════════════════════════════════════
 # Main — Tabs: Generate / Practice
@@ -1989,1074 +2094,1065 @@ with tab_gen:
 # TAB 2: Practice
 # ══════════════════════════════════════
 with tab_practice:
-    results = st.session_state.results
-    if not results:
-        st.info("まだ問題がありません。Generate タブで問題を作成してください。")
-    else:
-        # Filters
-        fc1, fc2 = st.columns([1,1])
-        with fc1:
-            all_parts = sorted(set(r.get("part","?") for r in results))
-            filt_part = st.selectbox("Filter Part", ["All"] + all_parts, key="prac_filt_part")
-        with fc2:
-            st.metric("Total", len(results))
-
-        filtered = [r for r in results if filt_part=="All" or r.get("part")==filt_part]
-
-        if not filtered:
-            st.warning("フィルタに一致する問題がありません")
+    @_fragment
+    def _practice_frag():
+        results = st.session_state.results
+        if not results:
+            st.info("まだ問題がありません。Generate タブで問題を作成してください。")
         else:
-            # Question selector
-            if "prac_idx" not in st.session_state: st.session_state.prac_idx = 0
-            if "prac_answered" not in st.session_state: st.session_state.prac_answered = {}
+            # Filters
+            fc1, fc2 = st.columns([1,1])
+            with fc1:
+                all_parts = sorted(set(r.get("part","?") for r in results))
+                filt_part = st.selectbox("Filter Part", ["All"] + all_parts, key="prac_filt_part")
+            with fc2:
+                st.metric("Total", len(results))
 
-            idx = st.session_state.prac_idx
-            if idx >= len(filtered): idx = 0; st.session_state.prac_idx = 0
+            filtered = [r for r in results if filt_part=="All" or r.get("part")==filt_part]
 
-            # Navigation
-            nav1, nav2, nav3 = st.columns([1,3,1])
-            with nav1:
-                if st.button("◀ Prev", use_container_width=True, disabled=idx<=0):
-                    st.session_state.prac_idx = max(0, idx-1)
-                    st.session_state.prac_answered = {}
-                    st.rerun()
-            with nav2:
-                st.markdown(f"<div style='text-align:center;font-size:18px;padding:4px'><b>{idx+1}</b> / {len(filtered)}</div>", unsafe_allow_html=True)
-            with nav3:
-                if st.button("Next ▶", use_container_width=True, disabled=idx>=len(filtered)-1):
-                    st.session_state.prac_idx = min(len(filtered)-1, idx+1)
-                    st.session_state.prac_answered = {}
-                    st.rerun()
+            if not filtered:
+                st.warning("フィルタに一致する問題がありません")
+            else:
+                # Question selector
+                if "prac_idx" not in st.session_state: st.session_state.prac_idx = 0
+                if "prac_answered" not in st.session_state: st.session_state.prac_answered = {}
 
-            item = filtered[idx]
-            qs = item.get("qSet", {})
-            part = item.get("part","?")
-            level = item.get("level","?")
-            lv_colors = {"beginner":"🟢","intermediate":"🟡","advanced":"🔴"}
-            st.caption(f"{part.upper()} | {lv_colors.get(level,'')} {level}")
+                idx = st.session_state.prac_idx
+                if idx >= len(filtered): idx = 0; st.session_state.prac_idx = 0
 
-            # Audio - リスニング問題には必ず音声が存在するはず
-            if item.get("audioOpus"):
-                import streamlit.components.v1 as components
-                opus_b64 = item["audioOpus"]
-                audio_html = f'''
-                <audio controls style="width:100%;height:40px" src="data:audio/webm;codecs=opus;base64,{opus_b64}"></audio>
-                '''
-                components.html(audio_html, height=50)
-            elif part in ("part1","part2","part3","part4"):
-                # リスニング問題なのに音声がない = データ破損状態
-                st.error("⚠️ この問題には音声が含まれていません（データ破損）。削除を推奨します。")
-                if st.button("🗑️ このセットを削除", key=f"del_broken_{idx}"):
-                    st.session_state.results = [r for r in st.session_state.results if r.get("createdAt") != item.get("createdAt")]
-                    save_results(RESULTS_FILE, st.session_state.results)
-                    st.rerun()
+                # Navigation
+                nav1, nav2, nav3 = st.columns([1,3,1])
+                with nav1:
+                    if st.button("◀ Prev", use_container_width=True, disabled=idx<=0):
+                        st.session_state.prac_idx = max(0, idx-1)
+                        st.session_state.prac_answered = {}
+                        st.rerun()
+                with nav2:
+                    st.markdown(f"<div style='text-align:center;font-size:18px;padding:4px'><b>{idx+1}</b> / {len(filtered)}</div>", unsafe_allow_html=True)
+                with nav3:
+                    if st.button("Next ▶", use_container_width=True, disabled=idx>=len(filtered)-1):
+                        st.session_state.prac_idx = min(len(filtered)-1, idx+1)
+                        st.session_state.prac_answered = {}
+                        st.rerun()
 
-            # Image (Part 1)
-            if item.get("imgUrl"):
-                st.image(item["imgUrl"], use_container_width=True)
+                item = filtered[idx]
+                qs = item.get("qSet", {})
+                part = item.get("part","?")
+                level = item.get("level","?")
+                lv_colors = {"beginner":"🟢","intermediate":"🟡","advanced":"🔴"}
+                st.caption(f"{part.upper()} | {lv_colors.get(level,'')} {level}")
 
-            # Content display
-            if part == "part1" and qs.get("scene"):
-                st.caption(f"🖼️ Scene: {qs['scene']}")
-            elif part == "part3" and qs.get("conversation"):
-                with st.expander("💬 Conversation", expanded=True):
-                    st.text(qs["conversation"])
-                if qs.get("translation_ja"):
-                    with st.expander("🇯🇵 和訳"):
-                        st.text(qs["translation_ja"])
-            elif part == "part4" and qs.get("talk"):
-                with st.expander("🎤 Talk", expanded=True):
-                    st.text(qs["talk"])
-                if qs.get("translation_ja"):
-                    with st.expander("🇯🇵 和訳"):
-                        st.text(qs["translation_ja"])
-            elif part == "part5":
-                pass  # question is the sentence itself, shown below
-            elif part == "part6":
-                if qs.get("header"):
-                    st.code(qs["header"], language=None)
-                if qs.get("text"):
-                    st.markdown(f"<div style='background:#1e293b;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs['text']}</div>", unsafe_allow_html=True)
-                if qs.get("translation_ja"):
-                    with st.expander("🇯🇵 和訳"):
-                        st.text(qs["translation_ja"])
-            elif part == "part7":
-                # Single/Double/Triple — show all documents first, then translations
-                if qs.get("isTriple"):
-                    for d in range(1,4):
-                        with st.expander(f"📄 Document {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
-                            if qs.get(f"header_{d}"): st.code(qs[f"header_{d}"], language=None)
-                            st.markdown(qs.get(f"text_{d}",""))
-                    for d in range(1,4):
-                        if qs.get(f"translation_ja_{d}"):
-                            with st.expander(f"🇯🇵 和訳 Doc{d}"):
-                                st.text(qs[f"translation_ja_{d}"])
-                elif qs.get("isDouble"):
-                    for d in range(1,3):
-                        with st.expander(f"📄 Document {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
-                            if qs.get(f"header_{d}"): st.code(qs[f"header_{d}"], language=None)
-                            st.markdown(qs.get(f"text_{d}",""))
-                    for d in range(1,3):
-                        if qs.get(f"translation_ja_{d}"):
-                            with st.expander(f"🇯🇵 和訳 Doc{d}"):
-                                st.text(qs[f"translation_ja_{d}"])
-                else:
-                    if qs.get("header"): st.code(qs["header"], language=None)
-                    if qs.get("text"):
-                        st.markdown(f"<div style='background:#1e293b;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs.get('text','')}</div>", unsafe_allow_html=True)
+                # Audio - リスニング問題には必ず音声が存在するはず
+                if item.get("audioOpus"):
+                    import streamlit.components.v1 as components
+                    opus_b64 = item["audioOpus"]
+                    audio_html = f'''
+                    <audio controls style="width:100%;height:40px" src="data:audio/webm;codecs=opus;base64,{opus_b64}"></audio>
+                    '''
+                    components.html(audio_html, height=50)
+                elif part in ("part1","part2","part3","part4"):
+                    # リスニング問題なのに音声がない = データ破損状態
+                    st.error("⚠️ この問題には音声が含まれていません（データ破損）。削除を推奨します。")
+                    if st.button("🗑️ このセットを削除", key=f"del_broken_{idx}"):
+                        st.session_state.results = [r for r in st.session_state.results if r.get("createdAt") != item.get("createdAt")]
+                        save_results(RESULTS_FILE, st.session_state.results)
+                        st.rerun()
+
+                # Image (Part 1)
+                if item.get("imgUrl"):
+                    st.image(item["imgUrl"], use_container_width=True)
+
+                # Content display
+                if part == "part1" and qs.get("scene"):
+                    st.caption(f"🖼️ Scene: {qs['scene']}")
+                elif part == "part3" and qs.get("conversation"):
+                    with st.expander("💬 Conversation", expanded=True):
+                        st.text(qs["conversation"])
                     if qs.get("translation_ja"):
                         with st.expander("🇯🇵 和訳"):
                             st.text(qs["translation_ja"])
-
-            # Graphic
-            if qs.get("graphic"):
-                g = qs["graphic"]
-                with st.expander("📊 Graphic", expanded=True):
-                    if g.get("title"): st.caption(g["title"])
-                    if g.get("headers") and g.get("rows"):
-                        import pandas as pd
-                        st.dataframe(pd.DataFrame(g["rows"], columns=g["headers"]), hide_index=True)
-
-            # Questions
-            st.divider()
-            questions = qs.get("questions", [])
-            answered = st.session_state.prac_answered
-
-            for qi, q in enumerate(questions):
-                qkey = f"q_{idx}_{qi}"
-                st.markdown(f"**Q{qi+1}.** {q.get('question','')}")
-                choices = q.get("choices", [])
-                correct = q.get("correct", 0)
-
-                selected = st.radio(
-                    f"Answer Q{qi+1}", choices, key=qkey,
-                    index=None, label_visibility="collapsed"
-                )
-
-                if selected is not None and qkey not in answered:
-                    answered[qkey] = choices.index(selected) if selected in choices else -1
-                    st.session_state.prac_answered = answered
-
-                if qkey in answered:
-                    user_ans = answered[qkey]
-                    if user_ans == correct:
-                        st.success(f"✅ Correct! {choices[correct]}")
+                elif part == "part4" and qs.get("talk"):
+                    with st.expander("🎤 Talk", expanded=True):
+                        st.text(qs["talk"])
+                    if qs.get("translation_ja"):
+                        with st.expander("🇯🇵 和訳"):
+                            st.text(qs["translation_ja"])
+                elif part == "part5":
+                    pass  # question is the sentence itself, shown below
+                elif part == "part6":
+                    if qs.get("header"):
+                        st.code(qs["header"], language=None)
+                    if qs.get("text"):
+                        st.markdown(f"<div style='background:#1e293b;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs['text']}</div>", unsafe_allow_html=True)
+                    if qs.get("translation_ja"):
+                        with st.expander("🇯🇵 和訳"):
+                            st.text(qs["translation_ja"])
+                elif part == "part7":
+                    # Single/Double/Triple — show all documents first, then translations
+                    if qs.get("isTriple"):
+                        for d in range(1,4):
+                            with st.expander(f"📄 Document {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
+                                if qs.get(f"header_{d}"): st.code(qs[f"header_{d}"], language=None)
+                                st.markdown(qs.get(f"text_{d}",""))
+                        for d in range(1,4):
+                            if qs.get(f"translation_ja_{d}"):
+                                with st.expander(f"🇯🇵 和訳 Doc{d}"):
+                                    st.text(qs[f"translation_ja_{d}"])
+                    elif qs.get("isDouble"):
+                        for d in range(1,3):
+                            with st.expander(f"📄 Document {d}: {qs.get(f'doc_type_{d}','')}", expanded=True):
+                                if qs.get(f"header_{d}"): st.code(qs[f"header_{d}"], language=None)
+                                st.markdown(qs.get(f"text_{d}",""))
+                        for d in range(1,3):
+                            if qs.get(f"translation_ja_{d}"):
+                                with st.expander(f"🇯🇵 和訳 Doc{d}"):
+                                    st.text(qs[f"translation_ja_{d}"])
                     else:
-                        st.error(f"❌ Wrong. Correct: {choices[correct]}")
-                    if q.get("explanation_en"):
-                        st.caption(f"💡 {q['explanation_en']}")
-                    if q.get("explanation_ja"):
-                        st.info(f"📝 {q['explanation_ja']}")
+                        if qs.get("header"): st.code(qs["header"], language=None)
+                        if qs.get("text"):
+                            st.markdown(f"<div style='background:#1e293b;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs.get('text','')}</div>", unsafe_allow_html=True)
+                        if qs.get("translation_ja"):
+                            with st.expander("🇯🇵 和訳"):
+                                st.text(qs["translation_ja"])
 
-            # Vocabulary from this question
-            vocab = qs.get("vocab", [])
-            if vocab:
+                # Graphic
+                if qs.get("graphic"):
+                    g = qs["graphic"]
+                    with st.expander("📊 Graphic", expanded=True):
+                        if g.get("title"): st.caption(g["title"])
+                        if g.get("headers") and g.get("rows"):
+                            import pandas as pd
+                            st.dataframe(pd.DataFrame(g["rows"], columns=g["headers"]), hide_index=True)
+
+                # Questions
                 st.divider()
-                st.markdown("**📚 Key Vocabulary**")
-                for vi, v in enumerate(vocab):
-                    vc1, vc2 = st.columns([3,7])
-                    with vc1:
-                        word = v.get("word","")
-                        pos = v.get("pos","")
-                        st.markdown(f"**{word}** <span style='font-size:10px;color:#64748b'>{pos}</span>", unsafe_allow_html=True)
-                        # Word pronunciation - use pre-generated if available
-                        word_audio = v.get("audio","")
-                        if word_audio:
-                            if st.button("🔊 単語", key=f"voc_play_{idx}_{vi}"):
-                                import streamlit.components.v1 as comp
-                                comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{word_audio}"></audio>', height=0)
-                        elif check_edge_tts():
-                            if st.button("🔊 単語", key=f"voc_play_{idx}_{vi}"):
-                                try:
-                                    mp3 = edge_tts_sync(word, random.choice(EDGE_VF+EDGE_VM))
-                                    import streamlit.components.v1 as comp
-                                    opus = mp3_to_opus(mp3)
-                                    if opus:
-                                        comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(opus).decode()}"></audio>', height=0)
-                                except: pass
-                    with vc2:
-                        st.markdown(f"🇯🇵 **{v.get('ja','')}**")
-                        ex = v.get('example','')
-                        if ex:
-                            ec1, ec2 = st.columns([8,1])
-                            with ec1:
-                                st.caption(f"💬 {ex}")
-                            with ec2:
-                                ex_audio = v.get("example_audio","")
-                                if ex_audio:
-                                    if st.button("🔊", key=f"voc_ex_{idx}_{vi}"):
-                                        import streamlit.components.v1 as comp
-                                        comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{ex_audio}"></audio>', height=0)
-                                elif check_edge_tts():
-                                    if st.button("🔊", key=f"voc_ex_{idx}_{vi}"):
-                                        try:
-                                            mp3 = edge_tts_sync(ex, random.choice(EDGE_VF+EDGE_VM))
-                                            import streamlit.components.v1 as comp
-                                            o = mp3_to_opus(mp3)
-                                            if o:
-                                                comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(o).decode()}"></audio>', height=0)
-                                        except: pass
+                questions = qs.get("questions", [])
+                answered = st.session_state.prac_answered
 
-            # JSON preview
-            with st.expander("🔍 JSON Data"):
-                st.json(qs, expanded=False)
+                for qi, q in enumerate(questions):
+                    qkey = f"q_{idx}_{qi}"
+                    st.markdown(f"**Q{qi+1}.** {q.get('question','')}")
+                    choices = q.get("choices", [])
+                    correct = q.get("correct", 0)
+
+                    selected = st.radio(
+                        f"Answer Q{qi+1}", choices, key=qkey,
+                        index=None, label_visibility="collapsed"
+                    )
+
+                    if selected is not None and qkey not in answered:
+                        answered[qkey] = choices.index(selected) if selected in choices else -1
+                        st.session_state.prac_answered = answered
+
+                    if qkey in answered:
+                        user_ans = answered[qkey]
+                        if user_ans == correct:
+                            st.success(f"✅ Correct! {choices[correct]}")
+                        else:
+                            st.error(f"❌ Wrong. Correct: {choices[correct]}")
+                        if q.get("explanation_en"):
+                            st.caption(f"💡 {q['explanation_en']}")
+                        if q.get("explanation_ja"):
+                            st.info(f"📝 {q['explanation_ja']}")
+
+                # Vocabulary from this question
+                vocab = qs.get("vocab", [])
+                if vocab:
+                    st.divider()
+                    st.markdown("**📚 Key Vocabulary**")
+                    for vi, v in enumerate(vocab):
+                        vc1, vc2 = st.columns([3,7])
+                        with vc1:
+                            word = v.get("word","")
+                            pos = v.get("pos","")
+                            st.markdown(f"**{word}** <span style='font-size:10px;color:#64748b'>{pos}</span>", unsafe_allow_html=True)
+                            # Word pronunciation - use pre-generated if available
+                            word_audio = v.get("audio","")
+                            if word_audio:
+                                if st.button("🔊 単語", key=f"voc_play_{idx}_{vi}"):
+                                    import streamlit.components.v1 as comp
+                                    comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{word_audio}"></audio>', height=0)
+                            elif check_edge_tts():
+                                if st.button("🔊 単語", key=f"voc_play_{idx}_{vi}"):
+                                    try:
+                                        mp3 = edge_tts_sync(word, random.choice(EDGE_VF+EDGE_VM))
+                                        import streamlit.components.v1 as comp
+                                        opus = mp3_to_opus(mp3)
+                                        if opus:
+                                            comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(opus).decode()}"></audio>', height=0)
+                                    except: pass
+                        with vc2:
+                            st.markdown(f"🇯🇵 **{v.get('ja','')}**")
+                            ex = v.get('example','')
+                            if ex:
+                                ec1, ec2 = st.columns([8,1])
+                                with ec1:
+                                    st.caption(f"💬 {ex}")
+                                with ec2:
+                                    ex_audio = v.get("example_audio","")
+                                    if ex_audio:
+                                        if st.button("🔊", key=f"voc_ex_{idx}_{vi}"):
+                                            import streamlit.components.v1 as comp
+                                            comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{ex_audio}"></audio>', height=0)
+                                    elif check_edge_tts():
+                                        if st.button("🔊", key=f"voc_ex_{idx}_{vi}"):
+                                            try:
+                                                mp3 = edge_tts_sync(ex, random.choice(EDGE_VF+EDGE_VM))
+                                                import streamlit.components.v1 as comp
+                                                o = mp3_to_opus(mp3)
+                                                if o:
+                                                    comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(o).decode()}"></audio>', height=0)
+                                            except: pass
+
+                # JSON preview
+                with st.expander("🔍 JSON Data"):
+                    st.json(qs, expanded=False)
+
+    _practice_frag()
 
 # ══════════════════════════════════════
 # TAB 3: Vocabulary
 # ══════════════════════════════════════
 with tab_vocab:
-    results = st.session_state.results
+    @_fragment
+    def _vocab_frag():
+        all_vocab = build_vocab_list(st.session_state.results)
 
-    def lemmatize(w):
-        """Basic English lemmatization to dictionary form."""
-        w = w.lower().strip()
-        if w.endswith("ied") and len(w)>4: return w[:-3]+"y"
-        if w.endswith("ing") and len(w)>5 and w[-4]==w[-5]: return w[:-4]
-        if w.endswith("ting") and len(w)>5: return w[:-4]+"te"
-        if w.endswith("ing") and len(w)>4: return w[:-3]
-        if w.endswith("ed") and len(w)>4 and w[-3]==w[-4]: return w[:-3]
-        if w.endswith("ed") and len(w)>3: return w[:-2]
-        if w.endswith("es") and len(w)>4: return w[:-2]
-        if w.endswith("s") and not w.endswith("ss") and len(w)>3: return w[:-1]
-        return w
+        if not all_vocab:
+            st.info("まだ単語がありません。Generate タブで問題を作成すると自動で単語帳が作られます。")
+        else:
+            st.subheader(f"📚 Vocabulary ({len(all_vocab)} words)")
 
-    def norm_meaning(m):
-        """Normalize Japanese meaning for comparison (first segment only)."""
-        if not m: return ""
-        return re.split(r'[、,（(]', m.strip())[0].strip()
+            # Cleanup button
+            if st.button("🧹 重複意味を整理", key="vocab_cleanup", help="全ストックの同一語の類似意味をまとめます"):
+                cleaned = 0
+                # Build a map: base_word → list of seen meanings
+                seen_meanings = {}  # base_word → [ja1, ja2, ...]
+                for r in st.session_state.results:
+                    qs = r.get("qSet", {})
+                    vocab = qs.get("vocab", [])
+                    if not vocab: continue
+                    new_vocab = []
+                    for v in vocab:
+                        word = v.get("word","").strip()
+                        if not word: new_vocab.append(v); continue
+                        base = lemmatize(word)
+                        ja = v.get("ja","").strip()
+                        if base not in seen_meanings:
+                            seen_meanings[base] = [ja] if ja else []
+                            new_vocab.append(v)
+                        else:
+                            # Check if this meaning is already seen
+                            is_dup = any(meanings_match(existing, ja) for existing in seen_meanings[base])
+                            if is_dup:
+                                cleaned += 1
+                            else:
+                                if ja: seen_meanings[base].append(ja)
+                                new_vocab.append(v)
+                    qs["vocab"] = new_vocab
+                save_results(RESULTS_FILE, st.session_state.results)
+                st.success(f"✅ {cleaned}件の重複意味を削除しました")
+                st.rerun()
 
-    def meaning_segments(m):
-        """Split meaning into set of segments."""
-        if not m: return set()
-        return set(s.strip() for s in re.split(r'[、,（()]', m.strip()) if s.strip())
+            # POS tabs
+            POS_LABELS = {"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ","other":"その他"}
+            all_pos = sorted(set(v.get("_pos","other") for v in all_vocab))
+            pos_tabs = st.tabs(["📋 All"] + [f"{POS_LABELS.get(p,p)}" for p in all_pos])
 
-    def meanings_match(m1, m2):
-        """Check if two meanings share at least one segment."""
-        return bool(meaning_segments(m1) & meaning_segments(m2))
+            def render_vocab_list(vocab_list, tab_key):
+                if not vocab_list:
+                    st.caption("この品詞の単語はありません")
+                    return
+                vc1, vc2 = st.columns([1,1])
+                with vc1:
+                    study_mode = st.selectbox("Mode", ["📋 List", "🃏 Flashcard"], key=f"vm_{tab_key}")
+                with vc2:
+                    if st.button("📤 CSV", key=f"csv_{tab_key}"):
+                        import io
+                        buf = io.StringIO()
+                        buf.write("word,pos,ja,example,part\n")
+                        for v in vocab_list:
+                            for m in v.get("_meanings",[]):
+                                buf.write(f'"{v.get("word","")}","{v.get("_pos","")}","{m.get("ja","")}","{m.get("example","")}",{v["_part"]}\n')
+                        st.download_button("Download", buf.getvalue(), "toeic_vocab.csv", "text/csv", key=f"dl_{tab_key}")
 
-    # Collect all vocab, merging meanings for same base word
-    all_vocab = []
-    word_map = {}
-    for r in results:
-        qs = r.get("qSet", {})
-        part = r.get("part","?")
-        level = r.get("level","?")
-        for v in qs.get("vocab", []):
-            word = v.get("word","").strip()
-            ja = v.get("ja","").strip()
-            example = v.get("example","").strip()
-            pos = v.get("pos","other").strip().lower()
-            audio = v.get("audio","")
-            if not word: continue
-            base = lemmatize(word)
-            if base in word_map:
-                idx = word_map[base]
-                existing_meanings = all_vocab[idx].get("_meanings",[])
-                # If ANY segment overlaps with existing → skip (same meaning)
-                has_overlap = any(meanings_match(m["ja"], ja) for m in existing_meanings)
-                if ja and not has_overlap:
-                    existing_meanings.append({"ja":ja,"example":example,"example_audio":v.get("example_audio","")})
-                    all_vocab[idx]["_meanings"] = existing_meanings
-                if audio and not all_vocab[idx].get("_audio"):
-                    all_vocab[idx]["_audio"] = audio
-            else:
-                entry = {"word":word, "ja":ja, "example":example, "_part":part, "_level":level,
-                         "_pos":pos, "_audio":audio, "_example_audio":v.get("example_audio",""),
-                         "_meanings":[{"ja":ja,"example":example,"example_audio":v.get("example_audio","")}]}
-                word_map[base] = len(all_vocab)
-                all_vocab.append(entry)
+                if study_mode == "📋 List":
+                    for i, v in enumerate(vocab_list):
+                        meanings = v.get("_meanings",[])
+                        lc1, lc2, lc3 = st.columns([2,7,1])
+                        with lc1:
+                            pos_badge = v.get("_pos","")
+                            pos_color = {"noun":"#60a5fa","verb":"#4ade80","adjective":"#fbbf24","adverb":"#c084fc","phrase":"#f472b6"}.get(pos_badge,"#94a3b8")
+                            st.markdown(f"**{v.get('word','')}**<br><span style='font-size:10px;color:{pos_color}'>{pos_badge}</span>", unsafe_allow_html=True)
+                        with lc2:
+                            for mi, m in enumerate(meanings):
+                                prefix = f"{'❶❷❸❹❺❻❼❽❾❿'[mi]} " if len(meanings)>1 and mi<10 else f"({mi+1}) " if len(meanings)>1 else ""
+                                ex_audio = m.get("example_audio","")
+                                ex_text = m.get("example","")
+                                st.markdown(f"{prefix}**{m.get('ja','')}**")
+                                if ex_text:
+                                    ec1, ec2 = st.columns([8,1])
+                                    with ec1:
+                                        st.caption(f"💬 {ex_text}")
+                                    with ec2:
+                                        if ex_audio:
+                                            if st.button("🔊", key=f"vlex_{tab_key}_{i}_{mi}"):
+                                                import streamlit.components.v1 as comp
+                                                comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{ex_audio}"></audio>', height=0)
+                                        elif check_edge_tts():
+                                            if st.button("🔊", key=f"vlex_{tab_key}_{i}_{mi}"):
+                                                try:
+                                                    mp3 = edge_tts_sync(ex_text, random.choice(EDGE_VF+EDGE_VM))
+                                                    o = mp3_to_opus(mp3)
+                                                    if o:
+                                                        import streamlit.components.v1 as comp
+                                                        comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(o).decode()}"></audio>', height=0)
+                                                except: pass
+                        with lc3:
+                            audio_data = v.get("_audio","")
+                            bc1, bc2 = st.columns(2)
+                            with bc1:
+                                if audio_data:
+                                    if st.button("🔊", key=f"vl_{tab_key}_{i}"):
+                                        import streamlit.components.v1 as comp
+                                        comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{audio_data}"></audio>', height=0)
+                                elif check_edge_tts():
+                                    if st.button("🔊", key=f"vl_{tab_key}_{i}"):
+                                        try:
+                                            mp3 = edge_tts_sync(v.get("word",""), random.choice(EDGE_VF+EDGE_VM))
+                                            o = mp3_to_opus(mp3)
+                                            if o:
+                                                import streamlit.components.v1 as comp
+                                                comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(o).decode()}"></audio>', height=0)
+                                        except: pass
+                            with bc2:
+                                if st.button("🗑️", key=f"vdel_{tab_key}_{i}", help=f"Delete {v.get('word','')}"):
+                                    word_to_del = lemmatize(v.get("word",""))
+                                    for r in st.session_state.results:
+                                        qs = r.get("qSet",{})
+                                        if qs.get("vocab"):
+                                            qs["vocab"] = [vv for vv in qs["vocab"] if lemmatize(vv.get("word","")) != word_to_del]
+                                    save_results(RESULTS_FILE, st.session_state.results)
+                                    st.rerun()
+                else:  # Flashcard
+                    fck = f"fc_{tab_key}"
+                    if fck+"_idx" not in st.session_state: st.session_state[fck+"_idx"] = 0
+                    if fck+"_show" not in st.session_state: st.session_state[fck+"_show"] = False
+                    fi = st.session_state[fck+"_idx"] % len(vocab_list)
+                    v = vocab_list[fi]
+                    st.markdown(f"<div style='text-align:center;padding:8px'><span style='font-size:12px;color:#64748b'>{fi+1}/{len(vocab_list)}</span></div>", unsafe_allow_html=True)
+                    if not st.session_state[fck+"_show"]:
+                        st.markdown(f"<div style='text-align:center;padding:40px;background:#1e293b;border-radius:16px'><h1 style='font-size:36px;margin:0'>{v.get('word','')}</h1></div>", unsafe_allow_html=True)
+                        fc1, fc2, fc3 = st.columns([1,2,1])
+                        with fc1:
+                            audio_data = v.get("_audio","")
+                            if audio_data and st.button("🔊", key=f"fcp_{fck}", use_container_width=True):
+                                import streamlit.components.v1 as comp
+                                comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{audio_data}"></audio>', height=0)
+                        with fc2:
+                            if st.button("👁️ Show", use_container_width=True, type="primary", key=f"fcs_{fck}"):
+                                st.session_state[fck+"_show"] = True; st.rerun()
+                        with fc3:
+                            if st.button("⏭️", use_container_width=True, key=f"fcn_{fck}"):
+                                st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
+                    else:
+                        meanings = v.get("_meanings",[])
+                        mhtml = "".join(f"<div style='margin:6px 0'><span style='font-size:20px;color:#818cf8'>{'❶❷❸❹❺❻❼❽❾❿'[i] if len(meanings)>1 and i<10 else ''} {m.get('ja','')}</span><br><span style='font-size:13px;color:#94a3b8'>💬 {m.get('example','')}</span></div>" for i,m in enumerate(meanings))
+                        st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{mhtml}</div>", unsafe_allow_html=True)
+                        fc1, fc2 = st.columns(2)
+                        with fc1:
+                            if st.button("❌ Didn't Know", use_container_width=True, key=f"fcx_{fck}"):
+                                st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
+                        with fc2:
+                            if st.button("✅ Got It!", use_container_width=True, type="primary", key=f"fcy_{fck}"):
+                                st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
 
-    if not all_vocab:
-        st.info("まだ単語がありません。Generate タブで問題を作成すると自動で単語帳が作られます。")
-    else:
-        st.subheader(f"📚 Vocabulary ({len(all_vocab)} words)")
+            # Render each POS tab
+            with pos_tabs[0]:  # All
+                render_vocab_list(all_vocab, "all")
+            for ti, p in enumerate(all_pos):
+                with pos_tabs[ti+1]:
+                    filtered = [v for v in all_vocab if v.get("_pos","other")==p]
+                    render_vocab_list(filtered, p)
 
-        # POS tabs
-        POS_LABELS = {"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ","other":"その他"}
-        all_pos = sorted(set(v.get("_pos","other") for v in all_vocab))
-        pos_tabs = st.tabs(["📋 All"] + [f"{POS_LABELS.get(p,p)}" for p in all_pos])
 
-        def render_vocab_list(vocab_list, tab_key):
-            if not vocab_list:
-                st.caption("この品詞の単語はありません")
-                return
-            vc1, vc2 = st.columns([1,1])
-            with vc1:
-                study_mode = st.selectbox("Mode", ["📋 List", "🃏 Flashcard"], key=f"vm_{tab_key}")
-            with vc2:
-                if st.button("📤 CSV", key=f"csv_{tab_key}"):
-                    import io
-                    buf = io.StringIO()
-                    buf.write("word,pos,ja,example,part\n")
-                    for v in vocab_list:
-                        for m in v.get("_meanings",[]):
-                            buf.write(f'"{v.get("word","")}","{v.get("_pos","")}","{m.get("ja","")}","{m.get("example","")}",{v["_part"]}\n')
-                    st.download_button("Download", buf.getvalue(), "toeic_vocab.csv", "text/csv", key=f"dl_{tab_key}")
-
-            if study_mode == "📋 List":
-                for i, v in enumerate(vocab_list):
-                    meanings = v.get("_meanings",[])
-                    lc1, lc2, lc3 = st.columns([2,7,1])
-                    with lc1:
-                        pos_badge = v.get("_pos","")
-                        pos_color = {"noun":"#60a5fa","verb":"#4ade80","adjective":"#fbbf24","adverb":"#c084fc","phrase":"#f472b6"}.get(pos_badge,"#94a3b8")
-                        st.markdown(f"**{v.get('word','')}**<br><span style='font-size:10px;color:{pos_color}'>{pos_badge}</span>", unsafe_allow_html=True)
-                    with lc2:
-                        for mi, m in enumerate(meanings):
-                            prefix = f"{'❶❷❸❹❺❻❼❽❾❿'[mi]} " if len(meanings)>1 and mi<10 else f"({mi+1}) " if len(meanings)>1 else ""
-                            ex_audio = m.get("example_audio","")
-                            ex_text = m.get("example","")
-                            st.markdown(f"{prefix}**{m.get('ja','')}**")
-                            if ex_text:
-                                ec1, ec2 = st.columns([8,1])
-                                with ec1:
-                                    st.caption(f"💬 {ex_text}")
-                                with ec2:
-                                    if ex_audio:
-                                        if st.button("🔊", key=f"vlex_{tab_key}_{i}_{mi}"):
-                                            import streamlit.components.v1 as comp
-                                            comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{ex_audio}"></audio>', height=0)
-                                    elif check_edge_tts():
-                                        if st.button("🔊", key=f"vlex_{tab_key}_{i}_{mi}"):
-                                            try:
-                                                mp3 = edge_tts_sync(ex_text, random.choice(EDGE_VF+EDGE_VM))
-                                                o = mp3_to_opus(mp3)
-                                                if o:
-                                                    import streamlit.components.v1 as comp
-                                                    comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(o).decode()}"></audio>', height=0)
-                                            except: pass
-                    with lc3:
-                        audio_data = v.get("_audio","")
-                        bc1, bc2 = st.columns(2)
-                        with bc1:
-                            if audio_data:
-                                if st.button("🔊", key=f"vl_{tab_key}_{i}"):
-                                    import streamlit.components.v1 as comp
-                                    comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{audio_data}"></audio>', height=0)
-                            elif check_edge_tts():
-                                if st.button("🔊", key=f"vl_{tab_key}_{i}"):
-                                    try:
-                                        mp3 = edge_tts_sync(v.get("word",""), random.choice(EDGE_VF+EDGE_VM))
-                                        o = mp3_to_opus(mp3)
-                                        if o:
-                                            import streamlit.components.v1 as comp
-                                            comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{base64.b64encode(o).decode()}"></audio>', height=0)
-                                    except: pass
-                        with bc2:
-                            if st.button("🗑️", key=f"vdel_{tab_key}_{i}", help=f"Delete {v.get('word','')}"):
-                                word_to_del = lemmatize(v.get("word",""))
-                                for r in st.session_state.results:
-                                    qs = r.get("qSet",{})
-                                    if qs.get("vocab"):
-                                        qs["vocab"] = [vv for vv in qs["vocab"] if lemmatize(vv.get("word","")) != word_to_del]
-                                save_results(RESULTS_FILE, st.session_state.results)
-                                st.rerun()
-            else:  # Flashcard
-                fck = f"fc_{tab_key}"
-                if fck+"_idx" not in st.session_state: st.session_state[fck+"_idx"] = 0
-                if fck+"_show" not in st.session_state: st.session_state[fck+"_show"] = False
-                fi = st.session_state[fck+"_idx"] % len(vocab_list)
-                v = vocab_list[fi]
-                st.markdown(f"<div style='text-align:center;padding:8px'><span style='font-size:12px;color:#64748b'>{fi+1}/{len(vocab_list)}</span></div>", unsafe_allow_html=True)
-                if not st.session_state[fck+"_show"]:
-                    st.markdown(f"<div style='text-align:center;padding:40px;background:#1e293b;border-radius:16px'><h1 style='font-size:36px;margin:0'>{v.get('word','')}</h1></div>", unsafe_allow_html=True)
-                    fc1, fc2, fc3 = st.columns([1,2,1])
-                    with fc1:
-                        audio_data = v.get("_audio","")
-                        if audio_data and st.button("🔊", key=f"fcp_{fck}", use_container_width=True):
-                            import streamlit.components.v1 as comp
-                            comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{audio_data}"></audio>', height=0)
-                    with fc2:
-                        if st.button("👁️ Show", use_container_width=True, type="primary", key=f"fcs_{fck}"):
-                            st.session_state[fck+"_show"] = True; st.rerun()
-                    with fc3:
-                        if st.button("⏭️", use_container_width=True, key=f"fcn_{fck}"):
-                            st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
-                else:
-                    meanings = v.get("_meanings",[])
-                    mhtml = "".join(f"<div style='margin:6px 0'><span style='font-size:20px;color:#818cf8'>{'❶❷❸❹❺❻❼❽❾❿'[i] if len(meanings)>1 and i<10 else ''} {m.get('ja','')}</span><br><span style='font-size:13px;color:#94a3b8'>💬 {m.get('example','')}</span></div>" for i,m in enumerate(meanings))
-                    st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{mhtml}</div>", unsafe_allow_html=True)
-                    fc1, fc2 = st.columns(2)
-                    with fc1:
-                        if st.button("❌ Didn't Know", use_container_width=True, key=f"fcx_{fck}"):
-                            st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
-                    with fc2:
-                        if st.button("✅ Got It!", use_container_width=True, type="primary", key=f"fcy_{fck}"):
-                            st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
-
-        # Render each POS tab
-        with pos_tabs[0]:  # All
-            render_vocab_list(all_vocab, "all")
-        for ti, p in enumerate(all_pos):
-            with pos_tabs[ti+1]:
-                filtered = [v for v in all_vocab if v.get("_pos","other")==p]
-                render_vocab_list(filtered, p)
-
+    _vocab_frag()
 
 # ══════════════════════════════════════
 # TAB 4: Vocabulary Quiz
 # ══════════════════════════════════════
 with tab_quiz:
-    results = st.session_state.results
-    # Collect vocab pool
-    quiz_pool = []
-    for r in results:
-        qs = r.get("qSet", {})
-        for v in qs.get("vocab", []):
-            w = v.get("word","").strip()
-            j = v.get("ja","").strip()
-            if w and j:
-                quiz_pool.append({"word":w, "ja":j, "audio":v.get("audio",""), "example":v.get("example",""), "example_audio":v.get("example_audio","")})
-    # Deduplicate
-    seen_qp = set()
-    unique_pool = []
-    for v in quiz_pool:
-        key = v["word"].lower()
-        if key not in seen_qp:
-            seen_qp.add(key)
-            unique_pool.append(v)
-    quiz_pool = unique_pool
+    @_fragment
+    def _quiz_frag():
+        results = st.session_state.results
+        # Collect vocab pool
+        quiz_pool = []
+        for r in results:
+            qs = r.get("qSet", {})
+            for v in qs.get("vocab", []):
+                w = v.get("word","").strip()
+                j = v.get("ja","").strip()
+                if w and j:
+                    quiz_pool.append({"word":w, "ja":j, "audio":v.get("audio",""), "example":v.get("example",""), "example_audio":v.get("example_audio","")})
+        # Deduplicate
+        seen_qp = set()
+        unique_pool = []
+        for v in quiz_pool:
+            key = v["word"].lower()
+            if key not in seen_qp:
+                seen_qp.add(key)
+                unique_pool.append(v)
+        quiz_pool = unique_pool
 
-    if len(quiz_pool) < 4:
-        st.info(f"単語が{len(quiz_pool)}語しかありません。クイズには最低4語必要です。Generate タブで問題を作成してください。")
-    else:
-        st.subheader(f"🧠 単語Quiz ({len(quiz_pool)}語)")
-
-        # Initialize quiz state
-        if "quiz_mode" not in st.session_state: st.session_state.quiz_mode = "en_ja"
-        if "quiz_score" not in st.session_state: st.session_state.quiz_score = {"correct":0,"total":0}
-        if "quiz_current" not in st.session_state: st.session_state.quiz_current = None
-        if "quiz_answered" not in st.session_state: st.session_state.quiz_answered = None
-
-        # Mode selection
-        qm1, qm2, qm3 = st.columns([2,2,2])
-        with qm1:
-            mode = st.radio("Mode", ["en_ja","ja_en"], format_func={"en_ja":"🇬🇧→🇯🇵 英→日","ja_en":"🇯🇵→🇬🇧 日→英"}.get, horizontal=True, key="quiz_mode")
-        with qm2:
-            score = st.session_state.quiz_score
-            if score["total"] > 0:
-                pct = int(score["correct"]/score["total"]*100)
-                st.metric("Score", f"{score['correct']}/{score['total']} ({pct}%)")
-            else:
-                st.metric("Score", "0/0")
-        with qm3:
-            if st.button("🔄 Reset Score"):
-                st.session_state.quiz_score = {"correct":0,"total":0}
-                st.session_state.quiz_current = None
-                st.session_state.quiz_answered = None
-                st.rerun()
-
-        # Generate quiz question (shuffle queue — all words before repeating)
-        def new_quiz():
-            if "quiz_queue" not in st.session_state or not st.session_state.quiz_queue:
-                q = list(range(len(quiz_pool)))
-                random.shuffle(q)
-                st.session_state.quiz_queue = q
-            idx = st.session_state.quiz_queue.pop(0)
-            target = quiz_pool[idx]
-            distractors = random.sample([v for v in quiz_pool if v["word"]!=target["word"]], min(3, len(quiz_pool)-1))
-            if st.session_state.quiz_mode == "en_ja":
-                choices = [target["ja"]] + [d["ja"] for d in distractors]
-            else:
-                choices = [target["word"]] + [d["word"] for d in distractors]
-            indices = list(range(len(choices)))
-            random.shuffle(indices)
-            shuffled = [choices[i] for i in indices]
-            correct_idx = indices.index(0)
-            return {"target":target, "choices":shuffled, "correct":correct_idx}
-
-        if st.session_state.quiz_current is None:
-            st.session_state.quiz_current = new_quiz()
-            st.session_state.quiz_answered = None
-
-        q = st.session_state.quiz_current
-        target = q["target"]
-
-        # Display question
-        st.divider()
-        if mode == "en_ja":
-            st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;border-radius:16px'><h1 style='font-size:32px;margin:0'>{target['word']}</h1></div>", unsafe_allow_html=True)
-            # Play word audio
-            if target.get("audio"):
-                import streamlit.components.v1 as comp
-                comp.html(f'<audio controls style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,{target["audio"]}"></audio>', height=45)
-            st.caption("この単語の意味は？")
+        if len(quiz_pool) < 4:
+            st.info(f"単語が{len(quiz_pool)}語しかありません。クイズには最低4語必要です。Generate タブで問題を作成してください。")
         else:
-            st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;border-radius:16px'><h1 style='font-size:28px;margin:0;color:#818cf8'>{target['ja']}</h1></div>", unsafe_allow_html=True)
-            st.caption("この意味の英単語は？")
+            st.subheader(f"🧠 単語Quiz ({len(quiz_pool)}語)")
 
-        # Choices
-        answered = st.session_state.quiz_answered
-        for ci, choice in enumerate(q["choices"]):
-            is_correct = ci == q["correct"]
-            if answered is not None:
-                if ci == answered and is_correct:
-                    st.success(f"✅ {choice}")
-                elif ci == answered and not is_correct:
-                    st.error(f"❌ {choice}")
-                elif is_correct:
-                    st.success(f"✅ {choice} ← 正解")
+            # Initialize quiz state
+            if "quiz_mode" not in st.session_state: st.session_state.quiz_mode = "en_ja"
+            if "quiz_score" not in st.session_state: st.session_state.quiz_score = {"correct":0,"total":0}
+            if "quiz_current" not in st.session_state: st.session_state.quiz_current = None
+            if "quiz_answered" not in st.session_state: st.session_state.quiz_answered = None
+
+            # Mode selection
+            qm1, qm2, qm3 = st.columns([2,2,2])
+            with qm1:
+                mode = st.radio("Mode", ["en_ja","ja_en"], format_func={"en_ja":"🇬🇧→🇯🇵 英→日","ja_en":"🇯🇵→🇬🇧 日→英"}.get, horizontal=True, key="quiz_mode")
+            with qm2:
+                score = st.session_state.quiz_score
+                if score["total"] > 0:
+                    pct = int(score["correct"]/score["total"]*100)
+                    st.metric("Score", f"{score['correct']}/{score['total']} ({pct}%)")
                 else:
-                    st.button(choice, key=f"qc_{ci}", disabled=True)
-            else:
-                if st.button(choice, key=f"qc_{ci}", use_container_width=True):
-                    st.session_state.quiz_answered = ci
-                    sc = st.session_state.quiz_score
-                    sc["total"] += 1
-                    if is_correct: sc["correct"] += 1
-                    st.session_state.quiz_score = sc
+                    st.metric("Score", "0/0")
+            with qm3:
+                if st.button("🔄 Reset Score"):
+                    st.session_state.quiz_score = {"correct":0,"total":0}
+                    st.session_state.quiz_current = None
+                    st.session_state.quiz_answered = None
                     st.rerun()
 
-        # After answering: show example + audio + next button
-        if answered is not None:
-            if target.get("example"):
-                st.markdown(f"💬 *{target['example']}*")
-            if target.get("example_audio"):
-                import streamlit.components.v1 as comp
-                comp.html(f'<audio controls style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,{target["example_audio"]}"></audio>', height=45)
-            if st.button("➡️ Next Question", type="primary", use_container_width=True):
+            # Generate quiz question (shuffle queue — all words before repeating)
+            def new_quiz():
+                if "quiz_queue" not in st.session_state or not st.session_state.quiz_queue:
+                    q = list(range(len(quiz_pool)))
+                    random.shuffle(q)
+                    st.session_state.quiz_queue = q
+                idx = st.session_state.quiz_queue.pop(0)
+                target = quiz_pool[idx]
+                distractors = random.sample([v for v in quiz_pool if v["word"]!=target["word"]], min(3, len(quiz_pool)-1))
+                if st.session_state.quiz_mode == "en_ja":
+                    choices = [target["ja"]] + [d["ja"] for d in distractors]
+                else:
+                    choices = [target["word"]] + [d["word"] for d in distractors]
+                indices = list(range(len(choices)))
+                random.shuffle(indices)
+                shuffled = [choices[i] for i in indices]
+                correct_idx = indices.index(0)
+                return {"target":target, "choices":shuffled, "correct":correct_idx}
+
+            if st.session_state.quiz_current is None:
                 st.session_state.quiz_current = new_quiz()
                 st.session_state.quiz_answered = None
-                st.rerun()
+
+            q = st.session_state.quiz_current
+            target = q["target"]
+
+            # Display question
+            st.divider()
+            if mode == "en_ja":
+                st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;border-radius:16px'><h1 style='font-size:32px;margin:0'>{target['word']}</h1></div>", unsafe_allow_html=True)
+                # Play word audio
+                if target.get("audio"):
+                    import streamlit.components.v1 as comp
+                    comp.html(f'<audio controls style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,{target["audio"]}"></audio>', height=45)
+                st.caption("この単語の意味は？")
+            else:
+                st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;border-radius:16px'><h1 style='font-size:28px;margin:0;color:#818cf8'>{target['ja']}</h1></div>", unsafe_allow_html=True)
+                st.caption("この意味の英単語は？")
+
+            # Choices
+            answered = st.session_state.quiz_answered
+            for ci, choice in enumerate(q["choices"]):
+                is_correct = ci == q["correct"]
+                if answered is not None:
+                    if ci == answered and is_correct:
+                        st.success(f"✅ {choice}")
+                    elif ci == answered and not is_correct:
+                        st.error(f"❌ {choice}")
+                    elif is_correct:
+                        st.success(f"✅ {choice} ← 正解")
+                    else:
+                        st.button(choice, key=f"qc_{ci}", disabled=True)
+                else:
+                    if st.button(choice, key=f"qc_{ci}", use_container_width=True):
+                        st.session_state.quiz_answered = ci
+                        sc = st.session_state.quiz_score
+                        sc["total"] += 1
+                        if is_correct: sc["correct"] += 1
+                        st.session_state.quiz_score = sc
+                        st.rerun()
+
+            # After answering: show example + audio + next button
+            if answered is not None:
+                if target.get("example"):
+                    st.markdown(f"💬 *{target['example']}*")
+                if target.get("example_audio"):
+                    import streamlit.components.v1 as comp
+                    comp.html(f'<audio controls style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,{target["example_audio"]}"></audio>', height=45)
+                if st.button("➡️ Next Question", type="primary", use_container_width=True):
+                    st.session_state.quiz_current = new_quiz()
+                    st.session_state.quiz_answered = None
+                    st.rerun()
+
+    _quiz_frag()
 
 # ══════════════════════════════════════
 # TAB 5: Listening Mode (流し聞き)
 # ══════════════════════════════════════
 with tab_listen:
-    results = st.session_state.results
-    listen_parts = {"part2":"Part 2 — Q&R","part3":"Part 3 — Conversations","part3_3p":"Part 3 — 3-Person Conv","part4":"Part 4 — Talks"}
+    @_fragment
+    def _listen_frag():
+        results = st.session_state.results
+        listen_parts = {"part2":"Part 2 — Q&R","part3":"Part 3 — Conversations","part3_3p":"Part 3 — 3-Person Conv","part4":"Part 4 — Talks"}
 
-    # Filter listening questions
-    listen_pool = {}
-    for r in results:
-        p = r.get("part","")
-        if p in listen_parts:
-            if p not in listen_pool: listen_pool[p] = []
-            listen_pool[p].append(r)
+        # Filter listening questions
+        listen_pool = {}
+        for r in results:
+            p = r.get("part","")
+            if p in listen_parts:
+                if p not in listen_pool: listen_pool[p] = []
+                listen_pool[p].append(r)
 
-    total_listening = sum(len(v) for v in listen_pool.values())
-    if total_listening == 0:
-        st.info("Listening問題がありません。Generate タブで Part 2/3/4 を生成してください。")
-    else:
-        st.subheader("🎧 流し聞きモード")
-        st.caption("通勤中などに問題→正解→解説を連続再生。Opus圧縮で30分≈5MB。")
+        total_listening = sum(len(v) for v in listen_pool.values())
+        if total_listening == 0:
+            st.info("Listening問題がありません。Generate タブで Part 2/3/4 を生成してください。")
+        else:
+            st.subheader("🎧 流し聞きモード")
+            st.caption("通勤中などに問題→正解→解説を連続再生。Opus圧縮で30分≈5MB。")
 
-        lc1, lc2 = st.columns([1,1])
-        with lc1:
-            avail = {k:v for k,v in listen_pool.items() if v}
-            lp = st.selectbox("Part", list(avail.keys()), format_func=lambda x: f"{listen_parts[x]} ({len(avail[x])}問)", key="listen_part")
-        with lc2:
-            max_q = len(avail.get(lp,[]))
-            lcount = st.number_input("Questions", 1, max_q, min(max_q,20), key="listen_count")
+            lc1, lc2 = st.columns([1,1])
+            with lc1:
+                avail = {k:v for k,v in listen_pool.items() if v}
+                lp = st.selectbox("Part", list(avail.keys()), format_func=lambda x: f"{listen_parts[x]} ({len(avail[x])}問)", key="listen_part")
+            with lc2:
+                max_q = len(avail.get(lp,[]))
+                lcount = st.number_input("Questions", 1, max_q, min(max_q,20), key="listen_count")
 
-        st.caption("解説: 英語の端的な1-2文（生成時に作成された explanation_en を使用）")
+            st.caption("解説: 英語の端的な1-2文（生成時に作成された explanation_en を使用）")
 
-        if st.button("🎵 Generate Listening Audio", type="primary", use_container_width=True):
-            if not check_edge_tts():
-                st.error("Edge TTS required. Install: pip install edge-tts")
-                st.stop()
-
-            import subprocess as _sp
-            import tempfile, os
-
-            items = avail[lp][:lcount]
-            # Collect all MP3 segments then concat via ffmpeg
-            seg_files = []
-
-            # Default voices
-            default_f = random.choice(EDGE_VF)
-            default_m = random.choice(EDGE_VM)
-
-            def tts_seg_mp3(text, voice=None):
-                """Generate MP3 for one segment."""
-                if not text or not text.strip():
-                    return None
-                v = voice or default_m
-                try:
-                    return edge_tts_sync(text, v)
-                except Exception as e:
-                    print(f"[LISTEN] TTS fail for '{text[:30]}': {e}", flush=True)
-                    return None
-
-            def save_seg(mp3_bytes):
-                if not mp3_bytes: return
-                tf = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-                tf.write(mp3_bytes); tf.close()
-                seg_files.append(tf.name)
-
-            def add_silence(seconds):
-                """Generate a silent MP3 segment."""
-                tf = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-                tf.close()
-                r = _sp.run(
-                    ['ffmpeg','-y','-f','lavfi','-i',f'anullsrc=r=24000:cl=mono','-t',str(seconds),'-c:a','libmp3lame','-b:a','48k',tf.name],
-                    capture_output=True, timeout=30
-                )
-                if r.returncode == 0:
-                    seg_files.append(tf.name)
-
-            prog = st.progress(0)
-            stat = st.empty()
-
-            try:
-                for qi, item in enumerate(items):
-                    qs = item.get("qSet",{})
-                    questions = qs.get("questions",[])
-                    stat.info(f"⏳ [{qi+1}/{len(items)}] Generating audio...")
-                    prog.progress(qi/len(items))
-
-                    # Number announcement
-                    save_seg(tts_seg_mp3(f"Question {qi+1}.", default_m))
-                    add_silence(1)
-
-                    # Main audio (conversation/talk/spoken)
-                    audio_text = qs.get("audio","") or qs.get("spoken","") or qs.get("talk","") or qs.get("conversation","")
-                    if audio_text:
-                        if lp == "part3" and qs.get("speakers"):
-                            # Multi-speaker conversation
-                            spk = qs.get("speakers",["Man","Woman"])
-                            fp, mp = EDGE_VF.copy(), EDGE_VM.copy()
-                            random.shuffle(fp); random.shuffle(mp)
-                            fi = mi = 0; vm = {}
-                            for s in spk:
-                                if is_female(s): vm[s]=fp[fi%len(fp)]; fi+=1
-                                else: vm[s]=mp[mi%len(mp)]; mi+=1
-                            text = audio_text.replace('\\n','\n')
-                            segs = re.split(r'(?=\b(?:Man|Woman|Speaker)\s*\d?\s*:)', text, flags=re.I)
-                            for seg in segs:
-                                seg = seg.strip()
-                                if not seg: continue
-                                m = re.match(r'^((?:Man|Woman|Speaker)\s*\d?)\s*:\s*(.+)', seg, re.I|re.DOTALL)
-                                if m:
-                                    lbl, txt = m.group(1).strip(), m.group(2).strip()
-                                    v = vm.get(lbl) or next((v2 for k,v2 in vm.items() if k.lower()==lbl.lower()),None) or default_m
-                                    save_seg(tts_seg_mp3(txt, v))
-                                    add_silence(0.3)
-                                else:
-                                    save_seg(tts_seg_mp3(seg, default_m))
-                        else:
-                            voice = default_m if lp=="part4" else random.choice(EDGE_VF+EDGE_VM)
-                            save_seg(tts_seg_mp3(audio_text, voice))
-
-                    add_silence(5)  # Think time after main audio (real TOEIC: 5s)
-
-                    # Questions + Answers
-                    for qidx, q in enumerate(questions):
-                        correct = q.get("correct",0)
-                        choices = q.get("choices",[])
-                        q_text = q.get("question","")
-                        letters = ["A","B","C","D"]
-
-                        if len(questions) > 1:
-                            save_seg(tts_seg_mp3(q_text, default_f))
-                            add_silence(2)  # Pause between question and choices
-
-                        if len(questions) > 1 and choices:
-                            choices_parts = []
-                            for ci, cc in enumerate(choices):
-                                clean = re.sub(r'^\([A-D]\)\s*', '', cc)
-                                choices_parts.append(f"({letters[ci]}) {clean}")
-                            choices_text = ". ".join(choices_parts)
-                            save_seg(tts_seg_mp3(choices_text, default_m))
-                            add_silence(5)  # Think time after choices (real TOEIC: 8s, shortened to 5s)
-                        else:
-                            add_silence(5)  # Part 1/2: choices in main audio, just think time
-
-                        correct_letter = letters[correct] if correct < len(letters) else "A"
-                        correct_text = re.sub(r'^\([A-D]\)\s*','',choices[correct]) if correct < len(choices) else ""
-                        save_seg(tts_seg_mp3(f"The answer is {correct_letter}. {correct_text}", default_m))
-                        add_silence(2)  # Pause after answer
-
-                        expl_en = q.get("explanation_en","").strip()
-                        if expl_en:
-                            save_seg(tts_seg_mp3(expl_en, default_f))
-                            add_silence(2)  # Pause after explanation
-
-                    add_silence(2)  # Between items
-
-                prog.progress(1.0)
-                stat.info("⏳ Encoding...")
-
-                if not seg_files:
-                    st.error("No audio segments generated")
+            if st.button("🎵 Generate Listening Audio", type="primary", use_container_width=True):
+                if not check_edge_tts():
+                    st.error("Edge TTS required. Install: pip install edge-tts")
                     st.stop()
 
-                # Concat MP3s
-                list_file = tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False)
-                for f in seg_files: list_file.write(f"file '{f}'\n")
-                list_file.close()
+                import subprocess as _sp
+                import tempfile, os
 
-                # Convert concatenated MP3 directly to Opus WebM
-                out_file = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
-                out_file.close()
-                r = _sp.run(
-                    ['ffmpeg','-y','-f','concat','-safe','0','-i',list_file.name,
-                     '-c:a','libopus','-b:a','24k','-vbr','on',out_file.name],
-                    capture_output=True, timeout=600
-                )
-                if r.returncode == 0:
-                    with open(out_file.name,"rb") as fh: opus = fh.read()
-                    # Estimate duration via ffprobe
-                    dur_result = _sp.run(
-                        ['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',out_file.name],
-                        capture_output=True, text=True, timeout=30
+                items = avail[lp][:lcount]
+                # Collect all MP3 segments then concat via ffmpeg
+                seg_files = []
+
+                # Default voices
+                default_f = random.choice(EDGE_VF)
+                default_m = random.choice(EDGE_VM)
+
+                def tts_seg_mp3(text, voice=None):
+                    """Generate MP3 for one segment."""
+                    if not text or not text.strip():
+                        return None
+                    v = voice or default_m
+                    try:
+                        return edge_tts_sync(text, v)
+                    except Exception as e:
+                        print(f"[LISTEN] TTS fail for '{text[:30]}': {e}", flush=True)
+                        return None
+
+                def save_seg(mp3_bytes):
+                    if not mp3_bytes: return
+                    tf = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                    tf.write(mp3_bytes); tf.close()
+                    seg_files.append(tf.name)
+
+                def add_silence(seconds):
+                    """Generate a silent MP3 segment."""
+                    tf = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                    tf.close()
+                    r = _sp.run(
+                        ['ffmpeg','-y','-f','lavfi','-i',f'anullsrc=r=24000:cl=mono','-t',str(seconds),'-c:a','libmp3lame','-b:a','48k',tf.name],
+                        capture_output=True, timeout=30
                     )
-                    try: duration_sec = float(dur_result.stdout.strip())
-                    except: duration_sec = 0
-                    duration_min = duration_sec / 60
-                    size_mb = len(opus) / 1024 / 1024
-                    stat.success(f"🎵 Complete! {duration_min:.1f}分 / {size_mb:.1f}MB (Opus)")
-                    st.download_button(
-                        f"📥 Download ({size_mb:.1f}MB, {duration_min:.0f}min)",
-                        opus,
-                        f"toeic_{lp}_listening_{lcount}q.webm",
-                        "audio/webm",
-                        use_container_width=True
+                    if r.returncode == 0:
+                        seg_files.append(tf.name)
+
+                prog = st.progress(0)
+                stat = st.empty()
+
+                try:
+                    for qi, item in enumerate(items):
+                        qs = item.get("qSet",{})
+                        questions = qs.get("questions",[])
+                        stat.info(f"⏳ [{qi+1}/{len(items)}] Generating audio...")
+                        prog.progress(qi/len(items))
+
+                        # Number announcement
+                        save_seg(tts_seg_mp3(f"Question {qi+1}.", default_m))
+                        add_silence(1)
+
+                        # Main audio (conversation/talk/spoken)
+                        audio_text = qs.get("audio","") or qs.get("spoken","") or qs.get("talk","") or qs.get("conversation","")
+                        if audio_text:
+                            if lp == "part3" and qs.get("speakers"):
+                                # Multi-speaker conversation
+                                spk = qs.get("speakers",["Man","Woman"])
+                                fp, mp = EDGE_VF.copy(), EDGE_VM.copy()
+                                random.shuffle(fp); random.shuffle(mp)
+                                fi = mi = 0; vm = {}
+                                for s in spk:
+                                    if is_female(s): vm[s]=fp[fi%len(fp)]; fi+=1
+                                    else: vm[s]=mp[mi%len(mp)]; mi+=1
+                                text = audio_text.replace('\\n','\n')
+                                segs = re.split(r'(?=\b(?:Man|Woman|Speaker)\s*\d?\s*:)', text, flags=re.I)
+                                for seg in segs:
+                                    seg = seg.strip()
+                                    if not seg: continue
+                                    m = re.match(r'^((?:Man|Woman|Speaker)\s*\d?)\s*:\s*(.+)', seg, re.I|re.DOTALL)
+                                    if m:
+                                        lbl, txt = m.group(1).strip(), m.group(2).strip()
+                                        v = vm.get(lbl) or next((v2 for k,v2 in vm.items() if k.lower()==lbl.lower()),None) or default_m
+                                        save_seg(tts_seg_mp3(txt, v))
+                                        add_silence(0.3)
+                                    else:
+                                        save_seg(tts_seg_mp3(seg, default_m))
+                            else:
+                                voice = default_m if lp=="part4" else random.choice(EDGE_VF+EDGE_VM)
+                                save_seg(tts_seg_mp3(audio_text, voice))
+
+                        add_silence(5)  # Think time after main audio (real TOEIC: 5s)
+
+                        # Questions + Answers
+                        for qidx, q in enumerate(questions):
+                            correct = q.get("correct",0)
+                            choices = q.get("choices",[])
+                            q_text = q.get("question","")
+                            letters = ["A","B","C","D"]
+
+                            if len(questions) > 1:
+                                save_seg(tts_seg_mp3(q_text, default_f))
+                                add_silence(2)  # Pause between question and choices
+
+                            if len(questions) > 1 and choices:
+                                choices_parts = []
+                                for ci, cc in enumerate(choices):
+                                    clean = re.sub(r'^\([A-D]\)\s*', '', cc)
+                                    choices_parts.append(f"({letters[ci]}) {clean}")
+                                choices_text = ". ".join(choices_parts)
+                                save_seg(tts_seg_mp3(choices_text, default_m))
+                                add_silence(5)  # Think time after choices (real TOEIC: 8s, shortened to 5s)
+                            else:
+                                add_silence(5)  # Part 1/2: choices in main audio, just think time
+
+                            correct_letter = letters[correct] if correct < len(letters) else "A"
+                            correct_text = re.sub(r'^\([A-D]\)\s*','',choices[correct]) if correct < len(choices) else ""
+                            save_seg(tts_seg_mp3(f"The answer is {correct_letter}. {correct_text}", default_m))
+                            add_silence(2)  # Pause after answer
+
+                            expl_en = q.get("explanation_en","").strip()
+                            if expl_en:
+                                save_seg(tts_seg_mp3(expl_en, default_f))
+                                add_silence(2)  # Pause after explanation
+
+                        add_silence(2)  # Between items
+
+                    prog.progress(1.0)
+                    stat.info("⏳ Encoding...")
+
+                    if not seg_files:
+                        st.error("No audio segments generated")
+                        st.stop()
+
+                    # Concat MP3s
+                    list_file = tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False)
+                    for f in seg_files: list_file.write(f"file '{f}'\n")
+                    list_file.close()
+
+                    # Convert concatenated MP3 directly to Opus WebM
+                    out_file = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
+                    out_file.close()
+                    r = _sp.run(
+                        ['ffmpeg','-y','-f','concat','-safe','0','-i',list_file.name,
+                         '-c:a','libopus','-b:a','24k','-vbr','on',out_file.name],
+                        capture_output=True, timeout=600
                     )
-                    try: os.unlink(out_file.name)
+                    if r.returncode == 0:
+                        with open(out_file.name,"rb") as fh: opus = fh.read()
+                        # Estimate duration via ffprobe
+                        dur_result = _sp.run(
+                            ['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',out_file.name],
+                            capture_output=True, text=True, timeout=30
+                        )
+                        try: duration_sec = float(dur_result.stdout.strip())
+                        except: duration_sec = 0
+                        duration_min = duration_sec / 60
+                        size_mb = len(opus) / 1024 / 1024
+                        stat.success(f"🎵 Complete! {duration_min:.1f}分 / {size_mb:.1f}MB (Opus)")
+                        st.download_button(
+                            f"📥 Download ({size_mb:.1f}MB, {duration_min:.0f}min)",
+                            opus,
+                            f"toeic_{lp}_listening_{lcount}q.webm",
+                            "audio/webm",
+                            use_container_width=True
+                        )
+                        try: os.unlink(out_file.name)
+                        except: pass
+                    else:
+                        stat.error(f"ffmpeg concat failed: {r.stderr.decode()[:200]}")
+                    try: os.unlink(list_file.name)
                     except: pass
-                else:
-                    stat.error(f"ffmpeg concat failed: {r.stderr.decode()[:200]}")
-                try: os.unlink(list_file.name)
-                except: pass
-            finally:
-                # Cleanup temp files
-                for f in seg_files:
-                    try: os.unlink(f)
-                    except: pass
+                finally:
+                    # Cleanup temp files
+                    for f in seg_files:
+                        try: os.unlink(f)
+                        except: pass
+
+    _listen_frag()
 
 # ══════════════════════════════════════
 # TAB 6: 模試テスト (Mock Test)
 # ══════════════════════════════════════
 with tab_mock_test:
-    mock = st.session_state.get("mock_results", [])
+    @_fragment
+    def _mock_frag():
+        mock = st.session_state.get("mock_results", [])
 
-    if not mock:
-        st.info("📝 模試テストを受けるには、まず **🔧 Generate** タブで模試を生成してください。")
-        st.caption("「⚡ 模試 100問 (ハーフ) 生成」 or 「🏆 模試 200問 (フル) 生成」ボタンを使います。")
-    else:
-        # ── State init ──
-        if "mt_active" not in st.session_state:
-            st.session_state.mt_active = False
-            st.session_state.mt_flat = []
-            st.session_state.mt_idx = 0
-            st.session_state.mt_answers = {}
-            st.session_state.mt_start = 0
-            st.session_state.mt_done = False
+        if not mock:
+            st.info("📝 模試テストを受けるには、まず **🔧 Generate** タブで模試を生成してください。")
+            st.caption("「⚡ 模試 100問 (ハーフ) 生成」 or 「🏆 模試 200問 (フル) 生成」ボタンを使います。")
+        else:
+            # ── State init ──
+            if "mt_active" not in st.session_state:
+                st.session_state.mt_active = False
+                st.session_state.mt_flat = []
+                st.session_state.mt_idx = 0
+                st.session_state.mt_answers = {}
+                st.session_state.mt_start = 0
+                st.session_state.mt_done = False
 
-        # ── Navigation helpers (via callbacks — avoids rerun-before-state-write bugs) ──
-        def mt_go(delta):
-            st.session_state.mt_idx = max(0, min(st.session_state.mt_idx + delta, len(st.session_state.mt_flat) - 1))
+            # ── Navigation helpers (via callbacks — avoids rerun-before-state-write bugs) ──
+            def mt_go(delta):
+                st.session_state.mt_idx = max(0, min(st.session_state.mt_idx + delta, len(st.session_state.mt_flat) - 1))
 
-        def mt_finish():
-            st.session_state.mt_active = False
-            st.session_state.mt_done = True
+            def mt_finish():
+                st.session_state.mt_active = False
+                st.session_state.mt_done = True
 
-        def mt_save_answer():
-            """Read the radio widget value and store it."""
-            idx = st.session_state.mt_idx
-            key = f"mt_radio_{idx}"
-            if key in st.session_state:
-                val = st.session_state[key]
-                if val is not None:
-                    # val is the full option string — map back to index
-                    flat = st.session_state.mt_flat
-                    if idx < len(flat):
-                        item, q_idx = flat[idx]
-                        choices = item.get("qSet",{}).get("questions",[])[q_idx].get("choices",[])
-                        letters = ["(A)","(B)","(C)","(D)"]
-                        options = [f"{letters[i]} {c}" if not c.startswith("(") else c for i,c in enumerate(choices)]
-                        if val in options:
-                            st.session_state.mt_answers[idx] = options.index(val)
+            def mt_save_answer():
+                """Read the radio widget value and store it."""
+                idx = st.session_state.mt_idx
+                key = f"mt_radio_{idx}"
+                if key in st.session_state:
+                    val = st.session_state[key]
+                    if val is not None:
+                        # val is the full option string — map back to index
+                        flat = st.session_state.mt_flat
+                        if idx < len(flat):
+                            item, q_idx = flat[idx]
+                            choices = item.get("qSet",{}).get("questions",[])[q_idx].get("choices",[])
+                            letters = ["(A)","(B)","(C)","(D)"]
+                            options = [f"{letters[i]} {c}" if not c.startswith("(") else c for i,c in enumerate(choices)]
+                            if val in options:
+                                st.session_state.mt_answers[idx] = options.index(val)
 
-        def mt_next():
-            mt_save_answer()
-            mt_go(1)
+            def mt_next():
+                mt_save_answer()
+                mt_go(1)
 
-        def mt_prev():
-            mt_save_answer()
-            mt_go(-1)
+            def mt_prev():
+                mt_save_answer()
+                mt_go(-1)
 
-        def mt_end():
-            mt_save_answer()
-            mt_finish()
-
-        # ── Test setup ──
-        if not st.session_state.mt_active and not st.session_state.mt_done:
-            st.subheader("📝 模試テスト")
-
-            # Group by batch for selection
-            batches = {}
-            for r in mock:
-                bid = r.get("batchId", "legacy")
-                if bid not in batches:
-                    batches[bid] = {"label": r.get("batchLabel", "旧データ"), "items": []}
-                batches[bid]["items"].append(r)
-
-            if len(batches) == 0:
-                st.info("模試データがありません。🔧 Generate タブで生成してください。")
-            else:
-                # Batch selector
-                batch_options = {bid: f"{b['label']} ({sum(len(r.get('qSet',{}).get('questions',[])) for r in b['items'])}問)" for bid, b in batches.items()}
-                if "mt_batch" not in st.session_state or st.session_state.mt_batch not in batch_options:
-                    st.session_state.mt_batch = list(batch_options.keys())[-1]  # latest batch
-
-                if len(batch_options) > 1:
-                    selected_bid = st.selectbox(
-                        "模試を選択",
-                        list(batch_options.keys()),
-                        format_func=lambda x: batch_options[x],
-                        index=list(batch_options.keys()).index(st.session_state.mt_batch),
-                        key="mt_batch_select"
-                    )
-                    st.session_state.mt_batch = selected_bid
-                else:
-                    selected_bid = list(batch_options.keys())[0]
-                    st.session_state.mt_batch = selected_bid
-
-                selected_items = batches[selected_bid]["items"]
-                total_q = sum(len(it.get("qSet",{}).get("questions",[])) for it in selected_items)
-                part_counts = {}
-                for it in selected_items:
-                    p = it.get("part","?")
-                    nq = len(it.get("qSet",{}).get("questions",[]))
-                    part_counts[p] = part_counts.get(p,0) + nq
-
-                st.markdown(f"**{total_q}問**")
-                cols = st.columns(min(len(part_counts),7))
-                for i,(p,c) in enumerate(sorted(part_counts.items())):
-                    cols[i % len(cols)].metric(p.upper(), f"{c}問")
-
-                st.caption("問題は本番同様の順序 (Part 1→2→3→4→5→6→7) で出題されます")
-
-                if st.button("🚀 テスト開始", type="primary", use_container_width=True):
-                    PART_ORDER = {"part1":1,"part2":2,"part3":3,"part3_3p":[{"type": "team_meeting", "desc": "3 colleagues discussing project, deadline, or task assignment"}, {"type": "office_move", "desc": "3 people coordinating office relocation or desk arrangement"}, {"type": "event_coordination", "desc": "3 people planning a company event, party, or conference"}, {"type": "client_presentation", "desc": "3 colleagues preparing for or debriefing a client meeting"}, {"type": "hiring_decision", "desc": "3 people discussing job candidates or interview results"}, {"type": "budget_review", "desc": "3 people reviewing department budget or expense approval"}, {"type": "travel_arrangement", "desc": "3 colleagues arranging a group business trip"}, {"type": "training_feedback", "desc": "3 people discussing training session, workshop, or seminar"}, {"type": "lunch_plans", "desc": "3 coworkers deciding where to eat or planning a lunch meeting"}, {"type": "problem_solving", "desc": "3 people troubleshooting a technical, logistics, or customer issue"}],"part4":4,"part5":5,"part6":6,"part7s":7,"part7d":8,"part7t":9,"part7":7}
-                    sorted_items = sorted(selected_items, key=lambda x: PART_ORDER.get(x.get("part","part5"),5))
-                    flat = []
-                    for it in sorted_items:
-                        qs_list = it.get("qSet",{}).get("questions",[])
-                        for qi in range(len(qs_list)):
-                            flat.append((it, qi))
-                    # Trim to target (200 for full, 100 for half — rounding can produce +1)
-                    target = 200 if total_q > 150 else 100
-                    if len(flat) > target:
-                        flat = flat[:target]
-                    st.session_state.mt_flat = flat
-                    st.session_state.mt_idx = 0
-                    st.session_state.mt_answers = {}
-                    st.session_state.mt_start = time.time()
-                    st.session_state.mt_active = True
-                    st.session_state.mt_done = False
-                    st.rerun()
-
-        # ── Test in progress ──
-        elif st.session_state.mt_active:
-            flat = st.session_state.mt_flat
-            idx = st.session_state.mt_idx
-            total = len(flat)
-
-            if idx >= total:
+            def mt_end():
+                mt_save_answer()
                 mt_finish()
-                st.rerun()
-            else:
-                item, q_idx = flat[idx]
-                part = item.get("part","")
-                qs = item.get("qSet",{})
-                questions = qs.get("questions",[])
-                q = questions[q_idx] if q_idx < len(questions) else {}
 
-                elapsed = time.time() - st.session_state.mt_start
-                elapsed_min = int(elapsed // 60)
-                elapsed_sec = int(elapsed % 60)
+            # ── Test setup ──
+            if not st.session_state.mt_active and not st.session_state.mt_done:
+                st.subheader("📝 模試テスト")
 
-                st.progress(idx / total)
+                # Group by batch for selection
+                batches = {}
+                for r in mock:
+                    bid = r.get("batchId", "legacy")
+                    if bid not in batches:
+                        batches[bid] = {"label": r.get("batchLabel", "旧データ"), "items": []}
+                    batches[bid]["items"].append(r)
 
-                is_listening = part in ("part1","part2","part3","part4")
-                section = "🎧 Listening" if is_listening else "📖 Reading"
-                part_label = part.upper()
-                for old, new in [("PART7S","Part 7-Single"),("PART7D","Part 7-Double"),("PART7T","Part 7-Triple")]:
-                    part_label = part_label.replace(old, new)
-
-                hc1, hc2 = st.columns([3,1])
-                with hc1:
-                    st.markdown(f"### {section} — {part_label}")
-                    st.caption(f"問題 {idx+1} / {total}")
-                with hc2:
-                    st.metric("⏱️", f"{elapsed_min}:{elapsed_sec:02d}")
-
-                # ── Audio ──
-                if is_listening and item.get("audioOpus"):
-                    import streamlit.components.v1 as comp
-                    opus_b64 = item["audioOpus"]
-                    # Show audio player on every question (user needs to re-listen for Part 3/4 multi-Q sets)
-                    comp.html(f'<audio controls style="width:100%;height:40px" src="data:audio/webm;codecs=opus;base64,{opus_b64}"></audio>', height=50)
-                elif is_listening:
-                    st.warning("⚠️ この問題には音声データがありません")
-
-                # ── Image ──
-                if item.get("imgUrl"):
-                    st.image(item["imgUrl"], use_container_width=True)
-
-                # ── Graphic table ──
-                if qs.get("graphic"):
-                    g = qs["graphic"]
-                    if g.get("title"): st.caption(f"📊 {g['title']}")
-                    if g.get("headers") and g.get("rows"):
-                        import pandas as pd
-                        df = pd.DataFrame(g["rows"], columns=g["headers"])
-                        st.dataframe(df, use_container_width=True, hide_index=True)
-
-                # ── Reading passage ──
-                if not is_listening:
-                    txt = qs.get("text","") or qs.get("passage","") or qs.get("content","")
-                    if txt:
-                        expanded = (q_idx == 0)
-                        with st.expander("📄 読解パッセージ", expanded=expanded):
-                            st.markdown(txt)
-
-                # ── Question + Choices ──
-                st.markdown(f"**Q{idx+1}. {q.get('question','')}**")
-
-                choices = q.get("choices",[])
-                letters = ["(A)","(B)","(C)","(D)"]
-                options = [f"{letters[i]} {c}" if not c.startswith("(") else c for i,c in enumerate(choices)]
-
-                prev_ans = st.session_state.mt_answers.get(idx, None)
-                st.radio(
-                    "回答を選択:",
-                    options,
-                    index=prev_ans,
-                    key=f"mt_radio_{idx}",
-                    label_visibility="collapsed"
-                )
-
-                # ── Navigation buttons (use on_click callbacks to save before moving) ──
-                nc1, nc2, nc3 = st.columns([1,1,1])
-                with nc1:
-                    if idx > 0:
-                        st.button("← 前の問題", on_click=mt_prev, use_container_width=True)
-                with nc2:
-                    answered = len(st.session_state.mt_answers)
-                    st.caption(f"回答済: {answered}/{total}")
-                with nc3:
-                    if idx < total - 1:
-                        st.button("次の問題 →", on_click=mt_next, type="primary", use_container_width=True)
-                    else:
-                        st.button("✅ テスト終了", on_click=mt_end, type="primary", use_container_width=True)
-
-                st.divider()
-                st.button("🛑 テスト中断 → 結果を見る", on_click=mt_end, use_container_width=True)
-
-        # ── Results ──
-        elif st.session_state.mt_done:
-            st.subheader("📊 模試テスト結果")
-            flat = st.session_state.mt_flat
-            answers = st.session_state.mt_answers
-            elapsed = time.time() - st.session_state.mt_start if st.session_state.mt_start else 0
-            total = len(flat)
-            answered = len(answers)
-
-            correct = 0
-            part_correct = {}
-            part_total = {}
-            wrong_items = []
-
-            for i, (item, q_idx) in enumerate(flat):
-                p = item.get("part","?")
-                qs_list = item.get("qSet",{}).get("questions",[])
-                q = qs_list[q_idx] if q_idx < len(qs_list) else {}
-                correct_ans = q.get("correct", 0)
-
-                key = p if not p.startswith("part7") else "part7"
-                part_total[key] = part_total.get(key, 0) + 1
-
-                if i in answers:
-                    if answers[i] == correct_ans:
-                        correct += 1
-                        part_correct[key] = part_correct.get(key, 0) + 1
-                    else:
-                        wrong_items.append((i, item, q_idx, answers[i], correct_ans))
-
-            # TOEIC score estimation (公式問題集5 換算表ベース — HTML版と同一)
-            def score_from_raw(raw_pct, is_listening):
-                """Convert raw percentage (0-100) to TOEIC score (5-495) using interpolation table."""
-                raw_pct = max(0, min(100, raw_pct))
-                if is_listening:
-                    table = [(0,5),(5,15),(10,30),(15,45),(20,60),(25,80),(30,110),(35,135),(40,170),
-                             (45,210),(50,250),(55,290),(60,330),(65,370),(70,400),(75,425),(80,455),
-                             (85,475),(90,485),(95,495),(100,495)]
+                if len(batches) == 0:
+                    st.info("模試データがありません。🔧 Generate タブで生成してください。")
                 else:
-                    table = [(0,5),(5,15),(10,25),(15,45),(20,60),(25,75),(30,95),(35,120),(40,150),
-                             (45,185),(50,220),(55,255),(60,290),(65,325),(70,355),(75,385),(80,420),
-                             (85,445),(90,470),(95,485),(100,495)]
-                for i in range(len(table) - 1):
-                    r1, s1 = table[i]
-                    r2, s2 = table[i + 1]
-                    if r1 <= raw_pct <= r2:
-                        ratio = (raw_pct - r1) / (r2 - r1) if r2 != r1 else 0
-                        return round((s1 + (s2 - s1) * ratio) / 5) * 5  # 5点刻み
-                return 5
+                    # Batch selector
+                    batch_options = {bid: f"{b['label']} ({sum(len(r.get('qSet',{}).get('questions',[])) for r in b['items'])}問)" for bid, b in batches.items()}
+                    if "mt_batch" not in st.session_state or st.session_state.mt_batch not in batch_options:
+                        st.session_state.mt_batch = list(batch_options.keys())[-1]  # latest batch
 
-            l_parts = ["part1","part2","part3","part4"]
-            r_parts = ["part5","part6","part7"]
-            l_total = sum(part_total.get(p,0) for p in l_parts)
-            l_correct = sum(part_correct.get(p,0) for p in l_parts)
-            r_total = sum(part_total.get(p,0) for p in r_parts)
-            r_correct = sum(part_correct.get(p,0) for p in r_parts)
+                    if len(batch_options) > 1:
+                        selected_bid = st.selectbox(
+                            "模試を選択",
+                            list(batch_options.keys()),
+                            format_func=lambda x: batch_options[x],
+                            index=list(batch_options.keys()).index(st.session_state.mt_batch),
+                            key="mt_batch_select"
+                        )
+                        st.session_state.mt_batch = selected_bid
+                    else:
+                        selected_bid = list(batch_options.keys())[0]
+                        st.session_state.mt_batch = selected_bid
 
-            l_pct = round(l_correct / max(l_total, 1) * 100)
-            r_pct = round(r_correct / max(r_total, 1) * 100)
-            l_score = score_from_raw(l_pct, True)
-            r_score = score_from_raw(r_pct, False)
-            total_score = l_score + r_score
+                    selected_items = batches[selected_bid]["items"]
+                    total_q = sum(len(it.get("qSet",{}).get("questions",[])) for it in selected_items)
+                    part_counts = {}
+                    for it in selected_items:
+                        p = it.get("part","?")
+                        nq = len(it.get("qSet",{}).get("questions",[]))
+                        part_counts[p] = part_counts.get(p,0) + nq
 
-            elapsed_min = int(elapsed // 60)
-            sc1, sc2, sc3 = st.columns(3)
-            sc1.metric("🏆 推定スコア", f"{total_score}", f"L{l_score} + R{r_score}")
-            sc2.metric("正答率", f"{correct}/{answered}", f"{correct/max(answered,1)*100:.0f}%")
-            sc3.metric("⏱️ 所要時間", f"{elapsed_min}分")
+                    st.markdown(f"**{total_q}問**")
+                    cols = st.columns(min(len(part_counts),7))
+                    for i,(p,c) in enumerate(sorted(part_counts.items())):
+                        cols[i % len(cols)].metric(p.upper(), f"{c}問")
 
-            # Part breakdown
-            st.markdown("#### パート別正答率")
-            part_order = ["part1","part2","part3","part4","part5","part6","part7"]
-            part_names = {"part1":"Part 1","part2":"Part 2","part3":"Part 3","part3_3p":"Part 3 — 3-Person Conv","part4":"Part 4","part5":"Part 5","part6":"Part 6","part7":"Part 7"}
-            cols = st.columns(7)
-            for i, p in enumerate(part_order):
-                pt = part_total.get(p, 0)
-                pc = part_correct.get(p, 0)
-                rate = f"{pc/pt*100:.0f}%" if pt > 0 else "—"
-                cols[i].metric(part_names.get(p,p), f"{pc}/{pt}", rate)
+                    st.caption("問題は本番同様の順序 (Part 1→2→3→4→5→6→7) で出題されます")
 
-            # Wrong answers review
-            if wrong_items:
-                st.markdown("#### ❌ 間違えた問題")
-                for wi, (i, item, q_idx, user_ans, correct_ans) in enumerate(wrong_items[:50]):
+                    if st.button("🚀 テスト開始", type="primary", use_container_width=True):
+                        PART_ORDER = {"part1":1,"part2":2,"part3":3,"part3_3p":[{"type": "team_meeting", "desc": "3 colleagues discussing project, deadline, or task assignment"}, {"type": "office_move", "desc": "3 people coordinating office relocation or desk arrangement"}, {"type": "event_coordination", "desc": "3 people planning a company event, party, or conference"}, {"type": "client_presentation", "desc": "3 colleagues preparing for or debriefing a client meeting"}, {"type": "hiring_decision", "desc": "3 people discussing job candidates or interview results"}, {"type": "budget_review", "desc": "3 people reviewing department budget or expense approval"}, {"type": "travel_arrangement", "desc": "3 colleagues arranging a group business trip"}, {"type": "training_feedback", "desc": "3 people discussing training session, workshop, or seminar"}, {"type": "lunch_plans", "desc": "3 coworkers deciding where to eat or planning a lunch meeting"}, {"type": "problem_solving", "desc": "3 people troubleshooting a technical, logistics, or customer issue"}],"part4":4,"part5":5,"part6":6,"part7s":7,"part7d":8,"part7t":9,"part7":7}
+                        sorted_items = sorted(selected_items, key=lambda x: PART_ORDER.get(x.get("part","part5"),5))
+                        flat = []
+                        for it in sorted_items:
+                            qs_list = it.get("qSet",{}).get("questions",[])
+                            for qi in range(len(qs_list)):
+                                flat.append((it, qi))
+                        # Trim to target (200 for full, 100 for half — rounding can produce +1)
+                        target = 200 if total_q > 150 else 100
+                        if len(flat) > target:
+                            flat = flat[:target]
+                        st.session_state.mt_flat = flat
+                        st.session_state.mt_idx = 0
+                        st.session_state.mt_answers = {}
+                        st.session_state.mt_start = time.time()
+                        st.session_state.mt_active = True
+                        st.session_state.mt_done = False
+                        st.rerun()
+
+            # ── Test in progress ──
+            elif st.session_state.mt_active:
+                flat = st.session_state.mt_flat
+                idx = st.session_state.mt_idx
+                total = len(flat)
+
+                if idx >= total:
+                    mt_finish()
+                    st.rerun()
+                else:
+                    item, q_idx = flat[idx]
+                    part = item.get("part","")
+                    qs = item.get("qSet",{})
+                    questions = qs.get("questions",[])
+                    q = questions[q_idx] if q_idx < len(questions) else {}
+
+                    elapsed = time.time() - st.session_state.mt_start
+                    elapsed_min = int(elapsed // 60)
+                    elapsed_sec = int(elapsed % 60)
+
+                    st.progress(idx / total)
+
+                    is_listening = part in ("part1","part2","part3","part4")
+                    section = "🎧 Listening" if is_listening else "📖 Reading"
+                    part_label = part.upper()
+                    for old, new in [("PART7S","Part 7-Single"),("PART7D","Part 7-Double"),("PART7T","Part 7-Triple")]:
+                        part_label = part_label.replace(old, new)
+
+                    hc1, hc2 = st.columns([3,1])
+                    with hc1:
+                        st.markdown(f"### {section} — {part_label}")
+                        st.caption(f"問題 {idx+1} / {total}")
+                    with hc2:
+                        st.metric("⏱️", f"{elapsed_min}:{elapsed_sec:02d}")
+
+                    # ── Audio ──
+                    if is_listening and item.get("audioOpus"):
+                        import streamlit.components.v1 as comp
+                        opus_b64 = item["audioOpus"]
+                        # Show audio player on every question (user needs to re-listen for Part 3/4 multi-Q sets)
+                        comp.html(f'<audio controls style="width:100%;height:40px" src="data:audio/webm;codecs=opus;base64,{opus_b64}"></audio>', height=50)
+                    elif is_listening:
+                        st.warning("⚠️ この問題には音声データがありません")
+
+                    # ── Image ──
+                    if item.get("imgUrl"):
+                        st.image(item["imgUrl"], use_container_width=True)
+
+                    # ── Graphic table ──
+                    if qs.get("graphic"):
+                        g = qs["graphic"]
+                        if g.get("title"): st.caption(f"📊 {g['title']}")
+                        if g.get("headers") and g.get("rows"):
+                            import pandas as pd
+                            df = pd.DataFrame(g["rows"], columns=g["headers"])
+                            st.dataframe(df, use_container_width=True, hide_index=True)
+
+                    # ── Reading passage ──
+                    if not is_listening:
+                        txt = qs.get("text","") or qs.get("passage","") or qs.get("content","")
+                        if txt:
+                            expanded = (q_idx == 0)
+                            with st.expander("📄 読解パッセージ", expanded=expanded):
+                                st.markdown(txt)
+
+                    # ── Question + Choices ──
+                    st.markdown(f"**Q{idx+1}. {q.get('question','')}**")
+
+                    choices = q.get("choices",[])
+                    letters = ["(A)","(B)","(C)","(D)"]
+                    options = [f"{letters[i]} {c}" if not c.startswith("(") else c for i,c in enumerate(choices)]
+
+                    prev_ans = st.session_state.mt_answers.get(idx, None)
+                    st.radio(
+                        "回答を選択:",
+                        options,
+                        index=prev_ans,
+                        key=f"mt_radio_{idx}",
+                        label_visibility="collapsed"
+                    )
+
+                    # ── Navigation buttons (use on_click callbacks to save before moving) ──
+                    nc1, nc2, nc3 = st.columns([1,1,1])
+                    with nc1:
+                        if idx > 0:
+                            st.button("← 前の問題", on_click=mt_prev, use_container_width=True)
+                    with nc2:
+                        answered = len(st.session_state.mt_answers)
+                        st.caption(f"回答済: {answered}/{total}")
+                    with nc3:
+                        if idx < total - 1:
+                            st.button("次の問題 →", on_click=mt_next, type="primary", use_container_width=True)
+                        else:
+                            st.button("✅ テスト終了", on_click=mt_end, type="primary", use_container_width=True)
+
+                    st.divider()
+                    st.button("🛑 テスト中断 → 結果を見る", on_click=mt_end, use_container_width=True)
+
+            # ── Results ──
+            elif st.session_state.mt_done:
+                st.subheader("📊 模試テスト結果")
+                flat = st.session_state.mt_flat
+                answers = st.session_state.mt_answers
+                elapsed = time.time() - st.session_state.mt_start if st.session_state.mt_start else 0
+                total = len(flat)
+                answered = len(answers)
+
+                correct = 0
+                part_correct = {}
+                part_total = {}
+                wrong_items = []
+
+                for i, (item, q_idx) in enumerate(flat):
                     p = item.get("part","?")
                     qs_list = item.get("qSet",{}).get("questions",[])
                     q = qs_list[q_idx] if q_idx < len(qs_list) else {}
-                    choices = q.get("choices",[])
-                    letters = ["A","B","C","D"]
+                    correct_ans = q.get("correct", 0)
 
-                    with st.expander(f"Q{i+1} ({p.upper()}) — {q.get('question','')[:60]}...", expanded=False):
-                        st.markdown(f"**問題:** {q.get('question','')}")
-                        for ci, ch in enumerate(choices):
-                            pfx = "✅ " if ci == correct_ans else ("❌ " if ci == user_ans else "　 ")
-                            st.markdown(f"{pfx}({letters[ci]}) {ch}")
-                        expl = q.get("explanation_ja","")
-                        if expl: st.info(f"💡 {expl}")
-                        expl_en = q.get("explanation_en","")
-                        if expl_en: st.caption(f"🇬🇧 {expl_en}")
+                    key = p if not p.startswith("part7") else "part7"
+                    part_total[key] = part_total.get(key, 0) + 1
 
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("🔄 もう一度受験", use_container_width=True):
-                    st.session_state.mt_done = False
-                    st.session_state.mt_active = False
-                    st.rerun()
-            with c2:
-                if st.button("🏠 テスト設定に戻る", use_container_width=True):
-                    st.session_state.mt_done = False
-                    st.session_state.mt_active = False
-                    st.session_state.mt_flat = []
-                    st.session_state.mt_answers = {}
-                    st.rerun()
+                    if i in answers:
+                        if answers[i] == correct_ans:
+                            correct += 1
+                            part_correct[key] = part_correct.get(key, 0) + 1
+                        else:
+                            wrong_items.append((i, item, q_idx, answers[i], correct_ans))
+
+                # TOEIC score estimation (公式問題集5 換算表ベース — HTML版と同一)
+                def score_from_raw(raw_pct, is_listening):
+                    """Convert raw percentage (0-100) to TOEIC score (5-495) using interpolation table."""
+                    raw_pct = max(0, min(100, raw_pct))
+                    if is_listening:
+                        table = [(0,5),(5,15),(10,30),(15,45),(20,60),(25,80),(30,110),(35,135),(40,170),
+                                 (45,210),(50,250),(55,290),(60,330),(65,370),(70,400),(75,425),(80,455),
+                                 (85,475),(90,485),(95,495),(100,495)]
+                    else:
+                        table = [(0,5),(5,15),(10,25),(15,45),(20,60),(25,75),(30,95),(35,120),(40,150),
+                                 (45,185),(50,220),(55,255),(60,290),(65,325),(70,355),(75,385),(80,420),
+                                 (85,445),(90,470),(95,485),(100,495)]
+                    for i in range(len(table) - 1):
+                        r1, s1 = table[i]
+                        r2, s2 = table[i + 1]
+                        if r1 <= raw_pct <= r2:
+                            ratio = (raw_pct - r1) / (r2 - r1) if r2 != r1 else 0
+                            return round((s1 + (s2 - s1) * ratio) / 5) * 5  # 5点刻み
+                    return 5
+
+                l_parts = ["part1","part2","part3","part4"]
+                r_parts = ["part5","part6","part7"]
+                l_total = sum(part_total.get(p,0) for p in l_parts)
+                l_correct = sum(part_correct.get(p,0) for p in l_parts)
+                r_total = sum(part_total.get(p,0) for p in r_parts)
+                r_correct = sum(part_correct.get(p,0) for p in r_parts)
+
+                l_pct = round(l_correct / max(l_total, 1) * 100)
+                r_pct = round(r_correct / max(r_total, 1) * 100)
+                l_score = score_from_raw(l_pct, True)
+                r_score = score_from_raw(r_pct, False)
+                total_score = l_score + r_score
+
+                elapsed_min = int(elapsed // 60)
+                sc1, sc2, sc3 = st.columns(3)
+                sc1.metric("🏆 推定スコア", f"{total_score}", f"L{l_score} + R{r_score}")
+                sc2.metric("正答率", f"{correct}/{answered}", f"{correct/max(answered,1)*100:.0f}%")
+                sc3.metric("⏱️ 所要時間", f"{elapsed_min}分")
+
+                # Part breakdown
+                st.markdown("#### パート別正答率")
+                part_order = ["part1","part2","part3","part4","part5","part6","part7"]
+                part_names = {"part1":"Part 1","part2":"Part 2","part3":"Part 3","part3_3p":"Part 3 — 3-Person Conv","part4":"Part 4","part5":"Part 5","part6":"Part 6","part7":"Part 7"}
+                cols = st.columns(7)
+                for i, p in enumerate(part_order):
+                    pt = part_total.get(p, 0)
+                    pc = part_correct.get(p, 0)
+                    rate = f"{pc/pt*100:.0f}%" if pt > 0 else "—"
+                    cols[i].metric(part_names.get(p,p), f"{pc}/{pt}", rate)
+
+                # Wrong answers review
+                if wrong_items:
+                    st.markdown("#### ❌ 間違えた問題")
+                    for wi, (i, item, q_idx, user_ans, correct_ans) in enumerate(wrong_items[:50]):
+                        p = item.get("part","?")
+                        qs_list = item.get("qSet",{}).get("questions",[])
+                        q = qs_list[q_idx] if q_idx < len(qs_list) else {}
+                        choices = q.get("choices",[])
+                        letters = ["A","B","C","D"]
+
+                        with st.expander(f"Q{i+1} ({p.upper()}) — {q.get('question','')[:60]}...", expanded=False):
+                            st.markdown(f"**問題:** {q.get('question','')}")
+                            for ci, ch in enumerate(choices):
+                                pfx = "✅ " if ci == correct_ans else ("❌ " if ci == user_ans else "　 ")
+                                st.markdown(f"{pfx}({letters[ci]}) {ch}")
+                            expl = q.get("explanation_ja","")
+                            if expl: st.info(f"💡 {expl}")
+                            expl_en = q.get("explanation_en","")
+                            if expl_en: st.caption(f"🇬🇧 {expl_en}")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("🔄 もう一度受験", use_container_width=True):
+                        st.session_state.mt_done = False
+                        st.session_state.mt_active = False
+                        st.rerun()
+                with c2:
+                    if st.button("🏠 テスト設定に戻る", use_container_width=True):
+                        st.session_state.mt_done = False
+                        st.session_state.mt_active = False
+                        st.session_state.mt_flat = []
+                        st.session_state.mt_answers = {}
+                        st.rerun()
+    _mock_frag()

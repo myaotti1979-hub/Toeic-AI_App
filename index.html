@@ -404,26 +404,38 @@ const TYPES = {
     {type:"empty_room_furniture", desc:"Empty room (NO people) — chairs, tables, equipment arranged"}
   ],
   part2: [
-    {type:"wh_what", desc:"WH-What"},
-    {type:"wh_where", desc:"WH-Where"},
-    {type:"wh_when", desc:"WH-When"},
-    {type:"wh_who", desc:"WH-Who"},
-    {type:"wh_why", desc:"WH-Why"},
-    {type:"wh_how", desc:"WH-How"},
-    {type:"yesno_do", desc:"Yes/No with do/does/did"},
-    {type:"yesno_be", desc:"Yes/No with is/are/was"},
-    {type:"yesno_have", desc:"Yes/No with have/has"},
-    {type:"yesno_can", desc:"Yes/No with can/could/will"},
-    {type:"yesno_modal", desc:"Yes/No with should/would"},
-    {type:"negative", desc:"Negative question"},
-    {type:"tag", desc:"Tag question"},
-    {type:"choice", desc:"Choice A or B"},
-    {type:"embedded", desc:"Embedded question"},
-    {type:"statement_problem", desc:"Statement about a problem"},
-    {type:"statement_plan", desc:"Statement about a plan/fact"},
-    {type:"statement_opinion", desc:"Statement of opinion"},
-    {type:"request", desc:"Request or permission"},
-    {type:"suggestion_offer", desc:"Suggestion or offer"}
+    {type:"wh_what_thing", desc:"What + thing/object. 'What kind of printer do we need?'"},
+    {type:"wh_what_action", desc:"What + action/plan. 'What should we do about the leak?'"},
+    {type:"wh_what_time", desc:"What time/day. 'What time does the store close?'"},
+    {type:"wh_which", desc:"Which + choice. 'Which floor is HR on?' / 'Which report?'"},
+    {type:"wh_where_place", desc:"Where + location. 'Where is the supply room?'"},
+    {type:"wh_where_direction", desc:"Where + direction. 'Where should I put these boxes?'"},
+    {type:"wh_when_future", desc:"When + future. 'When will the shipment arrive?'"},
+    {type:"wh_when_past", desc:"When + past. 'When did you last speak with the client?'"},
+    {type:"wh_who_person", desc:"Who + person. 'Who is in charge of the project?'"},
+    {type:"wh_whose", desc:"Whose + possession. 'Whose jacket is this?'"},
+    {type:"wh_why", desc:"Why question. 'Why was the meeting postponed?'"},
+    {type:"wh_how_manner", desc:"How + manner. 'How did the presentation go?'"},
+    {type:"wh_how_long", desc:"How long/far. 'How long will the renovation take?'"},
+    {type:"wh_how_many", desc:"How many/much. 'How many copies do you need?'"},
+    {type:"wh_how_often", desc:"How often/soon. 'How often does this bus run?'"},
+    {type:"yesno_do", desc:"Do/Does/Did question. 'Do you have the agenda?'"},
+    {type:"yesno_be", desc:"Is/Are/Was question. 'Is the report ready?'"},
+    {type:"yesno_have", desc:"Have/Has question. 'Have you finished the proposal?'"},
+    {type:"yesno_can", desc:"Can/Could question. 'Can you work Saturday?'"},
+    {type:"yesno_will", desc:"Will/Would question. 'Will the store be open tomorrow?'"},
+    {type:"yesno_should", desc:"Should question. 'Should we order more supplies?'"},
+    {type:"negative_isnt", desc:"Negative isn't/aren't. 'Isn't the deadline tomorrow?'"},
+    {type:"negative_didnt", desc:"Negative didn't/don't. 'Didn't you attend the workshop?'"},
+    {type:"tag", desc:"Tag question. 'The report is due Friday, isn't it?'"},
+    {type:"choice", desc:"Choice A or B. 'Morning or afternoon session?'"},
+    {type:"embedded", desc:"Embedded question. 'Do you know where the supply room is?'"},
+    {type:"statement_problem", desc:"Statement: problem. 'The printer seems to be jammed.'"},
+    {type:"statement_plan", desc:"Statement: plan/fact. 'I'm visiting the new office tomorrow.'"},
+    {type:"statement_opinion", desc:"Statement: opinion. 'That was an excellent presentation.'"},
+    {type:"statement_news", desc:"Statement: news. 'The CEO just announced a merger.'"},
+    {type:"request", desc:"Request. 'Could you help me carry these boxes?'"},
+    {type:"suggestion_offer", desc:"Suggestion/offer. 'Why don't we take a break?'"}
   ],
   part3: [
     {type:"office_equipment", desc:"Equipment issue — printer jam, computer crash, phone system"},
@@ -1078,8 +1090,13 @@ function normalizeSet(raw, part) {
       return { part,
         questions:[{question:sentence, choices:raw.choices, correct:raw.correct, explanation_ja:raw.explanation_ja, explanation_en:raw.explanation_en}], vocab:raw.vocab||[] };
     }
-    case "part6":
-      return { part, doc_type:raw.doc_type||"", header:raw.header||null, text:raw.text, translation_ja:raw.translation_ja||null, vocab:raw.vocab||[], questions:raw.questions };
+    case "part6": {
+      const text = raw.text || "";
+      if (!text.includes("-------")) {
+        console.warn("[Part6] WARN: no blanks (-------) in text");
+      }
+      return { part, doc_type:raw.doc_type||"", header:raw.header||null, text, translation_ja:raw.translation_ja||null, vocab:raw.vocab||[], questions:raw.questions };
+    }
     case "part7s":
     case "part7d":
     case "part7t":
@@ -1141,8 +1158,13 @@ function shuffleAnswerPositions(qs) {
     if (oldLabel !== newLabel) {
       for (const f of ["explanation_ja","explanation_en"]) {
         if (q[f]) {
+          // Half-width
           q[f] = q[f].replaceAll(`正解は${oldLabel}`, `正解は${newLabel}`)
                       .replaceAll(`answer is ${oldLabel}`, `answer is ${newLabel}`);
+          // Full-width brackets: 正解は（A）→ 正解は（B）
+          const oldFW = oldLabel.replace("(","（").replace(")","）");
+          const newFW = newLabel.replace("(","（").replace(")","）");
+          q[f] = q[f].replaceAll(`正解は${oldFW}`, `正解は${newFW}`);
         }
       }
     }
@@ -1301,14 +1323,37 @@ function lemmatize(w) {
 // Normalize Japanese meaning into a set of segments for comparison
 function meaningSegments(m) {
   if (!m) return new Set();
-  // Split by 、, (, （ and normalize each segment
   return new Set(m.trim().split(/[、,（()]/).map(s=>s.trim()).filter(Boolean));
 }
-// Check if two meanings share at least one common segment
+// Normalize Japanese text for fuzzy comparison
+function jaNormalize(s) {
+  s = s.trim().replace(/^[～〜]/,"");
+  s = s.replace(/(する|して|した|している|させる|される|しない|すること|するもの)$/, "する");
+  s = s.replace(/(いる|いて|いた|いない)$/, "いる");
+  s = s.replace(/(れる|れて|れた)$/, "れる");
+  s = s.replace(/(ある|あって|あった)$/, "ある");
+  s = s.replace(/[をにがでとのはも]+$/, "");
+  return s;
+}
+// Check if two meanings are semantically similar
 function meaningsMatch(m1, m2) {
+  if (!m1 || !m2) return false;
+  if (m1.trim() === m2.trim()) return true;
   const s1 = meaningSegments(m1);
   const s2 = meaningSegments(m2);
+  // Exact segment overlap
   for (const seg of s1) if (s2.has(seg)) return true;
+  // Normalized form matching
+  const n1 = new Set([...s1].map(jaNormalize));
+  const n2 = new Set([...s2].map(jaNormalize));
+  for (const n of n1) if (n2.has(n)) return true;
+  // Substring containment (min 3 chars)
+  for (const a of s1) {
+    for (const b of s2) {
+      const na = jaNormalize(a), nb = jaNormalize(b);
+      if (na.length >= 3 && nb.length >= 3 && (na.includes(nb) || nb.includes(na))) return true;
+    }
+  }
   return false;
 }
 // Auto-save: if ANY segment of new meaning matches existing, treat as same
@@ -1736,6 +1781,7 @@ async function stockImport(file) {
     existing.add(ts); // 同一ファイル内の重複も防止
     const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts};
     if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
+    else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
     await new Promise((resolve, reject) => {
       const tx = db.transaction("questions","readwrite");
       tx.objectStore("questions").add(data);
@@ -3999,7 +4045,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.18c · 303 types + TTS 2-model fallback + 3-speaker + AbortController listen</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.18d · @fragment tabs + 4 review fixes + AbortController</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
