@@ -2382,18 +2382,20 @@ with tab_practice:
                 pidx = st.session_state.prac_idx
                 if pidx >= len(indices): pidx = 0; st.session_state.prac_idx = 0
 
-                # Navigation (no st.rerun — fragment auto-reruns on state change)
+                # Navigation
                 nav1, nav2, nav3 = st.columns([1,3,1])
                 with nav1:
                     if st.button("◀", use_container_width=True, disabled=pidx<=0, key="prac_prev"):
                         st.session_state.prac_idx = pidx - 1
                         st.session_state.prac_answered = {}
+                        st.rerun()
                 with nav2:
                     st.markdown(f"<div style='text-align:center;font-size:18px;padding:4px'><b>{pidx+1}</b> / {len(indices)}</div>", unsafe_allow_html=True)
                 with nav3:
                     if st.button("▶", use_container_width=True, disabled=pidx>=len(indices)-1, key="prac_next"):
                         st.session_state.prac_idx = pidx + 1
                         st.session_state.prac_answered = {}
+                        st.rerun()
 
                 # Load current item only
                 real_idx = indices[pidx]
@@ -2437,7 +2439,7 @@ with tab_practice:
                     if qs.get("header"):
                         st.code(qs["header"], language=None)
                     if qs.get("text"):
-                        st.markdown(f"<div style='background:#1e293b;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs['text']}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='background:#1e293b;color:#e2e8f0;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs['text']}</div>", unsafe_allow_html=True)
                     if qs.get("translation_ja"):
                         with st.expander("🇯🇵 和訳"):
                             st.text(qs["translation_ja"])
@@ -2463,7 +2465,7 @@ with tab_practice:
                     else:
                         if qs.get("header"): st.code(qs["header"], language=None)
                         if qs.get("text"):
-                            st.markdown(f"<div style='background:#1e293b;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs.get('text','')}</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div style='background:#1e293b;color:#e2e8f0;padding:12px;border-radius:8px;font-size:14px;line-height:1.8'>{qs.get('text','')}</div>", unsafe_allow_html=True)
                         if qs.get("translation_ja"):
                             with st.expander("🇯🇵 和訳"):
                                 st.text(qs["translation_ja"])
@@ -2659,7 +2661,7 @@ with tab_vocab:
                     v = vocab_list[fi]
                     st.markdown(f"<div style='text-align:center;padding:8px'><span style='font-size:12px;color:#64748b'>{fi+1}/{len(vocab_list)}</span></div>", unsafe_allow_html=True)
                     if not st.session_state[fck+"_show"]:
-                        st.markdown(f"<div style='text-align:center;padding:40px;background:#1e293b;border-radius:16px'><h1 style='font-size:36px;margin:0'>{v.get('word','')}</h1></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:center;padding:40px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:36px;margin:0'>{v.get('word','')}</h1></div>", unsafe_allow_html=True)
                         fc1, fc2, fc3 = st.columns([1,2,1])
                         with fc1:
                             audio_data = v.get("_audio","")
@@ -2675,7 +2677,7 @@ with tab_vocab:
                     else:
                         meanings = v.get("_meanings",[])
                         mhtml = "".join(f"<div style='margin:6px 0'><span style='font-size:20px;color:#818cf8'>{'❶❷❸❹❺❻❼❽❾❿'[i] if len(meanings)>1 and i<10 else ''} {m.get('ja','')}</span><br><span style='font-size:13px;color:#94a3b8'>💬 {m.get('example','')}</span></div>" for i,m in enumerate(meanings))
-                        st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{mhtml}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{mhtml}</div>", unsafe_allow_html=True)
                         fc1, fc2 = st.columns(2)
                         with fc1:
                             if st.button("❌ Didn't Know", use_container_width=True, key=f"fcx_{fck}"):
@@ -2779,14 +2781,14 @@ with tab_quiz:
             # Display question
             st.divider()
             if mode == "en_ja":
-                st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;border-radius:16px'><h1 style='font-size:32px;margin:0'>{target['word']}</h1></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:32px;margin:0'>{target['word']}</h1></div>", unsafe_allow_html=True)
                 # Play word audio
                 if target.get("audio"):
                     import streamlit.components.v1 as comp
                     comp.html(f'<audio controls style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,{target["audio"]}"></audio>', height=45)
                 st.caption("この単語の意味は？")
             else:
-                st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;border-radius:16px'><h1 style='font-size:28px;margin:0;color:#818cf8'>{target['ja']}</h1></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align:center;padding:20px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:28px;margin:0;color:#818cf8'>{target['ja']}</h1></div>", unsafe_allow_html=True)
                 st.caption("この意味の英単語は？")
 
             # Choices
