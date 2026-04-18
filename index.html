@@ -126,7 +126,7 @@ const API_THROTTLE_MS = 300;       // Delay between sequential API requests
 const API_RETRY_DELAY_MS = 3000;   // Wait between retries on 429/500/503
 const LISTEN_THINK_MS = 5000;      // Pause after main audio before Q&A (real TOEIC: 5s)
 const LISTEN_Q_TO_CHOICES_MS = 2000;  // Pause between question text and choices reading
-const LISTEN_CHOICES_PAUSE_MS = 5000; // Pause after choices to think (real TOEIC Part 3/4: 8s)
+const LISTEN_CHOICES_PAUSE_MS = 5000; // Pause after choices to think (real TOEIC: 8s, shortened to 5s for practice)
 const LISTEN_AFTER_ANSWER_MS = 2000;  // Pause after answer announcement
 const LISTEN_AFTER_EXPL_MS = 2000;    // Pause after English explanation
 const LISTEN_BETWEEN_QUESTIONS_MS = 1500; // Pause between sub-questions (Part 3/4)
@@ -340,33 +340,63 @@ const TYPES = {
   part1: [
     {type:"office_desk", desc:"Person working at desk — typing, reading, organizing"},
     {type:"meeting_conference", desc:"People in conference room — presenting, discussing"},
-    {type:"restaurant_cafe", desc:"Café or restaurant — waiter serving, people dining, barista"},
+    {type:"reception_lobby", desc:"Reception area — receptionist greeting, visitor signing in"},
+    {type:"copy_room", desc:"Copy/print room — person using copier, sorting papers"},
+    {type:"break_room", desc:"Break room — people having coffee, using microwave, vending machine"},
+    {type:"server_room", desc:"Server/IT room — technician checking equipment, cables"},
+    {type:"mailroom_delivery", desc:"Mailroom — sorting packages, loading cart, delivery person"},
+    {type:"filing_cabinet", desc:"Storage/filing area — person opening cabinet, organizing folders"},
+    {type:"whiteboard_planning", desc:"Planning session — person writing on whiteboard, sticky notes"},
+    {type:"elevator_hallway", desc:"Elevator/hallway — people waiting, walking, carrying items"},
+    {type:"staircase_hallway", desc:"Building interior — staircase, hallway, elevator area"},
+    {type:"rooftop_terrace", desc:"Office rooftop/terrace — outdoor seating, city view"},
     {type:"retail_shopping", desc:"Store — customer browsing, cashier, trying on clothes"},
-    {type:"construction_site", desc:"Construction — scaffolding, crane, workers with helmets"},
-    {type:"medical_clinic", desc:"Clinic or hospital — doctor, nurse, patient, waiting room"},
+    {type:"supermarket_grocery", desc:"Grocery store — shopping cart, produce aisle, checkout"},
+    {type:"pharmacy_counter", desc:"Pharmacy — pharmacist behind counter, customer picking up prescription"},
+    {type:"bookstore_browsing", desc:"Bookstore — person reading, shelves of books, display table"},
+    {type:"electronics_store", desc:"Electronics store — customer looking at laptops, TVs on display"},
+    {type:"jewelry_boutique", desc:"Jewelry/boutique shop — display case, customer being shown items"},
+    {type:"restaurant_cafe", desc:"Café or restaurant — waiter serving, people dining, barista"},
+    {type:"kitchen_cooking", desc:"Kitchen — chef cooking, preparing food, cutting vegetables"},
+    {type:"food_truck_vendor", desc:"Street food — food cart, vendor serving, customers queueing"},
+    {type:"bakery_counter", desc:"Bakery — bread display, baker arranging pastries, customer pointing"},
+    {type:"buffet_catering", desc:"Buffet/catering setup — trays of food, people serving themselves"},
+    {type:"outdoor_dining", desc:"Outdoor restaurant patio — tables with umbrellas, server carrying tray"},
     {type:"train_station", desc:"Train platform — passengers waiting, boarding, luggage"},
     {type:"airport_terminal", desc:"Airport — check-in counter, gate, luggage carousel"},
+    {type:"bus_stop", desc:"Bus stop — people waiting, bus arriving, person boarding"},
+    {type:"parking_lot", desc:"Parking area — cars lined up, person loading trunk"},
+    {type:"taxi_rideshare", desc:"Taxi/car — passenger getting in/out, driver opening door"},
+    {type:"ferry_dock", desc:"Ferry terminal — passengers boarding, cars driving onto ferry"},
+    {type:"construction_site", desc:"Construction — scaffolding, crane, workers with helmets"},
     {type:"warehouse_factory", desc:"Warehouse or factory — forklift, conveyor, stacking boxes"},
+    {type:"workshop_tools", desc:"Workshop — carpenter, mechanic, tools on workbench"},
+    {type:"loading_dock", desc:"Loading dock — truck backed up, workers unloading pallets"},
+    {type:"lab_research", desc:"Laboratory — person in lab coat, microscope, test tubes"},
+    {type:"assembly_line", desc:"Assembly line — workers at stations, products on conveyor"},
     {type:"park_bench", desc:"Park — person reading on bench, walking dog, jogger"},
     {type:"street_crosswalk", desc:"City street — pedestrians crossing, traffic, bus stop"},
-    {type:"marina_dock", desc:"Waterfront — boats docked, fishing, loading cargo"},
     {type:"garden_yard", desc:"Garden — planting flowers, mowing lawn, raking leaves"},
+    {type:"bridge_river", desc:"Bridge or river — people crossing bridge, riverbank view"},
+    {type:"marina_dock", desc:"Waterfront — boats docked, fishing, loading cargo"},
+    {type:"beach_waterfront", desc:"Beach — people walking, umbrellas, lifeguard tower"},
+    {type:"hiking_trail", desc:"Hiking trail — hikers with backpacks, trail sign, mountain view"},
+    {type:"fountain_plaza", desc:"City plaza — fountain, people sitting on steps, street performer"},
+    {type:"medical_clinic", desc:"Clinic or hospital — doctor, nurse, patient, waiting room"},
     {type:"library_bookstore", desc:"Library — shelves of books, person reading, studying"},
-    {type:"parking_lot", desc:"Parking area — cars lined up, person loading trunk"},
-    {type:"supermarket_grocery", desc:"Grocery store — shopping cart, produce aisle, checkout"},
     {type:"museum_gallery", desc:"Museum or art gallery — paintings on wall, visitors looking"},
+    {type:"hotel_reception", desc:"Hotel — guest checking in, bellhop, lobby seating"},
     {type:"gym_sports", desc:"Gym or sports — exercising, swimming pool, tennis court"},
-    {type:"kitchen_cooking", desc:"Kitchen — chef cooking, preparing food, cutting vegetables"},
+    {type:"classroom_lecture", desc:"Classroom — teacher at board, students taking notes"},
+    {type:"post_office", desc:"Post office — customer at counter, weighing package, stamp display"},
+    {type:"laundromat", desc:"Laundromat — person loading washing machine, folding clothes"},
     {type:"moving_packing", desc:"Moving — carrying boxes, loading truck, wrapping furniture"},
     {type:"cleaning_maintenance", desc:"Cleaning — mopping floor, wiping window, vacuum"},
     {type:"bicycle_cyclist", desc:"Bicycle scene — person riding, bikes parked in rack"},
-    {type:"bridge_river", desc:"Bridge or river — people crossing bridge, riverbank view"},
-    {type:"staircase_hallway", desc:"Building interior — staircase, hallway, elevator area"},
     {type:"outdoor_market", desc:"Open-air market — vendors, produce stands, shoppers"},
-    {type:"classroom_lecture", desc:"Classroom — teacher at board, students taking notes"},
-    {type:"workshop_tools", desc:"Workshop — carpenter, mechanic, tools on workbench"},
-    {type:"hotel_reception", desc:"Hotel — guest checking in, bellhop, lobby seating"},
-    {type:"food_truck_vendor", desc:"Street food — food cart, vendor serving, customers queueing"},
+    {type:"painting_renovation", desc:"Painting/renovation — person on ladder, painting wall, drop cloth"},
+    {type:"gardening_landscaping", desc:"Landscaping — trimming hedges, planting tree, wheelbarrow"},
+    {type:"window_shopping", desc:"Window shopping — person looking at storefront display, mannequins"},
     {type:"empty_room_furniture", desc:"Empty room (NO people) — chairs, tables, equipment arranged"}
   ],
   part2: [
@@ -392,53 +422,95 @@ const TYPES = {
     {type:"suggestion_offer", desc:"Suggestion or offer"}
   ],
   part3: [
-    {type:"office_equipment", desc:"Equipment issue or setup"},
-    {type:"schedule_change", desc:"Meeting reschedule, deadline extension"},
-    {type:"project_discussion", desc:"Project progress, strategy, budget"},
-    {type:"coworker_favor", desc:"Colleague asking for help, shift swap"},
-    {type:"promotion_transfer", desc:"Promotion, department transfer"},
-    {type:"office_relocation", desc:"Office move, renovation"},
-    {type:"client_negotiation", desc:"Client call, contract terms"},
-    {type:"complaint_resolution", desc:"Customer complaint, refund"},
-    {type:"restaurant_order", desc:"Restaurant reservation, order"},
-    {type:"hotel_checkin", desc:"Hotel check-in, room issue"},
-    {type:"retail_purchase", desc:"Store purchase, exchange"},
-    {type:"bank_finance", desc:"Bank transaction, loan inquiry"},
-    {type:"repair_maintenance", desc:"Car repair, appliance fix"},
-    {type:"airport_travel", desc:"Flight delay, booking change"},
-    {type:"commute_transport", desc:"Parking, bus route, carpool"},
-    {type:"business_trip", desc:"Travel planning, itinerary"},
-    {type:"hiring_interview", desc:"Job interview, candidate discussion"},
-    {type:"training_workshop", desc:"Training, workshop registration"},
-    {type:"medical_pharmacy", desc:"Doctor appointment, prescription"},
-    {type:"event_planning", desc:"Conference, party planning"},
+    {type:"office_equipment", desc:"Equipment issue — printer jam, computer crash, phone system"},
+    {type:"schedule_change", desc:"Meeting reschedule, deadline extension, shift swap"},
+    {type:"project_discussion", desc:"Project progress update, milestone review, resource allocation"},
+    {type:"coworker_favor", desc:"Colleague asking for help, covering shift, borrowing supplies"},
+    {type:"promotion_transfer", desc:"Promotion discussion, department transfer, new role"},
+    {type:"office_relocation", desc:"Office move, desk reassignment, floor renovation"},
+    {type:"client_negotiation", desc:"Client call, contract terms, pricing discussion"},
+    {type:"complaint_resolution", desc:"Customer complaint handling, service recovery, refund"},
+    {type:"performance_review", desc:"Performance evaluation, goal setting, feedback session"},
+    {type:"new_employee", desc:"New hire orientation, introducing to team, explaining procedures"},
+    {type:"salary_benefits", desc:"Salary discussion, benefits enrollment, insurance question"},
+    {type:"remote_work", desc:"Work from home arrangement, video call setup, schedule flexibility"},
+    {type:"restaurant_order", desc:"Restaurant reservation, order, dietary restriction, bill"},
+    {type:"hotel_checkin", desc:"Hotel check-in, room upgrade, amenities, late checkout"},
+    {type:"retail_purchase", desc:"Store purchase, exchange, size inquiry, loyalty card"},
+    {type:"bank_finance", desc:"Bank transaction, loan inquiry, account opening, wire transfer"},
+    {type:"repair_maintenance", desc:"Car repair quote, appliance fix, warranty claim"},
+    {type:"medical_pharmacy", desc:"Doctor appointment, prescription refill, insurance claim"},
+    {type:"gym_membership", desc:"Gym membership signup, class schedule, personal trainer"},
+    {type:"dry_cleaner", desc:"Dry cleaning pickup, stain removal, rush order"},
+    {type:"airport_travel", desc:"Flight delay, booking change, seat upgrade, baggage"},
+    {type:"commute_transport", desc:"Parking issue, bus route change, carpool arrangement"},
+    {type:"business_trip", desc:"Travel planning, hotel booking, itinerary change, expense"},
+    {type:"car_rental", desc:"Car rental reservation, insurance option, return location"},
+    {type:"tour_booking", desc:"Tour reservation, group discount, cancellation policy"},
+    {type:"moving_relocation", desc:"Moving company quote, packing service, delivery date"},
+    {type:"hiring_interview", desc:"Job interview feedback, candidate comparison, reference check"},
+    {type:"training_workshop", desc:"Training enrollment, certification, online vs in-person"},
+    {type:"event_planning", desc:"Conference setup, venue selection, catering, speaker"},
+    {type:"marketing_campaign", desc:"Ad campaign planning, social media strategy, budget"},
+    {type:"product_development", desc:"Product feature discussion, testing feedback, launch timeline"},
+    {type:"vendor_selection", desc:"Comparing suppliers, price negotiation, delivery terms"},
+    {type:"legal_contract", desc:"Contract review, terms clarification, signing deadline"},
+    {type:"tech_support", desc:"Software issue, system update, password reset, network"},
     {type:"graphic_schedule", desc:"GRAPHIC: schedule/timetable"},
     {type:"graphic_price_list", desc:"GRAPHIC: price list/menu"},
     {type:"graphic_order_form", desc:"GRAPHIC: order form/invoice"},
-    {type:"graphic_floor_map", desc:"GRAPHIC: floor map/seating"}
+    {type:"graphic_floor_map", desc:"GRAPHIC: floor map/seating chart"}
+  ],
+  part3_3p: [
+    {type:"team_meeting", desc:"3 colleagues discussing project, deadline, or task assignment"},
+    {type:"office_move", desc:"3 people coordinating office relocation or desk arrangement"},
+    {type:"event_coordination", desc:"3 people planning a company event, party, or conference"},
+    {type:"client_presentation", desc:"3 colleagues preparing for or debriefing a client meeting"},
+    {type:"hiring_decision", desc:"3 people discussing job candidates or interview results"},
+    {type:"budget_review", desc:"3 people reviewing department budget or expense approval"},
+    {type:"travel_arrangement", desc:"3 colleagues arranging a group business trip"},
+    {type:"training_feedback", desc:"3 people discussing training session content or schedule"},
+    {type:"lunch_plans", desc:"3 coworkers deciding where to eat or planning lunch outing"},
+    {type:"problem_solving", desc:"3 people troubleshooting a technical or logistics issue"},
+    {type:"product_launch", desc:"3 people finalizing product launch — marketing, timing, pricing"},
+    {type:"department_merger", desc:"3 people from different teams discussing merger or reorganization"},
+    {type:"safety_inspection", desc:"3 people reviewing safety audit findings or compliance steps"},
+    {type:"customer_feedback", desc:"3 people analyzing survey results or customer complaints"},
+    {type:"volunteer_planning", desc:"3 people organizing a charity or community volunteer event"}
   ],
   part4: [
-    {type:"voicemail", desc:"Voicemail about scheduling or delivery"},
-    {type:"announcement_office", desc:"Office announcement"},
-    {type:"announcement_store", desc:"Store/venue announcement"},
-    {type:"announcement_transport", desc:"Airport/station announcement"},
-    {type:"meeting_intro", desc:"Meeting opening, agenda"},
-    {type:"tour_guide", desc:"Tour guide narration"},
-    {type:"news_report", desc:"News: business, weather, traffic"},
-    {type:"training_instruction", desc:"Training: safety, software"},
-    {type:"award_ceremony", desc:"Award/recognition speech"},
-    {type:"product_launch", desc:"Product presentation"},
-    {type:"conference_keynote", desc:"Conference speech"},
-    {type:"radio_advertisement", desc:"Radio ad/promotion"},
-    {type:"helpline_recording", desc:"Automated phone system"},
-    {type:"workshop_promo", desc:"Workshop/seminar promotion"},
-    {type:"construction_notice", desc:"Construction/renovation notice"},
-    {type:"charity_volunteer", desc:"Charity/volunteer appeal"},
-    {type:"company_update", desc:"CEO/manager update"},
+    {type:"voicemail", desc:"Voicemail about scheduling, delivery, or callback"},
+    {type:"announcement_office", desc:"Office announcement: policy change, visitor, maintenance"},
+    {type:"announcement_store", desc:"Store/venue: sale, closing time, special event"},
+    {type:"announcement_transport", desc:"Airport/station: delay, gate change, boarding call"},
+    {type:"announcement_building", desc:"Building: fire drill, elevator maintenance, parking"},
+    {type:"meeting_intro", desc:"Meeting opening: agenda overview, speaker introduction"},
+    {type:"tour_guide", desc:"Tour guide: museum, factory, campus, city"},
+    {type:"news_business", desc:"Business news: earnings, merger, market trends"},
+    {type:"news_weather", desc:"Weather forecast: weekend outlook, storm warning"},
+    {type:"news_traffic", desc:"Traffic update: road closure, accident, alternate route"},
+    {type:"training_safety", desc:"Safety training: emergency procedure, equipment, fire exit"},
+    {type:"training_software", desc:"Software tutorial: new system rollout, feature walkthrough"},
+    {type:"training_onboarding", desc:"New employee orientation: company policy, benefits"},
+    {type:"award_ceremony", desc:"Award speech: employee of month, retirement, achievement"},
+    {type:"product_launch", desc:"Product presentation: features, pricing, availability"},
+    {type:"conference_keynote", desc:"Conference keynote: industry trends, research findings"},
+    {type:"radio_advertisement", desc:"Radio ad: product promotion, grand opening, limited offer"},
+    {type:"radio_interview", desc:"Radio interview: expert opinion, book promotion"},
+    {type:"helpline_recording", desc:"Automated phone: menu options, hours, hold message"},
+    {type:"workshop_promo", desc:"Workshop/seminar: registration, schedule, benefits"},
+    {type:"construction_notice", desc:"Construction/renovation: timeline, detours, noise"},
+    {type:"charity_volunteer", desc:"Charity event or volunteer recruitment appeal"},
+    {type:"company_update", desc:"CEO/manager update: results, restructuring, new hire"},
+    {type:"library_announcement", desc:"Library: new hours, book sale, author event"},
+    {type:"gym_class", desc:"Gym/fitness: schedule change, new instructor, class intro"},
+    {type:"apartment_notice", desc:"Apartment: maintenance, rent change, amenity update"},
+    {type:"graduation_speech", desc:"Graduation address: achievement, future advice"},
+    {type:"museum_audio_guide", desc:"Museum audio guide: exhibit description, artist info"},
     {type:"graphic_schedule", desc:"GRAPHIC: schedule/agenda"},
-    {type:"graphic_price", desc:"GRAPHIC: price list"},
+    {type:"graphic_price", desc:"GRAPHIC: price list/rate card"},
     {type:"graphic_map", desc:"GRAPHIC: map/floor plan"},
-    {type:"graphic_chart", desc:"GRAPHIC: chart with data"}
+    {type:"graphic_chart", desc:"GRAPHIC: bar/pie chart with data"}
   ],
   part5: [
     {type:"word_form_noun_verb", desc:"Word form: noun vs verb (decision/decide)"},
@@ -477,82 +549,122 @@ const TYPES = {
     {type:"comparative_superlative", desc:"Comparative/superlative (more efficient, the most)"}
   ],
   part6: [
-    {type:"email_apology", desc:"Apology email"},
-    {type:"email_announcement", desc:"Company announcement"},
-    {type:"email_invitation", desc:"Invitation"},
-    {type:"email_request", desc:"Request email"},
-    {type:"email_followup", desc:"Follow-up email"},
-    {type:"formal_letter_offer", desc:"Job offer letter"},
-    {type:"formal_letter_complaint", desc:"Complaint letter"},
-    {type:"memo_policy", desc:"Policy/procedure memo"},
-    {type:"memo_event", desc:"Company event memo"},
-    {type:"notice_closure", desc:"Closure/renovation notice"},
-    {type:"notice_rules", desc:"Rules/safety notice"},
-    {type:"advertisement_product", desc:"Product ad"},
-    {type:"advertisement_recruitment", desc:"Recruitment ad"},
-    {type:"newsletter_article", desc:"Newsletter excerpt"},
-    {type:"review_response", desc:"Review + response"},
-    {type:"instruction_manual", desc:"Instructions/guide"}
+    {type:"email_apology", desc:"Apology for delay, error, or service failure"},
+    {type:"email_announcement", desc:"Company announcement: new policy, system change"},
+    {type:"email_invitation", desc:"Invitation to event, meeting, or celebration"},
+    {type:"email_request", desc:"Request for information, approval, or assistance"},
+    {type:"email_followup", desc:"Follow-up after meeting, interview, or inquiry"},
+    {type:"email_introduction", desc:"Introducing new colleague, vendor, or service provider"},
+    {type:"email_confirmation", desc:"Confirming reservation, order, or appointment"},
+    {type:"email_thankyou", desc:"Thank-you for purchase, attendance, or cooperation"},
+    {type:"formal_letter_offer", desc:"Job offer or contract acceptance letter"},
+    {type:"formal_letter_complaint", desc:"Complaint about product, service, or billing"},
+    {type:"formal_letter_recommendation", desc:"Recommendation letter for employee or student"},
+    {type:"formal_letter_resignation", desc:"Resignation notice or farewell letter"},
+    {type:"memo_policy", desc:"Internal memo: policy or procedure update"},
+    {type:"memo_event", desc:"Internal memo: company event, team building"},
+    {type:"memo_budget", desc:"Internal memo: budget update, expense guidelines"},
+    {type:"memo_staffing", desc:"Internal memo: hiring freeze, overtime, schedule change"},
+    {type:"notice_closure", desc:"Temporary closure or renovation notice"},
+    {type:"notice_rules", desc:"Parking rules, building regulations, safety guidelines"},
+    {type:"notice_construction", desc:"Construction/maintenance notice with timeline"},
+    {type:"notice_recall", desc:"Product recall or safety alert notice"},
+    {type:"advertisement_product", desc:"Product ad with features and promotional offer"},
+    {type:"advertisement_recruitment", desc:"Job posting with qualifications and benefits"},
+    {type:"newsletter_article", desc:"Newsletter excerpt: company news, industry update"},
+    {type:"review_response", desc:"Business review + management response"},
+    {type:"instruction_manual", desc:"User guide, setup instructions, or FAQ excerpt"},
+    {type:"press_release", desc:"Company press release: partnership, expansion, milestone"}
   ],
   part7s: [
-    {type:"email_internal", desc:"Internal company email — team update, meeting follow-up, approval request, or resource sharing"},
-    {type:"email_external", desc:"External email — customer inquiry reply, vendor quotation, partnership proposal, or complaint response"},
-    {type:"letter_formal", desc:"Formal letter — recommendation letter, invitation to event, resignation acceptance, or thank-you letter"},
-    {type:"article_business", desc:"Business news article — company expansion, product launch, executive appointment, or industry trend"},
-    {type:"advertisement_job", desc:"Job posting — position description, qualifications, benefits, and application instructions"},
-    {type:"advertisement_product", desc:"Product/service advertisement — features, pricing, limited-time offer, contact details"},
-    {type:"notice_building", desc:"Building/facility notice — maintenance schedule, access changes, parking updates, or safety information"},
-    {type:"online_chat", desc:"Online group chat (3-4 participants) — coordinating a team lunch, discussing a project task, or planning a meeting"},
-    {type:"text_message", desc:"Text message chain (2-3 people) — confirming delivery time, coordinating ride to airport, or changing meeting location"},
-    {type:"form_survey", desc:"Form or survey — customer feedback form, event registration, warranty claim, or expense report"},
-    {type:"schedule_timetable", desc:"Schedule or timetable — conference session agenda, training program outline, class schedule, or shift roster"},
-    {type:"invoice_receipt", desc:"Invoice or receipt — office supply order, catering bill, repair service, or professional development fee"},
-    {type:"webpage_listing", desc:"Webpage content — product listing with reviews, FAQ section, company 'About Us' page, or booking confirmation"},
-    {type:"review_response", desc:"Customer review followed by business owner's response — restaurant, hotel, online shop, or service provider"},
-    {type:"graphic_invoice", desc:"Invoice or order summary with a TABLE of items, quantities, and prices. Include a 'graphic' field with table data. At least one question must reference specific numbers from the table."},
-    {type:"graphic_survey_results", desc:"Survey or poll results document with a TABLE of categories and percentages/counts. Include a 'graphic' field with table data. Questions must reference specific data points."},
-    {type:"graphic_comparison_chart", desc:"Product or service comparison chart with a TABLE of features and checkmarks/values. Include a 'graphic' field with table data."},
-    {type:"graphic_schedule_event", desc:"Event program or class schedule with a TABLE of times, sessions, and speakers/topics. Include a 'graphic' field with table data."},
+    {type:"email_internal", desc:"Internal company email"},
+    {type:"email_external", desc:"External business email (client, vendor)"},
+    {type:"letter_formal", desc:"Formal business letter"},
+    {type:"online_chat", desc:"Online customer service chat"},
+    {type:"text_message", desc:"Text/instant message conversation"},
+    {type:"memo_internal", desc:"Internal office memo"},
+    {type:"article_business", desc:"Business magazine/newspaper article"},
+    {type:"article_community", desc:"Community newsletter or local news"},
+    {type:"blog_post", desc:"Company blog post or industry commentary"},
+    {type:"press_release", desc:"Company press release announcement"},
+    {type:"advertisement_job", desc:"Job posting/recruitment ad"},
+    {type:"advertisement_product", desc:"Product or service advertisement"},
+    {type:"advertisement_event", desc:"Event promotion or workshop announcement"},
+    {type:"coupon_promotion", desc:"Coupon, discount code, or loyalty program"},
+    {type:"notice_building", desc:"Building/facility notice"},
+    {type:"notice_policy", desc:"Policy update or regulation change"},
+    {type:"form_survey", desc:"Application form, survey, or questionnaire"},
+    {type:"schedule_timetable", desc:"Schedule, timetable, or agenda"},
+    {type:"invoice_receipt", desc:"Invoice, receipt, or billing statement"},
+    {type:"webpage_listing", desc:"Website product listing or service page"},
+    {type:"review_response", desc:"Customer review + business response"},
+    {type:"meeting_minutes", desc:"Meeting minutes or action items summary"},
+    {type:"travel_itinerary", desc:"Travel itinerary or booking confirmation"},
+    {type:"directory_listing", desc:"Staff directory or contact page"},
+    {type:"graphic_invoice", desc:"GRAPHIC: invoice with table"},
+    {type:"graphic_survey_results", desc:"GRAPHIC: survey results chart"},
+    {type:"graphic_comparison_chart", desc:"GRAPHIC: comparison table"},
+    {type:"graphic_schedule_event", desc:"GRAPHIC: event schedule"}
   ],
   part7d: [
-    {type:"job_posting_application", desc:"Doc1: Job posting with requirements and benefits. Doc2: Application email from a candidate referencing specific qualifications"},
-    {type:"event_flyer_feedback", desc:"Doc1: Event invitation/flyer with date, venue, agenda. Doc2: Attendee's reply email with questions or RSVP"},
-    {type:"product_ad_review", desc:"Doc1: Product advertisement with features and pricing. Doc2: Customer review mentioning specific features"},
-    {type:"memo_reply", desc:"Doc1: Company memo about a new policy/procedure. Doc2: Employee's reply email with questions about the policy"},
-    {type:"hotel_booking_change", desc:"Doc1: Hotel reservation confirmation with dates and room type. Doc2: Guest's email requesting date change or upgrade"},
-    {type:"invoice_dispute", desc:"Doc1: Invoice/receipt for goods or services. Doc2: Customer email disputing a charge or requesting adjustment"},
-    {type:"conference_schedule_chat", desc:"Doc1: Conference program/schedule with sessions and speakers. Doc2: Text message chain between attendees discussing which sessions to attend"},
-    {type:"coupon_receipt", desc:"Doc1: Promotional coupon/voucher with terms and conditions. Doc2: Order receipt showing the discount applied"},
-    {type:"travel_itinerary_change", desc:"Doc1: Travel itinerary with flights and hotels. Doc2: Airline notification about schedule change or cancellation"},
-    {type:"newsletter_reader_letter", desc:"Doc1: Company newsletter article about an achievement or initiative. Doc2: Reader's letter/email responding with questions or praise"},
-    {type:"pricelist_inquiry", desc:"Doc1: Service price list or menu with options and rates. Doc2: Customer's inquiry email asking about specific services"},
-    {type:"policy_question", desc:"Doc1: New policy notice (parking, benefits, safety). Doc2: Employee's email asking for clarification about the policy"},
+    {type:"job_posting_application", desc:"Doc1: Job ad. Doc2: Cover letter/application"},
+    {type:"event_flyer_feedback", desc:"Doc1: Event flyer. Doc2: Attendee feedback"},
+    {type:"product_ad_review", desc:"Doc1: Product ad. Doc2: Customer review"},
+    {type:"memo_reply", desc:"Doc1: Internal memo. Doc2: Reply email"},
+    {type:"hotel_booking_change", desc:"Doc1: Hotel confirmation. Doc2: Change request"},
+    {type:"invoice_dispute", desc:"Doc1: Invoice. Doc2: Dispute email"},
+    {type:"conference_schedule_chat", desc:"Doc1: Conference schedule. Doc2: Attendee chat"},
+    {type:"coupon_receipt", desc:"Doc1: Coupon. Doc2: Purchase receipt"},
+    {type:"travel_itinerary_change", desc:"Doc1: Travel itinerary. Doc2: Change request"},
+    {type:"newsletter_reader_letter", desc:"Doc1: Newsletter. Doc2: Reader response"},
+    {type:"pricelist_inquiry", desc:"Doc1: Price list. Doc2: Customer inquiry"},
+    {type:"policy_question", desc:"Doc1: Policy document. Doc2: Employee question"},
+    {type:"lease_agreement_complaint", desc:"Doc1: Lease agreement. Doc2: Tenant complaint"},
+    {type:"training_enrollment", desc:"Doc1: Training description. Doc2: Enrollment email"},
+    {type:"warranty_claim", desc:"Doc1: Warranty terms. Doc2: Claim email"},
+    {type:"survey_results_memo", desc:"Doc1: Survey results. Doc2: Action memo"},
+    {type:"menu_catering_order", desc:"Doc1: Catering menu. Doc2: Order confirmation"},
+    {type:"resume_interview", desc:"Doc1: Resume. Doc2: Interview invitation"},
+    {type:"donation_thankyou", desc:"Doc1: Donation appeal. Doc2: Thank-you letter"},
+    {type:"insurance_claim", desc:"Doc1: Insurance policy. Doc2: Claim form"}
   ],
   part7t: [
-    {type:"job_ad_resume_email", desc:"Doc1: Job advertisement. Doc2: Candidate's resume/cover letter. Doc3: HR's interview invitation email"},
-    {type:"hotel_confirm_review_reply", desc:"Doc1: Hotel booking confirmation. Doc2: Guest's online review after stay. Doc3: Hotel manager's reply to review"},
-    {type:"event_schedule_email_feedback", desc:"Doc1: Conference/event schedule. Doc2: Organizer's email with updates. Doc3: Attendee feedback form results"},
-    {type:"product_catalog_order_complaint", desc:"Doc1: Product catalog page. Doc2: Customer order confirmation. Doc3: Customer complaint email about wrong item"},
-    {type:"policy_memo_faq_email", desc:"Doc1: Company policy memo. Doc2: FAQ document about the policy. Doc3: Employee email asking specific question"},
-    {type:"travel_itinerary_change_expense", desc:"Doc1: Business trip itinerary. Doc2: Airline schedule change notification. Doc3: Expense report form"},
-    {type:"ad_coupon_receipt", desc:"Doc1: Store advertisement with promotion. Doc2: Discount coupon with terms. Doc3: Purchase receipt showing applied discount"},
-    {type:"newsletter_article_reader", desc:"Doc1: Company newsletter. Doc2: Featured article about new service. Doc3: Reader's response email with questions"},
-    {type:"training_schedule_eval_cert", desc:"Doc1: Training program schedule. Doc2: Participant evaluation form. Doc3: Certificate of completion email"},
-    {type:"restaurant_menu_review_reply", desc:"Doc1: Restaurant menu with specials. Doc2: Customer's online review. Doc3: Restaurant owner's reply"},
-    {type:"apartment_lease_complaint_response", desc:"Doc1: Apartment listing with amenities. Doc2: Tenant complaint email. Doc3: Property manager's response"},
-    {type:"conference_reg_invoice_receipt", desc:"Doc1: Conference registration page. Doc2: Invoice for registration fee. Doc3: Payment confirmation receipt"},
+    {type:"job_ad_resume_email", desc:"Job ad + Resume + Interview email"},
+    {type:"hotel_confirm_review_reply", desc:"Hotel confirmation + Review + Manager reply"},
+    {type:"event_schedule_email_feedback", desc:"Event schedule + Organizer email + Feedback"},
+    {type:"product_catalog_order_complaint", desc:"Catalog + Order + Complaint email"},
+    {type:"policy_memo_faq_email", desc:"Policy + FAQ + Employee question"},
+    {type:"travel_itinerary_change_expense", desc:"Itinerary + Change request + Expense report"},
+    {type:"ad_coupon_receipt", desc:"Store ad + Coupon + Receipt"},
+    {type:"newsletter_article_reader", desc:"Newsletter + Article + Reader comment"},
+    {type:"training_schedule_eval_cert", desc:"Training schedule + Evaluation + Certificate"},
+    {type:"restaurant_menu_review_reply", desc:"Menu + Review + Owner reply"},
+    {type:"apartment_lease_complaint_response", desc:"Lease + Complaint + Management response"},
+    {type:"conference_reg_invoice_receipt", desc:"Brochure + Registration + Invoice"},
+    {type:"insurance_claim_assessment", desc:"Policy + Claim form + Assessment letter"},
+    {type:"warranty_repair_feedback", desc:"Warranty + Repair request + Service feedback"},
+    {type:"scholarship_application_result", desc:"Announcement + Application + Award letter"},
+    {type:"vendor_proposal_contract", desc:"RFP + Vendor proposal + Contract award"},
+    {type:"renovation_plan_update_complaint", desc:"Renovation plan + Progress update + Complaint"},
+    {type:"membership_renewal_benefits", desc:"Membership overview + Renewal + Benefits update"}
   ],
 };
 
 /* ── セッション用タイプシャッフル ── */
 let _sessionTypes = {};
+let _typeQueues = {};  // persistent queues per part — all types used before repeating
 
 function shuffleSessionTypes() {
   _sessionTypes = {};
   for (const [part, pool] of Object.entries(TYPES)) {
-    const arr = [...pool];
-    for (let i=arr.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
-    _sessionTypes[part] = arr.slice(0, SESSION_SIZE);
+    // Refill queue if empty or too short
+    if (!_typeQueues[part] || _typeQueues[part].length < SESSION_SIZE) {
+      const fresh = [...pool];
+      for (let i=fresh.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [fresh[i],fresh[j]]=[fresh[j],fresh[i]]; }
+      _typeQueues[part] = (_typeQueues[part] || []).concat(fresh);
+    }
+    // Take next SESSION_SIZE items from queue
+    _sessionTypes[part] = _typeQueues[part].splice(0, SESSION_SIZE);
   }
 }
 
@@ -1766,13 +1878,14 @@ async function speakConv(text, onEnd, speakers) {
       const voiceConfigs = [];
       if (males.length > 0) voiceConfigs.push({speaker:males[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:maleVoice}}});
       if (females.length > 0) voiceConfigs.push({speaker:females[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:femaleVoice}}});
-      const res=await fetch(
+      const res=await throttledFetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
         {method:"POST",headers:{"Content-Type":"application/json"},
          body:JSON.stringify({contents:[{parts:[{text:text.slice(0,TTS_MAX)}]}],
            generationConfig:{responseModalities:["AUDIO"],speechConfig:{
              multiSpeakerVoiceConfig:{speakerVoiceConfigs:voiceConfigs}
-           }}})}
+           }}})},
+        3
       );
       if (!res.ok) { return speakGemini(text.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""), onEnd); }
       const d=await res.json();
@@ -1851,13 +1964,14 @@ async function preGenAudio(qs) {
       if (males.length > 0) voiceConfigs.push({speaker:males[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:maleVoice}}});
       if (females.length > 0) voiceConfigs.push({speaker:females[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:femaleVoice}}});
       try {
-        const res=await fetch(
+        const res=await throttledFetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
           {method:"POST",headers:{"Content-Type":"application/json"},
            body:JSON.stringify({contents:[{parts:[{text:convText}]}],
              generationConfig:{responseModalities:["AUDIO"],speechConfig:{
                multiSpeakerVoiceConfig:{speakerVoiceConfigs:voiceConfigs}
-             }}})}
+             }}})},
+          3  // retries for TTS
         );
         if (res.ok) {
           const d=await res.json();
@@ -1893,7 +2007,7 @@ let _prefetching = false; // 先読み中フラグ
    LOAD NEW QUESTION SET (1問ずつ生成)
 ────────────────────────────────────────────── */
 // 1問分を生成（テキスト＋画像のみ。音声は再生時にオンデマンド）
-async function generateOneQuestion(sessionIdx) {
+async function generateOneQuestion(sessionIdx, {skipTTS=false}={}) {
   const partKey = S.part === "part7" ? (["part7s","part7d","part7t"][Math.floor(Math.random()*3)]) : S.part;
   const usePartOverride = (S.part==="part3" && sessionIdx===2) ? "part3_3p" : (S.part==="part7" ? partKey : null);
   const typePool = _sessionTypes[partKey] || _sessionTypes[S.part] || [];
@@ -1901,9 +2015,9 @@ async function generateOneQuestion(sessionIdx) {
 
   const qs = await generateQuestionSet(usePartOverride, typeObj);
 
-  // Pre-generate audio for Listening parts (Part 1-4)
+  // Pre-generate audio for Listening parts — but NOT during prefetch (saves API calls)
   const isListening = ["part1","part2","part3","part4"].includes(S.part);
-  if (isListening && qs.audio) {
+  if (isListening && qs.audio && !skipTTS) {
     try {
       await preGenAudio(qs);
     } catch(e) {
@@ -1934,7 +2048,7 @@ function prefetchNext() {
   setTimeout(() => {
     if (_prefetching || _nextQ || S.sessionNum >= SESSION_SIZE) return;
     _prefetching = true;
-    generateOneQuestion(S.sessionNum).then(result => {
+    generateOneQuestion(S.sessionNum, {skipTTS:true}).then(result => {
       _nextQ = result;
       _prefetching = false;
       const nb = document.getElementById("nextSetBtn");
@@ -2778,8 +2892,8 @@ async function renderVocab() {
     alert(`✅ 再構築完了\nストック: ${r.processed}/${r.total}問にvocabあり\nvocabエントリ: ${r.foundVocab}個を処理\n単語帳: ${before}語 → ${after}語 (+${after-before})`);
     render();
   };
-  const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;render();};
-  const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;render();};
+  const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
+  const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
 }
 
 /* ── 単語クイズ画面 ── */
@@ -2791,7 +2905,12 @@ async function renderVocabQuiz() {
 
   // Generate question if needed
   if (!S.vocabQuizQ) {
-    const target = words[Math.floor(Math.random()*words.length)];
+    // Avoid recent words (shuffle queue approach)
+    if (!S._vocabQuizQueue || S._vocabQuizQueue.length === 0) {
+      S._vocabQuizQueue = words.map((_,i)=>i).sort(()=>Math.random()-0.5);
+    }
+    const targetIdx = S._vocabQuizQueue.pop();
+    const target = words[targetIdx];
     const others = words.filter(w=>w.word!==target.word);
     const shuffled = others.sort(()=>Math.random()-0.5).slice(0,3);
     const tMeaning = (target.meaning||"").split("\n")[0];
@@ -3019,7 +3138,15 @@ async function renderListenPlay() {
   $("listenPauseBtn").onclick=()=>{
     paused=!paused;
     $("listenPauseBtn").textContent=paused?"▶️ Resume":"⏸️ Pause";
-    if(paused) stopSpeak();
+    if(paused) {
+      // Pause current audio without destroying it
+      if (_curAudio && !_curAudio.paused) _curAudio.pause();
+      if (window.speechSynthesis) speechSynthesis.pause();
+    } else {
+      // Resume
+      if (_curAudio && _curAudio.paused && _curAudio.src) _curAudio.play().catch(()=>{});
+      if (window.speechSynthesis) speechSynthesis.resume();
+    }
   };
 
   async function speakAndWait(text) {
@@ -3114,6 +3241,8 @@ async function renderListenPlay() {
           console.warn("Listen TTS failed, using Web Speech:", e);
         }
         if (!ttsOk && !stopped) {
+          // Kill any pending/playing Gemini audio before Web Speech fallback
+          stopSpeak();
           // Web Speech API fallback (browser built-in, works offline)
           await new Promise(resolve => {
             if (!window.speechSynthesis) { resolve(); return; }
