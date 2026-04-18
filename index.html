@@ -3295,27 +3295,28 @@ async function renderListenPlay() {
       statusEl.textContent="🔊 問題再生中...";
       const played = await playStoredStock(item);
       if (!played) {
-        // No stored audio — try Gemini TTS with short timeout, fallback to Web Speech
+        // No stored audio — try Gemini TTS with timeout, fallback to Web Speech
         let ttsOk = false;
+        let ttsCancelled = false;
         try {
           const ttsPromise = new Promise((resolve, reject) => {
             const isConv = item.part==="part3";
-            if (isConv) {
-              speakConv(audioText, (err) => err ? reject(err) : resolve(), qs.speakers);
-            } else {
-              speakGemini(audioText, (err) => err ? reject(err) : resolve());
-            }
+            const onDone = (err) => {
+              if (ttsCancelled) { stopSpeak(); return; } // late arrival — kill it
+              err ? reject(err) : resolve();
+            };
+            if (isConv) { speakConv(audioText, onDone, qs.speakers); }
+            else { speakGemini(audioText, onDone); }
           });
-          // Give Gemini TTS 15 seconds max, then fallback
           const timeout = new Promise((_, reject) => setTimeout(() => reject("timeout"), 15000));
           await Promise.race([ttsPromise, timeout]);
           ttsOk = true;
         } catch(e) {
-          console.warn("Listen TTS failed, using Web Speech:", e);
+          console.warn("Listen TTS failed/timeout, using Web Speech:", e);
+          ttsCancelled = true;  // tell late callback to self-destruct
+          stopSpeak();          // kill any in-progress audio NOW
         }
         if (!ttsOk && !stopped) {
-          // Kill any pending/playing Gemini audio before Web Speech fallback
-          stopSpeak();
           // Web Speech API fallback (browser built-in, works offline)
           await new Promise(resolve => {
             if (!window.speechSynthesis) { resolve(); return; }
@@ -3973,7 +3974,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.18a · 303 types + TTS 2-model fallback + 3-speaker per-line + 15 fixes</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.18b · 303 types + TTS 2-model fallback + 3-speaker + abort-safe listen</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
