@@ -117,7 +117,8 @@ const GEMINI_LITE        = "gemini-2.5-flash-lite";
 const GEMINI_FLASH       = "gemini-2.5-flash";
 const GEMINI_PRO         = "gemini-2.5-pro";
 const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
-const GEMINI_TTS_MODEL   = "gemini-2.5-flash-preview-tts";
+const GEMINI_TTS_MODEL   = "gemini-2.5-flash-tts";
+const GEMINI_TTS_MODEL_2 = "gemini-3.1-flash-tts-preview";
 
 // ── Tunable constants (was scattered as magic numbers) ──
 const TTS_MAX = 5000;              // Max chars sent to Gemini TTS in one call
@@ -1814,21 +1815,30 @@ function opusToUrl(b64) {
 }
 
 async function callTTS(text, config) {
-  const res = await throttledFetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
-    { method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({contents:[{parts:[{text:text.slice(0,TTS_MAX)}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:config}}) },
-    3  // maxRetries: 3 for TTS (429 is common)
-  );
-  if (!res.ok) {
-    const errBody = await res.text();
-    console.error(`TTS error ${res.status}:`, errBody);
-    throw new Error(`TTS ${res.status}: ${errBody.slice(0,150)}`);
+  const body = JSON.stringify({contents:[{parts:[{text:text.slice(0,TTS_MAX)}]}],generationConfig:{responseModalities:["AUDIO"],speechConfig:config}});
+  // Try primary model, fallback to secondary on failure
+  for (const model of [GEMINI_TTS_MODEL, GEMINI_TTS_MODEL_2]) {
+    try {
+      const res = await throttledFetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${S.apiKey}`,
+        { method:"POST", headers:{"Content-Type":"application/json"}, body },
+        2  // retries per model
+      );
+      if (!res.ok) {
+        const errBody = await res.text();
+        console.warn(`TTS ${model} error ${res.status}:`, errBody.slice(0,100));
+        continue;  // try next model
+      }
+      const d = await res.json();
+      const pcm = d.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!pcm) { console.warn(`TTS ${model}: no audio data`); continue; }
+      return pcm;
+    } catch(e) {
+      console.warn(`TTS ${model} failed:`, e.message);
+      continue;
+    }
   }
-  const d = await res.json();
-  const pcm = d.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!pcm) throw new Error("TTS: 音声データなし");
-  return pcm;
+  throw new Error("TTS: both models failed");
 }
 
 /* ── Dispatch ── */
@@ -1952,34 +1962,97 @@ async function preGenAudio(qs) {
   if (!audio) return;
   try {
     if (part==="part3") {
-      // Multi-speaker conversation audio with dynamic speakers
       const convText = audio.slice(0, TTS_MAX);
       const spkNames = qs.speakers || ["Man","Woman"];
-      const maleVoice = pickVoice("male");
-      const femaleVoice = pickVoice("female");
-      // Build voice configs: ensure 1 male + 1 female (Gemini TTS max 2 configs)
-      const males = spkNames.filter(s => !/woman|female/i.test(s));
-      const females = spkNames.filter(s => /woman|female/i.test(s));
-      const voiceConfigs = [];
-      if (males.length > 0) voiceConfigs.push({speaker:males[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:maleVoice}}});
-      if (females.length > 0) voiceConfigs.push({speaker:females[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:femaleVoice}}});
-      try {
-        const res=await throttledFetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
-          {method:"POST",headers:{"Content-Type":"application/json"},
-           body:JSON.stringify({contents:[{parts:[{text:convText}]}],
-             generationConfig:{responseModalities:["AUDIO"],speechConfig:{
-               multiSpeakerVoiceConfig:{speakerVoiceConfigs:voiceConfigs}
-             }}})},
-          3  // retries for TTS
-        );
-        if (res.ok) {
-          const d=await res.json();
-          const pcm=d.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-          if (pcm) { qs._audioPcm=pcm; qs._audioUrl=pcmToUrl(pcm); return; }
+      const uniqueSpeakers = [...new Set(spkNames)];
+
+      if (uniqueSpeakers.length <= 2) {
+        // ── 2人会話: multi-speaker API (1リクエスト) ──
+        const maleVoice = pickVoice("male");
+        const femaleVoice = pickVoice("female");
+        const males = uniqueSpeakers.filter(s => !/woman|female/i.test(s));
+        const females = uniqueSpeakers.filter(s => /woman|female/i.test(s));
+        const voiceConfigs = [];
+        if (males.length > 0) voiceConfigs.push({speaker:males[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:maleVoice}}});
+        if (females.length > 0) voiceConfigs.push({speaker:females[0], voiceConfig:{prebuiltVoiceConfig:{voiceName:femaleVoice}}});
+        try {
+          const res=await throttledFetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${S.apiKey}`,
+            {method:"POST",headers:{"Content-Type":"application/json"},
+             body:JSON.stringify({contents:[{parts:[{text:convText}]}],
+               generationConfig:{responseModalities:["AUDIO"],speechConfig:{
+                 multiSpeakerVoiceConfig:{speakerVoiceConfigs:voiceConfigs}
+               }}})},
+            3
+          );
+          if (res.ok) {
+            const d=await res.json();
+            const pcm=d.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+            if (pcm) { qs._audioPcm=pcm; qs._audioUrl=pcmToUrl(pcm); return; }
+          }
+        } catch(e) { console.warn("multi-speaker TTS failed:", e.message); }
+      } else {
+        // ── 3人以上: 行ごとにTTS生成 → PCM結合 ──
+        console.log(`[TTS] 3-speaker mode: ${uniqueSpeakers.join(", ")}`);
+        // Assign distinct voices to each speaker
+        const voiceMap = {};
+        const malePool = [...TTS_MALE].sort(()=>Math.random()-0.5);
+        const femalePool = [...TTS_FEMALE].sort(()=>Math.random()-0.5);
+        let mi=0, fi=0;
+        for (const spk of uniqueSpeakers) {
+          if (/woman|female/i.test(spk)) { voiceMap[spk] = femalePool[fi++ % femalePool.length]; }
+          else { voiceMap[spk] = malePool[mi++ % malePool.length]; }
         }
-      } catch(e) {}
-      // Fallback: single voice
+        console.log("[TTS] Voice map:", JSON.stringify(voiceMap));
+
+        // Parse conversation lines
+        const lines = convText.split(/\n/).map(l=>l.trim()).filter(Boolean);
+        const parsed = [];
+        for (const line of lines) {
+          const m = line.match(/^((?:Man|Woman|Speaker)\s*\d?\s*\d?):\s*(.+)/i);
+          if (m) { parsed.push({speaker:m[1].trim(), text:m[2]}); }
+          else if (parsed.length) { parsed[parsed.length-1].text += " " + line; }
+        }
+        if (!parsed.length) { parsed.push({speaker:"Narrator", text:convText}); }
+
+        // Generate TTS per line + silence gap (0.3s = 7200 samples)
+        const SILENCE_SAMPLES = 7200; // 24000Hz * 0.3s
+        const silenceBytes = new Uint8Array(SILENCE_SAMPLES * 2); // 16-bit = 2 bytes/sample
+        const pcmChunks = [];
+        let okCount = 0;
+        for (const {speaker, text} of parsed) {
+          const voice = voiceMap[speaker] || pickVoice();
+          try {
+            const pcm = await callTTS(text, {voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}});
+            const raw = atob(pcm);
+            const bytes = new Uint8Array(raw.length);
+            for (let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
+            pcmChunks.push(bytes);
+            pcmChunks.push(silenceBytes);
+            okCount++;
+          } catch(e) {
+            console.warn(`[TTS] Line failed (${speaker}): ${e.message}`);
+          }
+        }
+        if (okCount > 0) {
+          // Concatenate all PCM chunks
+          const totalLen = pcmChunks.reduce((s,c) => s + c.length, 0);
+          const merged = new Uint8Array(totalLen);
+          let offset = 0;
+          for (const chunk of pcmChunks) { merged.set(chunk, offset); offset += chunk.length; }
+          // Base64 encode
+          let b64 = "";
+          const CHUNK = 8192;
+          for (let i=0; i<merged.length; i+=CHUNK) {
+            b64 += String.fromCharCode.apply(null, merged.subarray(i, Math.min(i+CHUNK, merged.length)));
+          }
+          qs._audioPcm = btoa(b64);
+          qs._audioUrl = pcmToUrl(qs._audioPcm);
+          console.log(`[TTS] 3-speaker: ${okCount}/${parsed.length} lines OK, ${(totalLen/1024).toFixed(0)}KB`);
+          return;
+        }
+      }
+      // Final fallback: single voice
       const pcm=await callTTS(convText.replace(/(?:Man\s*\d?|Woman\s*\d?|Speaker\s*\d?):\s*/gi,""),{voiceConfig:{prebuiltVoiceConfig:{voiceName:pickVoice()}}});
       qs._audioPcm=pcm; qs._audioUrl=pcmToUrl(pcm);
     } else {
