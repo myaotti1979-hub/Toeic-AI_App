@@ -715,7 +715,7 @@ IMPORTANT: Audio speed, conversation length, and document length are IDENTICAL t
     advanced: `DIFFICULTY: HARD (questions a 800+ scorer can answer — requires 80%+ correct rate)
 VOCABULARY: sophisticated/formal business language — use DIVERSE vocabulary from different fields (finance, HR, logistics, legal, marketing, IT, manufacturing). Do NOT always use the same words. Examples: procurement, compliance, amendment, forthcoming, notwithstanding, expedite, remuneration, discretionary, contingent upon, arbitration, disclosure, depreciation, subsidiary, litigation, scalability
 CORRECT ANSWER: heavily paraphrased, indirect, or requires synthesizing information from multiple parts of the text or multiple documents. In Part 2, use negative questions with indirect responses.
-DISTRACTORS: extremely close to correct — near-synonyms, information that is true but doesn't answer the specific question, choices where only one word makes it wrong
+DISTRACTORS: use common TOEIC traps but keep them identifiable: repeated words from the question in wrong context, similar-sounding words, information that is true but doesn't answer the specific question. For Part 2: distractors should be CLEARLY WRONG for a specific reason (topic shift, word trap), NOT near-correct. For Part 5/7: distractors can be more subtle (near-synonyms, one-word difference).
   Example Part 2: "Shouldn't the revised proposal have been circulated to the board by now?" → "I believe the legal team is still vetting the liability clause." (negative question + formal vocabulary + indirect response)
   Example Part 5: "The merger, ------- initially opposed by a majority of shareholders, ultimately received regulatory approval." → although/despite/whereas/nevertheless (conjunction in complex sentence with interrupting clause)
   Example Part 7: "What can be inferred from both documents?" / "In the second email, what does the phrase 'moving forward' most likely mean?" / "What is NOT indicated about the renovation project?" (cross-reference, vocabulary-in-context, NOT questions)
@@ -748,7 +748,8 @@ ${level==="beginner"?`- Use ONLY simple present continuous active voice: "A man 
 - Scene: 1-2 people with multiple objects in the background`
 :`- Use passive voice states and perfect passive: "The vehicle has been parked along the curb." / "Merchandise is being displayed."
 - Require distinguishing ongoing action vs completed state: "are being arranged" vs "have been arranged"
-- Distractors: correct subject + almost-correct action (very subtle)
+- Distractors: each must be wrong for ONE clear reason — (1) wrong SUBJECT, (2) wrong ACTION, (3) wrong STATE (ongoing vs completed), (4) wrong PREPOSITION/LOCATION
+- The difficulty is in the CORRECT answer using advanced grammar, NOT in making distractors also seem correct
 - Use advanced vocabulary: scaffolding, docked, paved, stacked, mounted, overlooking
 - Scene: complex scene with multiple people/objects where details matter`}
 
@@ -771,8 +772,9 @@ ${level==="beginner"?`- Question: simple WH-question or basic Yes/No with common
 - Include some paraphrased responses that require understanding context`
 :`- Question: negative questions ("Shouldn't we have...?"), tag questions, embedded questions, statements requiring response
 - Correct answer: predominantly INDIRECT — referral, deflection, counter-question, or implied meaning
-- Distractors: extremely plausible — near-correct responses that miss one subtle point
-- Use formal/sophisticated vocabulary in both question and responses`}
+- Distractors: use classic TOEIC traps — (1) WORD REPETITION: repeats a keyword but answers a different topic, (2) TOPIC SHIFT: work-related but different subject, (3) WRONG CONTEXT: grammatically fine but logically unrelated
+- The difficulty is in UNDERSTANDING the indirect correct answer, NOT in making wrong answers also seem correct
+- Example: "Shouldn't we have received the quarterly figures?" → Correct: "Ms. Chen said the data is still being verified." / Wrong: "The quarterly meeting was productive." (word trap)`}
 CRITICAL — CORRECT ANSWER STYLE: The correct answer should frequently be INDIRECT, not a textbook direct answer. Real TOEIC uses these patterns:
   * Indirect answer: "Where is the meeting?" → "Check the schedule on the board."
   * Referral: "Who handles this account?" → "You should ask Ms. Chen."
@@ -815,8 +817,9 @@ ${level==="beginner"?`- Questions: all 3 should be straightforward detail questi
 - Vocabulary: standard business terms`
 :`- Questions: at least 2 inference/implied-meaning questions
 - MUST include one "What does the speaker mean when he/she says, '...'?" question
-- Answers are heavily paraphrased or require synthesizing multiple statements
-- Example: "What is implied about the company?" (not directly stated, must infer from context)
+- Correct answer: uses DIFFERENT WORDS from the conversation (paraphrasing = difficulty)
+- Wrong answers: use EXACT WORDS from the conversation but answer a DIFFERENT question or describe the WRONG person
+- Example: "I'll handle the client meeting" → Correct: "He will attend to the appointment" / Wrong: "He will handle the budget"
 - Vocabulary: sophisticated business language, idiomatic expressions`}
 
 {"conversation":"Man: first line...\\nWoman: response...\\nMan: next...\\nWoman: next...\\nMan: next...\\nWoman: final line...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"..."},{"question":"What does the woman mean when she says, \\"[quote]\\"?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"..."},{"question":"What will the man most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"..."}]}`,
@@ -849,7 +852,8 @@ ${level==="beginner"?`- Questions: main purpose + 2 detail questions directly an
 :`- Questions: must include 1 "What does the speaker imply when she says, '...'?" question
 - Include 1 detail that requires careful listening (numbers, dates, conditions)
 - Talk uses formal language, subordinate clauses, and implicit logical connections
-- Distractors include information that is partially mentioned but doesn't answer the question`}
+- Correct answer: paraphrased from the talk — requires understanding meaning, not just matching words
+- Wrong answers: contain words/phrases from the talk but answer a DIFFERENT question or misrepresent context`}
 ${t.type&&t.type.startsWith("graphic")?"- IMPORTANT: Include a 'graphic' object with 'title' (string), 'headers' (array of column names), and 'rows' (array of row arrays). The talk MUST reference information in this graphic. One question MUST begin with 'Look at the graphic.'":""}
 
 {"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳をここに書く","talk_type":"${t.type||"talk"}","questions":[{"question":"What is the purpose of the message?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"和訳と解説","explanation_en":"Short 1-2 sentence English explanation"},{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"和訳と解説","explanation_en":"Short English"},{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"和訳と解説","explanation_en":"Short English"}]}`,
@@ -876,7 +880,9 @@ ${level==="beginner"?`- Test WORD FORM (noun/verb/adj/adv) or basic PREPOSITIONS
 - Some VOCABULARY questions with 4 different words of the same part of speech
 - Vocabulary: standard business terms (negotiate, implement, quarterly)`
 :`- Test ADVANCED VOCABULARY in context or SUBTLE GRAMMAR (subjunctive, inversion)
-- 4 choices are all plausible words; only one fits the specific context
+- Grammar questions: only ONE answer fits the grammatical rule — distractors fail for identifiable grammar reasons
+- Vocabulary questions: 4 words with similar meanings, only ONE fits the specific context
+- The difficulty is in KNOWING the grammar rule or precise meaning, NOT in all choices being equally valid
 - Vocabulary: formal terms (notwithstanding, contingent, discretionary)`}
 
 {"sentence":"The manager asked all employees to ------- the updated safety guidelines before Friday.","choices":["(A) review","(B) reviewing","(C) reviewed","(D) reviewer"],"correct":0,"explanation_ja":"正解は(A) review。ask+人+to+動詞原形。(B)ing形(C)過去形(D)名詞は不可。"}`,

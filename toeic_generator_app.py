@@ -115,7 +115,7 @@ IMPORTANT: Audio speed, conversation length, and document length are IDENTICAL t
     "advanced": """DIFFICULTY: HARD (questions a 800+ scorer can answer — requires 80%+ correct rate)
 VOCABULARY: sophisticated/formal business language — use DIVERSE vocabulary from different fields (finance, HR, logistics, legal, marketing, IT, manufacturing). Do NOT always use the same words. Examples: procurement, compliance, amendment, forthcoming, notwithstanding, expedite, remuneration, discretionary, contingent upon, arbitration, disclosure, depreciation, subsidiary, litigation, scalability
 CORRECT ANSWER: heavily paraphrased, indirect, or requires synthesizing information from multiple parts of the text or multiple documents. In Part 2, use negative questions with indirect responses.
-DISTRACTORS: extremely close to correct — near-synonyms, information that is true but doesn't answer the specific question, choices where only one word makes it wrong
+DISTRACTORS: use common TOEIC traps but keep them identifiable: repeated words from the question in wrong context, similar-sounding words, information that is true but doesn't answer the specific question. For Part 2: distractors should be CLEARLY WRONG for a specific reason (topic shift, word trap), NOT near-correct. For Part 5/7: distractors can be more subtle (near-synonyms, one-word difference).
   Example Part 2: "Shouldn't the revised proposal have been circulated to the board by now?" → "I believe the legal team is still vetting the liability clause." (negative question + formal vocabulary + indirect response)
   Example Part 5: "The merger, ------- initially opposed by a majority of shareholders, ultimately received regulatory approval." → although/despite/whereas/nevertheless (conjunction in complex sentence with interrupting clause)
   Example Part 7: "What can be inferred from both documents?" / "In the second email, what does the phrase 'moving forward' most likely mean?" / "What is NOT indicated about the renovation project?" (cross-reference, vocabulary-in-context, NOT questions)
@@ -142,27 +142,27 @@ def get_level_rules(part, level):
         "part1": {
             "beginner": '- Use ONLY simple present continuous active voice: "A man is reading a document."\n- Use basic verbs: sitting, standing, walking, reading, writing, carrying, looking at, holding\n- Distractors: wrong subject or completely wrong action (easy to eliminate)\n- Scene: 1 person doing 1 clear simple action',
             "intermediate": '- Mix active and passive voice: "A woman is examining a document." / "Some boxes are stacked near the wall."\n- Include preposition traps: "on the table" vs "under the table"\n- Include similar-sound traps: "filing" vs "filling", "waiting" vs "weighting"\n- Scene: 1-2 people with multiple objects in the background',
-            "advanced": '- Use passive voice states and perfect passive: "The vehicle has been parked along the curb." / "Merchandise is being displayed."\n- Require distinguishing ongoing action vs completed state: "are being arranged" vs "have been arranged"\n- Distractors: correct subject + almost-correct action (very subtle)\n- Use advanced vocabulary: scaffolding, docked, paved, stacked, mounted, overlooking\n- Scene: complex scene with multiple people/objects where details matter',
+            "advanced": '- Use passive voice states and perfect passive: "The vehicle has been parked along the curb." / "Merchandise is being displayed."\n- Require distinguishing ongoing action vs completed state: "are being arranged" vs "have been arranged"\n- Distractors: each must be wrong for ONE clear reason — (1) wrong SUBJECT (describes different person/object), (2) wrong ACTION (person is doing something else), (3) wrong STATE (ongoing vs completed: "are being stacked" vs "have been stacked"), (4) wrong PREPOSITION/LOCATION ("on" vs "next to")\n- The difficulty is in the CORRECT answer using advanced grammar, NOT in making distractors also seem correct\n- Use advanced vocabulary: scaffolding, docked, paved, stacked, mounted, overlooking\n- Scene: complex scene with multiple people/objects where details matter',
         },
         "part2": {
             "beginner": '- Question: simple WH-question or basic Yes/No with common vocabulary\n- Correct answer: DIRECT and clear. "Where is the copy room?" → "Down the hall on your left."\n- Distractors: repeated-word trap or clearly unrelated response\n- Avoid: negative questions, tag questions, embedded questions, indirect responses',
             "intermediate": '- Question: mix of WH, Yes/No, suggestions ("Why don\'t we...?"), and offers\n- Correct answer: sometimes INDIRECT — "Did you finish the report?" → "I\'ve been in meetings all day." (implies no)\n- Distractors: use similar-sound traps and related-word traps\n- Include some paraphrased responses that require understanding context',
-            "advanced": '- Question: negative questions ("Shouldn\'t we have...?"), tag questions, embedded questions, statements requiring response\n- Correct answer: predominantly INDIRECT — referral, deflection, counter-question, or implied meaning\n- Distractors: extremely plausible — near-correct responses that miss one subtle point\n- Use formal/sophisticated vocabulary in both question and responses',
+            "advanced": '- Question: negative questions ("Shouldn\'t we have...?"), tag questions, embedded questions, statements requiring response\n- Correct answer: predominantly INDIRECT — referral, deflection, counter-question, or implied meaning\n- Distractors: use classic TOEIC traps — (1) WORD REPETITION trap: repeats a keyword from the question but answers a different topic, (2) TOPIC SHIFT: sounds work-related but addresses a completely different subject, (3) WRONG CONTEXT: grammatically fine but logically unrelated to the situation\n- The difficulty is in UNDERSTANDING the indirect correct answer, NOT in making wrong answers also seem correct\n- Example: "Shouldn\'t we have received the quarterly figures by now?" → Correct: "Ms. Chen said the data is still being verified." (indirect=implies delay) / Wrong: "The quarterly meeting was very productive." (word trap: quarterly)',
         },
         "part3": {
             "beginner": '- Questions: all 3 should be straightforward detail questions (Who/What/Where/When)\n- Answers are directly stated in the conversation — no inference needed\n- Vocabulary in conversation: basic everyday business words',
             "intermediate": '- Questions: 2 detail + 1 inference ("What will the man probably do next?" or "What is the woman\'s concern?")\n- Some answers require paraphrasing — not using the exact words from the conversation\n- Vocabulary: standard business terms',
-            "advanced": '- Questions: at least 2 inference/implied-meaning questions\n- MUST include one "What does the speaker mean when he/she says, \'...\'?" question\n- Answers heavily paraphrased or require synthesizing multiple statements\n- Vocabulary: sophisticated business language, idiomatic expressions',
+            "advanced": '- Questions: at least 2 inference/implied-meaning questions\n- MUST include one "What does the speaker mean when he/she says, \'...\'?" question\n- Answers heavily paraphrased or require synthesizing multiple statements\n- Correct answer: uses DIFFERENT WORDS from the conversation to express the same meaning (paraphrasing = difficulty)\n- Wrong answers: use EXACT WORDS from the conversation but answer a DIFFERENT question or describe the WRONG person\'s action\n- Example: conversation says "I\'ll handle the client meeting" → Correct: "He will attend to the appointment" (paraphrased) / Wrong: "He will handle the budget" (same verb, wrong object)\n- Vocabulary: sophisticated business language, idiomatic expressions',
         },
         "part4": {
             "beginner": '- Questions: 3 straightforward detail questions\n- Direct quotes from the talk in correct answers\n- Vocabulary: basic monologue language',
             "intermediate": '- Questions: 2 detail + 1 inference\n- Some paraphrased answers\n- Talk: includes signal words (however, additionally, in particular)',
-            "advanced": '- Questions: at least 1 "What does the speaker imply when she says, \'...\'?" question\n- Talk uses formal language, subordinate clauses, implicit logical connections\n- Distractors: information partially mentioned but doesn\'t answer the question',
+            "advanced": '- Questions: at least 1 "What does the speaker imply when she says, \'...\'?" question\n- Talk uses formal language, subordinate clauses, implicit logical connections\n- Correct answer: paraphrased from the talk — requires understanding the meaning, not just matching words\n- Wrong answers: contain words/phrases from the talk but answer a different question or misrepresent the context\n- Include 1 detail question requiring careful listening (numbers, dates, conditions)',
         },
         "part5": {
             "beginner": '- Tests: simple word forms (noun/verb/adj/adv), basic prepositions, basic tenses\n- Distractors: clearly wrong word forms or tenses',
             "intermediate": '- Tests: vocabulary in context, conditionals, relative clauses, gerund/infinitive\n- Distractors: 2 partially-correct options that require careful reading',
-            "advanced": '- Tests: subjunctive, inversion, parallel structure, advanced collocations\n- Distractors: very subtle — only one word makes the wrong answer wrong',
+            "advanced": '- Tests: subjunctive, inversion, parallel structure, advanced collocations\n- Grammar questions: only ONE answer fits the grammatical rule — distractors fail for identifiable grammar reasons (wrong tense, wrong form, wrong structure)\n- Vocabulary questions: 4 words with similar meanings, but only ONE fits the SPECIFIC context — wrong answers have wrong nuance or collocational mismatch\n- The difficulty is in KNOWING the grammar rule or precise word meaning, NOT in all choices being equally valid',
         },
         "part6": {
             "beginner": '- Blanks 1-3: simple word forms or vocabulary\n- Blank 4 (sentence): obvious choice based on context',
@@ -909,20 +909,33 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
         try:
             at = qs["audio"]
             if tts_eng == "edge" and check_edge_tts():
-                print(f"[TTS] Part={real_part}, using {'edge_conv' if real_part=='part3' else 'edge_tts'}", flush=True)
+                print(f"[TTS] Part={real_part}, engine=edge{'_conv' if real_part=='part3' else ''}", flush=True)
                 mp3 = edge_tts_conv(at, qs.get("speakers")) if real_part == "part3" else edge_tts_sync(at, random.choice(EDGE_VF+EDGE_VM))
                 o = mp3_to_opus(mp3)
-                if o: item["audioOpus"] = base64.b64encode(o).decode(); item["audioFormat"] = "opus"
+                if o:
+                    item["audioOpus"] = base64.b64encode(o).decode(); item["audioFormat"] = "opus"
+                    print(f"[TTS] ✅ OK ({len(o)//1024}KB opus)", flush=True)
+                else:
+                    print(f"[TTS] ⚠️ Edge TTS: mp3→opus conversion failed", flush=True)
             elif tts_eng == "gemini" and api_key:
                 if real_part == "part3":
-                    print(f"[TTS] Part={real_part}, using gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
+                    print(f"[TTS] Part={real_part}, engine=gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
                     p = gemini_tts_conv(at, api_key, qs.get("speakers")); o = pcm_to_opus(p)
                 else:
+                    print(f"[TTS] Part={real_part}, engine=gemini ({len(at)}c)", flush=True)
                     p = gemini_tts(at, api_key); o = pcm_to_opus(p)
-                if o: item["audioOpus"] = base64.b64encode(o).decode(); item["audioFormat"] = "opus"
+                if o:
+                    item["audioOpus"] = base64.b64encode(o).decode(); item["audioFormat"] = "opus"
+                    print(f"[TTS] ✅ OK ({len(o)//1024}KB opus)", flush=True)
+                else:
+                    print(f"[TTS] ⚠️ Gemini TTS: pcm→opus conversion failed", flush=True)
                 time.sleep(6.5)
+            else:
+                print(f"[TTS] ⏭️ skipped (engine={tts_eng}, key={'set' if api_key else 'none'})", flush=True)
         except Exception as e:
-            print(f"[TTS] {e}", flush=True)
+            print(f"[TTS] ❌ {e}", flush=True)
+    elif do_tts and not qs.get("audio"):
+        print(f"[TTS] ⏭️ no audio field in qSet", flush=True)
     # Image
     if do_img and api_key:
         if qs.get("scene"):  # Part 1
@@ -1722,19 +1735,33 @@ with tab_gen:
                     try:
                         at = qs["audio"]
                         if tts_eng=="edge" and check_edge_tts():
-                            print(f"[TTS] Part={tts_part}, using {'edge_conv' if tts_part=='part3' else 'edge_tts'}", flush=True)
+                            print(f"[TTS] Part={tts_part}, engine=edge{'_conv' if tts_part=='part3' else ''}", flush=True)
                             mp3 = edge_tts_conv(at,qs.get("speakers")) if tts_part=="part3" else edge_tts_sync(at,random.choice(EDGE_VF+EDGE_VM))
                             o = mp3_to_opus(mp3)
-                            if o: item["audioOpus"]=base64.b64encode(o).decode(); item["audioFormat"]="opus"
+                            if o:
+                                item["audioOpus"]=base64.b64encode(o).decode(); item["audioFormat"]="opus"
+                                print(f"[TTS] ✅ OK ({len(o)//1024}KB)", flush=True)
+                            else:
+                                print(f"[TTS] ❌ Opus encode failed", flush=True)
                         elif tts_eng=="gemini" and api_key:
                             if tts_part=="part3":
-                                print(f"[TTS] Part={tts_part}, using gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
+                                print(f"[TTS] Part={tts_part}, engine=gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
                                 p = gemini_tts_conv(at,api_key,qs.get("speakers")); o = pcm_to_opus(p)
                             else:
+                                print(f"[TTS] Part={tts_part}, engine=gemini", flush=True)
                                 p = gemini_tts(at,api_key); o = pcm_to_opus(p)
-                            if o: item["audioOpus"]=base64.b64encode(o).decode(); item["audioFormat"]="opus"
+                            if o:
+                                item["audioOpus"]=base64.b64encode(o).decode(); item["audioFormat"]="opus"
+                                print(f"[TTS] ✅ OK ({len(o)//1024}KB)", flush=True)
+                            else:
+                                print(f"[TTS] ❌ Opus encode failed", flush=True)
                             time.sleep(6.5)
-                    except Exception as e: print(f"[TTS] {e}",flush=True); log.warning(f"⚠️ TTS: {e}")
+                        else:
+                            print(f"[TTS] ⏭️ Skipped (engine={tts_eng}, key={'set' if api_key else 'none'})", flush=True)
+                    except Exception as e: print(f"[TTS] ❌ {e}",flush=True); log.warning(f"⚠️ TTS: {e}")
+                elif not do_tts:
+                    is_lp = real_part in ("part1","part2","part3","part4")
+                    if is_lp: print(f"[TTS] ⏭️ do_tts=False (enable_tts={st.session_state.enable_tts}, tts_eng={tts_eng})", flush=True)
                 # Image: Part 1 scene OR graphic mode (both REQUIRED)
                 if do_img and api_key:
                     if qs.get("scene"):  # Part 1
