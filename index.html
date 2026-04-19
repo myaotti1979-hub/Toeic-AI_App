@@ -1495,7 +1495,7 @@ async function vocabDelete(id) {
 }
 // Rebuild vocab from all existing stocks (use after importing old stocks without re-saving)
 async function vocabRebuildFromStocks() {
-  const all = await stockGetAll();
+  const all = await stockGetAllLight();  // Light: vocab text only, no audio needed
   let processed = 0, foundVocab = 0;
   for (const item of all) {
     const vocab = item.qSet?.vocab;
@@ -1666,6 +1666,55 @@ async function stockGetAll(part) {
   });
 }
 
+// Light version: strips audioOpus/audioPcm/imgUrl + qSet audio fields
+// For UI display (stock list, playlist IDs) — avoids loading ~200MB of audio into heap
+async function stockGetAllLight(part) {
+  const db = await openStockDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("questions","readonly");
+    const store = tx.objectStore("questions");
+    const src = part ? store.index("part") : store;
+    const req = part ? src.openCursor(part) : src.openCursor();
+    const results = [];
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor) {
+        const v = cursor.value;
+        // Strip heavy fields
+        const light = {id:v.id, part:v.part, level:v.level, createdAt:v.createdAt,
+          mastered:v.mastered, correctStreak:v.correctStreak, lastPracticed:v.lastPracticed,
+          qSet:{...v.qSet}};
+        // Strip audio from qSet.vocab and qSet.questions
+        if (light.qSet.vocab) light.qSet.vocab = light.qSet.vocab.map(w=>({word:w.word,ja:w.ja,pos:w.pos,example:w.example}));
+        if (light.qSet.questions) light.qSet.questions = light.qSet.questions.map(q=>({question:q.question,choices:q.choices,correct:q.correct,explanation_ja:q.explanation_ja,explanation_en:q.explanation_en,blank:q.blank}));
+        // Keep text fields for preview
+        if (v.qSet.spoken) light.qSet.spoken = v.qSet.spoken;
+        if (v.qSet.sentence) light.qSet.sentence = v.qSet.sentence;
+        if (v.qSet.conversation) light.qSet.conversation = v.qSet.conversation;
+        if (v.qSet.talk) light.qSet.talk = v.qSet.talk;
+        if (v.qSet.text) light.qSet.text = v.qSet.text;
+        if (v.qSet.text_1) light.qSet.text_1 = v.qSet.text_1;
+        results.push(light);
+        cursor.continue();
+      } else {
+        resolve(results);
+      }
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Get single item by ID (with full audio/image data)
+async function stockGetById(id) {
+  const db = await openStockDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("questions","readonly");
+    const req = tx.objectStore("questions").get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // Validation helper (matches stockSave rules)
 // Rules:
 // - Listening parts (1-4) MUST have audio
@@ -1689,22 +1738,40 @@ function validateStockItem(item) {
   return {ok:true};
 }
 
-// Purge broken items from stock DB
+// Purge broken items from stock DB (cursor-based: one at a time, not all in memory)
 async function stockPurgeBroken() {
-  const all = await stockGetAll();
   const db = await openStockDB();
   let purged = 0;
-  for (const item of all) {
-    const v = validateStockItem(item);
-    if (!v.ok) {
-      console.warn(`[PURGE] id=${item.id} (${item.part}): ${v.reason}`);
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction("questions","readwrite");
-        tx.objectStore("questions").delete(item.id);
-        tx.oncomplete = () => { purged++; resolve(); };
-        tx.onerror = () => reject(tx.error);
-      });
-    }
+  const ids = await new Promise((resolve, reject) => {
+    const tx = db.transaction("questions","readonly");
+    const req = tx.objectStore("questions").openCursor();
+    const badIds = [];
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor) {
+        const v = cursor.value;
+        // Quick validation: check field existence without full deserialization overhead
+        const item = {id:v.id, part:v.part, qSet:v.qSet, imgUrl:v.imgUrl,
+          audioOpus:!!v.audioOpus, audioPcm:!!v.audioPcm};  // boolean flags only
+        const isListening = ["part1","part2","part3","part4"].includes(item.part);
+        if (isListening && !v.audioOpus && !v.audioPcm) { badIds.push(v.id); }
+        else if (item.part === "part1" && !v.imgUrl) { badIds.push(v.id); }
+        else if (!v.qSet || !v.qSet.questions || v.qSet.questions.length === 0) { badIds.push(v.id); }
+        cursor.continue();
+      } else {
+        resolve(badIds);
+      }
+    };
+    req.onerror = () => reject(req.error);
+  });
+  for (const id of ids) {
+    console.warn(`[PURGE] id=${id}`);
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("questions","readwrite");
+      tx.objectStore("questions").delete(id);
+      tx.oncomplete = () => { purged++; resolve(); };
+      tx.onerror = () => reject(tx.error);
+    });
   }
   return purged;
 }
@@ -1804,6 +1871,7 @@ async function stockImport(file) {
   });
   let count = 0, skipped = 0, vocabAdded = 0, vocabTotal = 0, withVocab = 0;
   console.log(`[IMPORT] Processing ${items.length} items...`);
+  const vocabBefore = (await vocabGetAll()).length;  // Count once before import
   for (const item of items) {
     if (!item.part || !item.qSet) continue;
     const ts = item.createdAt || Date.now();
@@ -1823,12 +1891,11 @@ async function stockImport(file) {
     if (vocab && Array.isArray(vocab) && vocab.length > 0) {
       withVocab++;
       vocabTotal += vocab.length;
-      const before = (await vocabGetAll()).length;
       await vocabAutoSave(vocab, item.part).catch(e=>console.warn("vocab save failed:", e));
-      const after = (await vocabGetAll()).length;
-      vocabAdded += (after - before);
     }
   }
+  const vocabAfter = (await vocabGetAll()).length;  // Count once after import
+  vocabAdded = vocabAfter - vocabBefore;
   console.log(`[IMPORT] Complete: ${count} items, ${withVocab} with vocab, ${vocabTotal} vocab entries found, ${vocabAdded} new added to dictionary`);
   return {count, skipped, vocabAdded, withVocab, vocabTotal};
 }
@@ -2482,9 +2549,16 @@ function renderApiKey() {
   };
 }
 
-/* ── ストック問題をStudy画面にロード ── */
-function loadStockItem(item) {
+/* ── ストック問題をStudy画面にロード (IDまたはfull item対応) ── */
+async function loadStockItem(itemOrId) {
   stopSpeak();
+  // Accept either full item object or just an ID (lazy load from IndexedDB)
+  let item = itemOrId;
+  if (typeof itemOrId === "number" || (typeof itemOrId === "object" && !itemOrId.qSet)) {
+    const id = typeof itemOrId === "number" ? itemOrId : itemOrId.id;
+    item = await stockGetById(id);
+    if (!item) { console.warn("[STOCK] item not found:", id); return; }
+  }
   S.part=item.part; S.level=item.level;
   S.screen="study"; S.stockMode=true; S.stockId=item.id;
   S.stats={correct:0,wrong:0}; S.streak=0;
@@ -2504,18 +2578,18 @@ function loadStockItem(item) {
 }
 
 /* ── ストック: プレイリスト内の次の問題へ ── */
-function loadNextStockItem() {
+async function loadNextStockItem() {
   S.stockPlayIdx++;
   if (S.stockPlayIdx >= S.stockPlaylist.length) {
     // プレイリスト終了
     S.screen="stockSelect"; S.stockMode=false; render(); return;
   }
-  loadStockItem(S.stockPlaylist[S.stockPlayIdx]);
+  await loadStockItem(S.stockPlaylist[S.stockPlayIdx]);
 }
 
 /* ── ストック選択画面 ── */
 async function renderStockSelect() {
-  const all = await stockGetAll();
+  const all = await stockGetAllLight();  // Light: no audio/image in memory (~5MB vs ~245MB)
   const byPart = {};
   all.forEach(q => { if(!byPart[q.part]) byPart[q.part]=[]; byPart[q.part].push(q); });
   const total = all.length;
@@ -2565,9 +2639,9 @@ async function renderStockSelect() {
     el.onclick=async()=>{
       const items = byPart[el.dataset.stockSeq] || [];
       if(items.length===0) return;
-      S.stockPlaylist = items;
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));  // IDs only — full item loaded on demand
       S.stockPlayIdx = 0;
-      loadStockItem(items[0]);
+      await loadStockItem(items[0].id);
     };
   });
 
@@ -2578,9 +2652,9 @@ async function renderStockSelect() {
       if(items.length===0) return;
       // シャッフル
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
-      S.stockPlaylist = items;
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));  // IDs only
       S.stockPlayIdx = 0;
-      loadStockItem(items[0]);
+      await loadStockItem(items[0].id);
     };
   });
 
@@ -3294,7 +3368,13 @@ async function renderListenPlay() {
     $("listenBackBtn").onclick=()=>{S.listenMode=false;S.screen="home";render();};
     return;
   }
-  const item = playlist[idx];
+  let item = playlist[idx];
+  // Light item from playlist — load full data (with audio) on demand
+  if (item.id && (!item.audioOpus && !item.audioPcm)) {
+    const full = await stockGetById(item.id);
+    if (!full) { console.warn("[LISTEN] item not found:", item.id); S.listenIdx=idx+1; render(); return; }
+    item = full;
+  }
   const qs = item.qSet || {};
   const questions = qs.questions || [];
   const partLabel = {part2:"Part 2",part3:"Part 3",part4:"Part 4"}[item.part]||item.part;
@@ -4053,7 +4133,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19b · graphic table fallback · listen audio playClip · check→shuffle fix · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19c · light DB queries · lazy playlist · vocab import fix · graphic table fallback · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
@@ -4102,9 +4182,9 @@ function renderHome() {
   });
   $("stockStudyBtn").onclick=()=>{ S.screen="stockSelect"; render(); };
   $("listenModeBtn").onclick=async()=>{
-    // Load listening stocks (Part 2/3/4 only — don't load Part 5/6/7)
+    // Load listening stocks (Part 2/3/4 only) — LIGHT version for setup UI
     const [p2, p3, p4] = await Promise.all([
-      stockGetAll("part2"), stockGetAll("part3"), stockGetAll("part4")
+      stockGetAllLight("part2"), stockGetAllLight("part3"), stockGetAllLight("part4")
     ]);
     const listenStocks = [...p2, ...p3, ...p4];
     if(listenStocks.length===0){alert("Listening問題のストックがありません。Part 2/3/4のストックを作成してください。");return;}
