@@ -1977,7 +1977,7 @@ with st.sidebar:
 
 
     st.divider()
-    st.caption("v2026.04.19d · vocab SRS + level(A/B/C) + same-POS quiz · flashcard queue · 303 types")
+    st.caption("v2026.04.19f · search + daily stats + mock timer + unplayed filter + drill · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
