@@ -2632,6 +2632,7 @@ async function renderStockSelect() {
   const byPart = {};
   all.forEach(q => { if(!byPart[q.part]) byPart[q.part]=[]; byPart[q.part].push(q); });
   const total = all.length;
+  const totalMastered = all.filter(q=>q.mastered).length;
 
   // パート別ボタン（Part 1含む全パート）
   const partSections = PARTS.map(p => {
@@ -2654,24 +2655,51 @@ async function renderStockSelect() {
         <button class="btn-s" data-stock-seq="${p.id}" style="flex:1;font-size:12px">📋 順番に再生</button>
         <button class="btn-s" data-stock-rnd="${p.id}" style="flex:1;font-size:12px">🔀 ランダム再生</button>
       </div>
+      ${masteredCount>0?`<button class="btn-s" data-del-mastered="${p.id}" style="font-size:11px;color:#f87171;margin-top:6px;opacity:0.7">🗑️ 卒業済${masteredCount}問を削除</button>`:""}
     </div>`;
   }).join("");
 
   app.innerHTML=`
     <div class="header">
       <h1 style="font-size:20px">📦 ストックから学習</h1>
-      <div class="sub">合計 ${total}問</div>
+      <div class="sub">合計 ${total}問${totalMastered>0?` (卒業: ${totalMastered})`:""}</div>
     </div>
     ${total===0?`<div style="text-align:center;color:#7a8ea5;padding:40px 0">ストックされた問題がありません。<br>問題を解いた後「💾 ストック」ボタンで保存できます。</div>`:""}
     <div style="padding:10px 0">${partSections}</div>
     <button class="btn-s" id="stockBackBtn" style="margin:10px auto;display:block">← ホームに戻る</button>
-    <div style="display:flex;gap:8px;justify-content:center;margin-top:16px">
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap">
       ${total>0?`<button class="btn-s" id="stockExportBtn" style="font-size:12px">📤 エクスポート</button>`:""}
       <button class="btn-s" id="stockImportBtn" style="font-size:12px">📥 インポート</button>
       ${total>0?`<button class="btn-s" id="stockPurgeBtn" style="font-size:12px;color:#fbbf24">🧹 壊れた問題を浄化</button>`:""}
+      ${totalMastered>0?`<button class="btn-s" id="stockDelAllMastered" style="font-size:12px;color:#f87171">🗑️ 全パート卒業済${totalMastered}問を一括削除</button>`:""}
     </div>
     <input type="file" id="stockFileInput" accept=".json" style="display:none">
     ${total>0?`<div style="margin-top:60px;text-align:center"><button class="btn-s" id="stockClearBtn" style="color:#f87171;font-size:11px;opacity:0.6">🗑️ 全ストック削除</button></div>`:""}`;
+
+  // 卒業済削除（パート別）
+  document.querySelectorAll("[data-del-mastered]").forEach(el=>{
+    el.onclick=async()=>{
+      const partId = el.dataset.delMastered;
+      const items = (byPart[partId]||[]).filter(it=>it.mastered);
+      if(!items.length) return;
+      if(!confirm(`${partId.toUpperCase()} の卒業済${items.length}問を削除しますか？\n\n※ 3回連続正解した問題のみ削除されます。`)) return;
+      el.textContent="⏳ 削除中...";
+      for (const item of items) { await stockDelete(item.id); }
+      alert(`✅ ${items.length}問を削除しました`);
+      render();
+    };
+  });
+
+  // 卒業済一括削除（全パート）
+  const dam=$("stockDelAllMastered"); if(dam)dam.onclick=async()=>{
+    const mastered = all.filter(q=>q.mastered);
+    if(!mastered.length) return;
+    if(!confirm(`全パートの卒業済${mastered.length}問を削除しますか？\n\n※ 3回連続正解した問題のみ削除されます。学習中の問題は残ります。`)) return;
+    dam.textContent="⏳ 削除中...";
+    for (const item of mastered) { await stockDelete(item.id); }
+    alert(`✅ ${mastered.length}問を削除しました`);
+    render();
+  };
 
   // 順番に再生ボタン
   document.querySelectorAll("[data-stock-seq]").forEach(el=>{
