@@ -2491,10 +2491,10 @@ function handleAnswer(idx) {
         console.log("📕 苦手問題を自動ストック");
       }).catch(()=>{});
     }
-    // ストック学習中: 正解ストリーク追跡（3回連続正解で卒業提案）
-    if (S.stockMode && S.stockId) {
-      updateStockStreak(S.stockId, isCorrect).catch(e=>console.warn('stock streak update failed:', e));
-    }
+  }
+  // ストック学習中: 正解ストリーク+lastPracticed追跡（判定モードに関係なく常時記録）
+  if (S.stockMode && S.stockId && !S.stockCreateMode) {
+    updateStockStreak(S.stockId, isCorrect).catch(e=>console.warn('stock streak update failed:', e));
   }
   // Vocab SRS linkage: update correctCount/wrongCount for ALL practice modes
   // (not just judgeMode — stock practice and normal practice also count)
@@ -2640,6 +2640,7 @@ async function renderStockSelect() {
     if (items.length === 0) return "";
     const masteredCount = items.filter(item=>item.mastered).length;
     const unmasteredCount = items.length - masteredCount;
+    const unplayedCount = items.filter(item=>!item.lastPracticed).length;
     const preview = items.filter(item=>!item.mastered).slice(0,3).map((item,i) => {
       const txt = item.qSet.sentence || item.qSet.spoken || item.qSet.talk?.slice(0,40) || item.qSet.conversation?.slice(0,40) || item.qSet.text?.slice(0,40) || "問題";
       return `<div style="font-size:11px;color:#a0b4c8;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${esc(String(txt).slice(0,50))}</div>`;
@@ -2655,6 +2656,7 @@ async function renderStockSelect() {
         <button class="btn-s" data-stock-seq="${p.id}" style="flex:1;font-size:12px">📋 順番に再生</button>
         <button class="btn-s" data-stock-rnd="${p.id}" style="flex:1;font-size:12px">🔀 ランダム再生</button>
       </div>
+      ${unplayedCount>0?`<button class="btn-s" data-stock-new="${p.id}" style="font-size:11px;color:#60a5fa;margin-top:4px">🆕 未回答のみ (${unplayedCount}問)</button>`:""}
       ${masteredCount>0?`<button class="btn-s" data-del-mastered="${p.id}" style="font-size:11px;color:#f87171;margin-top:6px;opacity:0.7">🗑️ 卒業済${masteredCount}問を削除</button>`:""}
     </div>`;
   }).join("");
@@ -2717,9 +2719,19 @@ async function renderStockSelect() {
     el.onclick=async()=>{
       const items = [...(byPart[el.dataset.stockRnd] || [])];
       if(items.length===0) return;
-      // シャッフル
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));  // IDs only
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+      S.stockPlayIdx = 0;
+      await loadStockItem(items[0].id);
+    };
+  });
+
+  // 未回答のみ再生ボタン
+  document.querySelectorAll("[data-stock-new]").forEach(el=>{
+    el.onclick=async()=>{
+      const items = (byPart[el.dataset.stockNew] || []).filter(it=>!it.lastPracticed);
+      if(items.length===0){ alert("未回答の問題がありません"); return; }
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
       await loadStockItem(items[0].id);
     };
@@ -2931,9 +2943,12 @@ async function renderDiagnosis() {
   const weakList = weakTypes.length > 0
     ? weakTypes.map(t => {
         const color = t.rate >= 60 ? "#fbbf24" : "#f87171";
-        return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
           <span style="font-size:12px;color:#a0b4c8">${t.part} / ${t.type}</span>
-          <span style="font-size:12px;color:${color};font-weight:700">${t.rate}% (${t.correct}/${t.total})</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:${color};font-weight:700">${t.rate}% (${t.correct}/${t.total})</span>
+            <button class="btn-s drill-btn" data-drill-part="${t.part}" style="font-size:10px;padding:2px 8px;color:#f472b6">🔥 特訓</button>
+          </div>
         </div>`;
       }).join("")
     : `<div style="font-size:12px;color:#7a8ea5">判定データが不足しています</div>`;
@@ -3032,6 +3047,29 @@ async function renderDiagnosis() {
     `}
 
     <div style="margin-top:16px">
+      <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">📅 直近7日間の学習量</div>
+      ${(()=>{
+        const days = [];
+        const dayNames = ["日","月","火","水","木","金","土"];
+        for (let d=6; d>=0; d--) {
+          const start = new Date(); start.setHours(0,0,0,0); start.setDate(start.getDate()-d);
+          const end = new Date(start); end.setDate(end.getDate()+1);
+          const dayH = history.filter(h=>h.timestamp>=start.getTime()&&h.timestamp<end.getTime());
+          const correct = dayH.filter(h=>h.correct).length;
+          days.push({label:`${start.getMonth()+1}/${start.getDate()}(${dayNames[start.getDay()]})`, total:dayH.length, correct});
+        }
+        const maxQ = Math.max(...days.map(d=>d.total), 1);
+        if (days.every(d=>d.total===0)) return `<div style="font-size:12px;color:#7a8ea5">データがありません</div>`;
+        return `<div style="display:flex;gap:4px;align-items:flex-end;height:80px;padding:4px 0">${days.map(d=>{
+          const h = d.total > 0 ? Math.max(8, Math.round(d.total/maxQ*70)) : 4;
+          const rate = d.total>0 ? Math.round(d.correct/d.total*100) : 0;
+          const color = d.total===0?"#334155":rate>=80?"#4ade80":rate>=60?"#fbbf24":"#f87171";
+          return `<div style="flex:1;text-align:center"><div style="height:${h}px;background:${color};border-radius:4px 4px 0 0;margin:0 2px;position:relative" title="${d.total}問 (${rate}%)"></div><div style="font-size:9px;color:#64748b;margin-top:2px">${d.label}</div><div style="font-size:9px;color:#a0b4c8">${d.total||""}</div></div>`;
+        }).join("")}</div><div style="font-size:10px;color:#7a8ea5;margin-top:4px">合計: ${days.reduce((a,d)=>a+d.total,0)}問 / 正答率: ${days.reduce((a,d)=>a+d.total,0)>0?Math.round(days.reduce((a,d)=>a+d.correct,0)/days.reduce((a,d)=>a+d.total,0)*100):0}%</div>`;
+      })()}
+    </div>
+
+    <div style="margin-top:16px">
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">📈 今週 vs 先週</div>
       ${weeklyComparison}
     </div>
@@ -3055,6 +3093,24 @@ async function renderDiagnosis() {
     await judgeClear();
     render();
   };
+  // 🔥 弱点ドリル: そのパートのストックをランダムで開始
+  document.querySelectorAll(".drill-btn").forEach(el=>{
+    el.onclick=async()=>{
+      const part = el.dataset.drillPart;
+      const items = await stockGetAllLight(part);
+      if (items.length === 0) {
+        alert(`${part.toUpperCase()} のストックがありません。\n先にStreamlitで生成してインポートしてください。`);
+        return;
+      }
+      // Shuffle and start playlist
+      for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+      S.stockPlayIdx = 0;
+      S.judgeMode = true;  // 判定モードONで特訓（結果が記録される）
+      localStorage.setItem("judgeMode","true");
+      await loadStockItem(items[0].id);
+    };
+  });
 }
 
 /* ── 単語帳画面 ── */
@@ -3120,13 +3176,15 @@ async function renderVocab() {
 
   app.innerHTML=`
     <div class="header" style="display:flex;justify-content:space-between;align-items:center"><div><h1 style="font-size:20px;margin:0">📝 単語帳</h1><div class="sub">${words.length}語</div></div><button class="btn-s" id="vocabBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button></div>
-    ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>`:""}
+    ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>
+    ${weakWords.length>=4?`<div style="padding:0 0 4px"><button class="btn-s" id="vocabQuizWeak" style="width:100%;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button></div>`:""}`:""}
     ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button> <button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24;margin-left:4px">🏷️ レベル判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
     <div style="display:flex;gap:4px;overflow-x:auto;padding:6px 0;flex-wrap:wrap">${filterBtns}</div>
     <div style="display:flex;gap:4px;overflow-x:auto;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
     <style>.pos-tab,.filter-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
     .pos-tab.active{background:rgba(129,140,248,0.2);color:#7b9cf7;border-color:rgba(129,140,248,0.4)}
     .filter-tab.active{background:rgba(129,140,248,0.2);border-color:rgba(129,140,248,0.4)}</style>
+    <div style="padding:6px 0"><input type="text" id="vocabSearch" placeholder="🔍 検索（英語・日本語）" style="width:100%;padding:8px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e2e8f0;font-size:13px;outline:none" autocomplete="off"></div>
     <div id="vocabListArea"></div>`;
 
   // Play audio from base64 Opus (if stored), else fallback to Gemini TTS
@@ -3206,6 +3264,7 @@ async function renderVocab() {
   // Dynamic filtering
   let activeFilter = "all";
   let activePos = "all";
+  let searchText = "";
 
   function applyFilters() {
     let filtered = words;
@@ -3216,12 +3275,28 @@ async function renderVocab() {
     else if (activeFilter === "new") filtered = filtered.filter(w=>!(w.correctCount||0) && !(w.wrongCount||0));
     else if (activeFilter === "mastered") filtered = filtered.filter(w=>(w.correctCount||0)>=3 && (w.correctCount||0)>(w.wrongCount||0)*2);
     if (activePos !== "all") filtered = filtered.filter(w=>(w.pos||"other")===activePos);
+    // Search filter: partial match on word + meaning
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      filtered = filtered.filter(w =>
+        (w.word||"").toLowerCase().includes(q) ||
+        (w.meaning||"").toLowerCase().includes(q) ||
+        (w.context||"").toLowerCase().includes(q)
+      );
+    }
     const area = $("vocabListArea");
     if (area) {
-      const countLabel = (activeFilter!=="all"||activePos!=="all") ? `<div style="font-size:11px;color:#7a8ea5;padding:6px 0">${filtered.length}語 表示中</div>` : "";
+      const isFiltered = activeFilter!=="all" || activePos!=="all" || searchText;
+      const countLabel = isFiltered ? `<div style="font-size:11px;color:#7a8ea5;padding:6px 0">${filtered.length}語 表示中</div>` : "";
       area.innerHTML = countLabel + renderWordList(filtered);
       bindVocabButtons(words);
     }
+  }
+
+  // Search input handler
+  const searchInput = $("vocabSearch");
+  if (searchInput) {
+    searchInput.oninput = () => { searchText = searchInput.value.trim(); applyFilters(); };
   }
 
   // Filter tab click handlers
@@ -3305,15 +3380,24 @@ Respond with ONLY a JSON object, no markdown, no backticks:
     alert(`✅ レベル判定完了\n判定済み: ${done}語\n失敗: ${failed}語\n既存レベルあり: ${allWords.length - needLevel.length}語`);
     render();
   };
-  const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
-  const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
-  const qpos=$("vocabQuizPos"); if(qpos)qpos.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="pos_quiz";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
+  const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
+  const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
+  const qpos=$("vocabQuizPos"); if(qpos)qpos.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="pos_quiz";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
+  const qwk=$("vocabQuizWeak"); if(qwk)qwk.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=true;render();};
 }
 
 /* ── 単語クイズ画面 ── */
 async function renderVocabQuiz() {
-  const words = await vocabGetAll();
-  if (words.length < 4) { S.screen="vocab"; render(); return; }
+  let words = await vocabGetAll();
+  // Weak-only mode: filter to wrongCount > 0
+  const weakOnly = S.vocabQuizWeakOnly || false;
+  if (weakOnly) {
+    words = words.filter(w => (w.wrongCount||0) > 0);
+  }
+  if (words.length < 4) {
+    if (weakOnly) { alert("苦手語が4語未満です。もう少しクイズを解いてからお試しください。"); }
+    S.screen="vocab"; S.vocabQuizWeakOnly=false; render(); return;
+  }
   const mode = S.vocabQuizMode || "en_ja";
   const score = S.vocabQuizScore || {correct:0,total:0};
 
@@ -3402,10 +3486,11 @@ async function renderVocabQuiz() {
   const lvBadge = {"A":"<span style='font-size:10px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:4px;margin-left:6px'>A 基礎</span>","B":"<span style='font-size:10px;background:rgba(245,158,11,0.15);color:#f59e0b;padding:1px 6px;border-radius:4px;margin-left:6px'>B 中級</span>","C":"<span style='font-size:10px;background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;margin-left:6px'>C 上級</span>"}[q.target.level||""]||"";
 
   const modeTitle = {"en_ja":"🇬🇧→🇯🇵 英→日","ja_en":"🇯🇵→🇬🇧 日→英","pos_quiz":"📝 品詞あて"}[mode] || mode;
+  const weakLabel = weakOnly ? ` <span style="font-size:12px;color:#f87171">(❌苦手${words.length}語)</span>` : "";
 
   let html = `
     <div class="header">
-      <h1 style="font-size:18px">${modeTitle} Quiz</h1>
+      <h1 style="font-size:18px">${modeTitle} Quiz${weakLabel}</h1>
       <div class="sub">${score.correct}/${score.total} (${pct}%)</div>
     </div>`;
 
@@ -3853,6 +3938,12 @@ function renderMockSetup() {
       <div style="font-weight:700;font-size:15px;color:#dce6f0">⚡ ハーフ模試 (100問)</div>
       <div style="font-size:11px;color:#a0b4c8;margin-top:2px">L:50問 + R:50問 / 約1時間</div>
     </button>
+    <div style="margin:10px 0;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;display:flex;align-items:center;gap:10px">
+      <label style="font-size:12px;color:#a0b4c8;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="mockTimerToggle" ${S.mockTimerEnabled?"checked":""} style="accent-color:#818cf8"> ⏱️ 制限時間モード
+      </label>
+      <span style="font-size:11px;color:#7a8ea5">(本番と同じ時間配分)</span>
+    </div>
 
     <div style="display:flex;gap:6px;margin-top:12px">
       <button class="btn-s" id="mockPurgeBtn" style="flex:1;font-size:11px;color:#fbbf24">🧹 壊れた問題を浄化</button>
@@ -3985,6 +4076,10 @@ function renderMockSetup() {
       S.mockIdx = 0; S.mockQIdx = 0;
       S.mockAnswers = [];
       S.mockStartTime = Date.now();
+      // Timer limit: Full=120min, Half=60min
+      const timerToggle = $("mockTimerToggle");
+      S.mockTimerEnabled = timerToggle && timerToggle.checked;
+      S.mockTimeLimit = S.mockTimerEnabled ? (mode === "full" ? 7200 : 3600) : 0;
       S.screen = "mockTest";
       render();
     };
@@ -4119,7 +4214,15 @@ function renderMockTest() {
     const timerEl = document.getElementById("mockTimer");
     if (timerEl) {
       const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
-      timerEl.textContent = `⏱️ ${String(Math.floor(elapsed/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
+      if (S.mockTimeLimit > 0) {
+        const remaining = Math.max(0, S.mockTimeLimit - elapsed);
+        const rm = String(Math.floor(remaining/60)).padStart(2,"0");
+        const rs = String(remaining%60).padStart(2,"0");
+        timerEl.textContent = `⏱️ 残り ${rm}:${rs}`;
+        timerEl.style.color = remaining < 300 ? "#f87171" : remaining < 600 ? "#fbbf24" : "";
+      } else {
+        timerEl.textContent = `⏱️ ${String(Math.floor(elapsed/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
+      }
     }
     setTimeout(() => { if (S.screen === "mockTest") render(); }, 1000);
     return;
@@ -4135,13 +4238,23 @@ function renderMockTest() {
     else if (ii === S.mockIdx) doneQ += S.mockQIdx;
   });
   const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
-  const mm = String(Math.floor(elapsed/60)).padStart(2,"0");
-  const ss = String(elapsed%60).padStart(2,"0");
+  let timerDisplay;
+  if (S.mockTimeLimit > 0) {
+    const remaining = Math.max(0, S.mockTimeLimit - elapsed);
+    const rm = String(Math.floor(remaining/60)).padStart(2,"0");
+    const rs = String(remaining%60).padStart(2,"0");
+    const timerColor = remaining < 300 ? "color:#f87171" : remaining < 600 ? "color:#fbbf24" : "";
+    timerDisplay = `<span id="mockTimer" style="${timerColor}">⏱️ 残り ${rm}:${rs}</span>`;
+  } else {
+    const mm = String(Math.floor(elapsed/60)).padStart(2,"0");
+    const ss = String(elapsed%60).padStart(2,"0");
+    timerDisplay = `<span id="mockTimer">⏱️ ${mm}:${ss}</span>`;
+  }
 
   let html = `
     <div class="header" style="display:flex;justify-content:space-between;align-items:center">
       <div><h1 style="font-size:16px">🎯 模試 ${item.part.toUpperCase()}</h1>
-        <div class="sub">${doneQ+1}/${totalQ}問 | <span id="mockTimer">⏱️ ${mm}:${ss}</span></div></div>
+        <div class="sub">${doneQ+1}/${totalQ}問 | ${timerDisplay}</div></div>
       <button class="btn-s" id="mockAbortBtn" style="font-size:11px;color:#f87171">中断</button>
     </div>`;
 
