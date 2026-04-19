@@ -2063,22 +2063,46 @@ with st.sidebar:
                         if fixed_idx % 50 == 0:
                             stat.info(f"⏳ {fixed_idx}/{total_to_fix}...")
                             prog.progress(fixed_idx / max(total_to_fix, 1))
+                    # Save results
+                    prog.progress(1.0)
+                    for i, item in enumerate(full_data):
+                        if i < len(st.session_state.results):
+                            qt = item.get("qSet",{}).get("_questionType")
+                            if qt:
+                                st.session_state.results[i].setdefault("qSet",{})["_questionType"] = qt
+                    save_results(RESULTS_FILE, st.session_state.results)
+                    stat.success(f"✅ タイプ修復完了: {repaired}問")
+                    st.session_state.pop("_export_data", None)
+                    st.session_state.pop("_html_export", None)
                 else:
-                    api_key = st.session_state.get("api_key", "")
+                    api_key = st.session_state.get("gemini_key", "")
                     if not api_key:
                         st.error("Gemini APIキーを設定してください")
+                        prog.empty()
                     else:
-                        # Pass 1: rules
+                        # Pass 1: rules for reliable parts only (Part 2/4/6/7 have exact type in data)
+                        # Part 1/3/5 are too rough with rules → send to API
+                        API_PARTS = {"part1","part3","part3_3p","part5"}
                         for item in full_data:
                             qs = item.get("qSet", {})
                             if qs.get("_questionType") and qs["_questionType"] != "unknown": continue
+                            if item.get("part","") in API_PARTS: continue  # Skip — API will handle
                             inferred = infer_type_rule(item)
                             if inferred:
                                 qs["_questionType"] = inferred
                                 repaired += 1
-                        stat.info(f"ルールベース: {repaired}問。残りをAI判定中...")
-                        # Pass 2: API for remaining
-                        remaining = [(i, r) for i, r in enumerate(full_data) if not r.get("qSet",{}).get("_questionType")]
+                        stat.info(f"ルールベース: {repaired}問（Part 2/4/6/7）。Part 1/3/5をAI判定中...")
+                        # Pass 2: API for Part 1/3/5 (overwrite rough rule types) + any remaining
+                        RULE_TYPES = {"office_general","office_desk","meeting_conference","restaurant_cafe",
+                            "construction_site","warehouse_factory","park_bench","retail_shopping","train_station",
+                            "airport_terminal","library_bookstore","word_form","preposition_basic","vocab_context",
+                            "office_equipment","schedule_change","project_discussion","hotel_checkin",
+                            "restaurant_order","airport_travel","repair_maintenance","hiring_interview",
+                            "training_workshop","client_negotiation","complaint_resolution","new_employee",
+                            "promotion_transfer","event_planning","marketing_campaign","bank_finance"}
+                        remaining = [(i, r) for i, r in enumerate(full_data)
+                            if not r.get("qSet",{}).get("_questionType")
+                            or (r.get("part","") in API_PARTS and r.get("qSet",{}).get("_questionType","") in RULE_TYPES)]
                         BATCH = 10
                         for b in range(0, len(remaining), BATCH):
                             batch = remaining[b:b+BATCH]
@@ -2099,7 +2123,7 @@ with st.sidebar:
                             try:
                                 import urllib.request
                                 req = urllib.request.Request(
-                                    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_FLASH}:generateContent?key={api_key}",
+                                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
                                     data=json.dumps({"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.1}}).encode(),
                                     headers={"Content-Type":"application/json"}, method="POST")
                                 with urllib.request.urlopen(req, timeout=30) as resp:
@@ -2117,20 +2141,20 @@ with st.sidebar:
                             stat.info(f"⏳ AI判定: {fixed_idx}/{len(remaining)}...")
                             prog.progress(min(1.0, fixed_idx / max(len(remaining), 1)))
                             time.sleep(1.5)
-
-                prog.progress(1.0)
-                for i, item in enumerate(full_data):
-                    if i < len(st.session_state.results):
-                        qt = item.get("qSet",{}).get("_questionType")
-                        if qt:
-                            st.session_state.results[i].setdefault("qSet",{})["_questionType"] = qt
-                save_results(RESULTS_FILE, st.session_state.results)
-                stat.success(f"✅ タイプ修復完了: {repaired}問")
-                st.session_state.pop("_export_data", None)
-                st.session_state.pop("_html_export", None)
+                        # Save results
+                        prog.progress(1.0)
+                        for i, item in enumerate(full_data):
+                            if i < len(st.session_state.results):
+                                qt = item.get("qSet",{}).get("_questionType")
+                                if qt:
+                                    st.session_state.results[i].setdefault("qSet",{})["_questionType"] = qt
+                        save_results(RESULTS_FILE, st.session_state.results)
+                        stat.success(f"✅ タイプ修復完了: {repaired}問")
+                        st.session_state.pop("_export_data", None)
+                        st.session_state.pop("_html_export", None)
 
     st.divider()
-    st.caption("v2026.04.19f · search + daily stats + mock timer + unplayed filter + drill · 303 types")
+    st.caption("v2026.04.19g · IRT score + type repair + data migration + drill + search · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
