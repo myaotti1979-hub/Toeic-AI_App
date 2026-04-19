@@ -1848,16 +1848,41 @@ with st.sidebar:
 
         # Export/Delete — form prevents selectbox rerun
         with st.expander("📦 エクスポート / 🗑️ 削除"):
+            # Detailed breakdown
+            level_counts = {}
+            for r in st.session_state.results:
+                p = r.get("part","?")
+                lv = r.get("level","?")
+                level_counts[(p,lv)] = level_counts.get((p,lv),0) + 1
+
             with st.form("stock_mgmt", border=False):
-                selected_part = st.selectbox("パート選択", ["全パート"] + sorted(by_part.keys()),
+                filter_options = ["全パート"] + sorted(by_part.keys())
+                selected_part = st.selectbox("パート選択", filter_options,
                     format_func=lambda x: f"全パート ({len(st.session_state.results)})" if x=="全パート" else f"{part_labels.get(x,x)} ({by_part.get(x,0)}問)",
                     key="stock_part_filter")
 
-                ec1, ec2 = st.columns(2)
+                # Show level breakdown for selected part
+                if selected_part == "全パート":
+                    lv_info = {}
+                    for (p,lv), c in level_counts.items():
+                        lv_info[lv] = lv_info.get(lv,0) + c
+                else:
+                    lv_info = {}
+                    for (p,lv), c in level_counts.items():
+                        if p == selected_part:
+                            lv_info[lv] = lv_info.get(lv,0) + c
+                if lv_info:
+                    lv_str = " / ".join(f"{lv}:{n}" for lv,n in sorted(lv_info.items()))
+                    st.caption(f"レベル内訳: {lv_str}")
+
+                ec1, ec2, ec3 = st.columns(3)
                 with ec1:
                     do_export = st.form_submit_button("📤 Export", use_container_width=True)
                 with ec2:
-                    do_delete = st.form_submit_button("🗑️ 削除", use_container_width=True)
+                    do_delete = st.form_submit_button("🗑️ パート削除", use_container_width=True)
+                with ec3:
+                    selected_level = st.selectbox("レベル", ["全レベル","beginner","intermediate","advanced"], key="stock_level_filter", label_visibility="collapsed")
+                do_delete_level = st.form_submit_button("🗑️ 選択レベルのみ削除", use_container_width=True)
 
             if do_export:
                 try:
@@ -1886,6 +1911,26 @@ with st.sidebar:
                 st.session_state.prac_idx = 0
                 st.session_state.prac_answered = {}
                 st.rerun()
+
+            if do_delete_level:
+                before = len(st.session_state.results)
+                if selected_level == "全レベル":
+                    st.warning("レベルを選択してください（beginner / intermediate / advanced）")
+                else:
+                    def matches(r):
+                        if selected_part != "全パート" and r.get("part") != selected_part:
+                            return False
+                        return r.get("level") == selected_level
+                    st.session_state.results = [r for r in st.session_state.results if not matches(r)]
+                    deleted = before - len(st.session_state.results)
+                    if deleted > 0:
+                        save_results(RESULTS_FILE, st.session_state.results)
+                        st.session_state.pop("_export_data", None)
+                        st.session_state.pop("_prac_cache_key", None)
+                        st.success(f"✅ {deleted}問を削除 ({selected_part} / {selected_level})")
+                        st.rerun()
+                    else:
+                        st.info("該当する問題がありません")
 
     # HTML export — lazy (don't json.dumps until clicked)
     total_all = len(st.session_state.results) + len(st.session_state.mock_results)
@@ -2871,6 +2916,34 @@ Respond with ONLY a JSON object, no markdown:
                         save_results(RESULTS_FILE, st.session_state.results)
                         stat.success(f"✅ レベル判定完了: {done}語 (失敗: {failed}語)")
                         st.rerun()
+
+            # Level/progress filter (top row)
+            weak_count = len([v for v in all_vocab if any(1 for m in v.get("_meanings",[]))])  # placeholder — count by _word_level
+            lv_counts = {"A":0,"B":0,"C":0,"":0}
+            for v in all_vocab:
+                lv_counts[v.get("_word_level","")] = lv_counts.get(v.get("_word_level",""),0) + 1
+            filter_options = ["📋 全て"]
+            if lv_counts.get("A"): filter_options.append(f"🟢 A基礎 ({lv_counts['A']})")
+            if lv_counts.get("B"): filter_options.append(f"🟡 B中級 ({lv_counts['B']})")
+            if lv_counts.get("C"): filter_options.append(f"🔴 C上級 ({lv_counts['C']})")
+            if lv_counts.get(""): filter_options.append(f"❓ 未判定 ({lv_counts['']})")
+            if len(filter_options) > 1:
+                level_filter = st.radio("レベル", filter_options, horizontal=True, key="vocab_level_filter", label_visibility="collapsed")
+            else:
+                level_filter = "📋 全て"
+
+            # Apply level filter
+            if "🟢 A" in level_filter:
+                all_vocab = [v for v in all_vocab if v.get("_word_level")=="A"]
+            elif "🟡 B" in level_filter:
+                all_vocab = [v for v in all_vocab if v.get("_word_level")=="B"]
+            elif "🔴 C" in level_filter:
+                all_vocab = [v for v in all_vocab if v.get("_word_level")=="C"]
+            elif "❓ 未判定" in level_filter:
+                all_vocab = [v for v in all_vocab if not v.get("_word_level")]
+
+            if level_filter != "📋 全て":
+                st.caption(f"フィルタ適用中: {len(all_vocab)}語 表示")
 
             # POS tabs
             POS_LABELS = {"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ","other":"その他"}
