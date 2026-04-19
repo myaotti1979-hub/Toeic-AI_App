@@ -77,7 +77,7 @@ GEMINI_FALLBACK_CHAIN = [
 # パート別の推奨モデル（3-Flash = 高性能+低コスト）
 PART_DEFAULT_MODEL = {
     "part1": "gemini-3-flash (API best value)",
-    "part2": "gemma3:12b (12B local GPU)",
+    "part2": "gemini-3-flash (API best value)",
     "part3": "gemini-3-flash (API best value)",
     "part3_3p": "gemini-3-flash (API best value)",
     "part4": "gemma3:12b (12B local GPU)",
@@ -134,7 +134,7 @@ BLANK_RULE6 = '\nCRITICAL: The text MUST contain exactly 4 blanks written as (1)
 ANSWER_POSITION = '\nANSWER POSITION RULE — CRITICAL: The correct answer MUST be RANDOMLY distributed across positions. Do NOT always put the correct answer at (A)/index 0. Vary the "correct" field: use 0, 1, 2, 3 with roughly equal frequency. If generating multiple questions, NEVER make them all the same position.'
 CHOICE_RULE = '\nCHOICE COUNT RULE — STRICT: Every question MUST have EXACTLY 4 choices labeled (A), (B), (C), (D). NEVER include (E) or more. Part 2 MUST have EXACTLY 3 choices (A), (B), (C). This is a hard TOEIC format requirement — violating it makes the output INVALID.'
 VOCAB_RULE = '\nVOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence). Choose words KEY to solving the question.'
-CONSISTENCY = '\nCONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointing to the correct choice. The "explanation_ja" and "explanation_en" MUST refer to the SAME letter as "correct" (correct=0→A, correct=1→B, correct=2→C, correct=3→D). NEVER write "正解は(C)" if correct=3, NEVER write "The answer is B" if correct=0. ALWAYS verify the correct letter matches before responding.'
+CONSISTENCY = '\nCONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointing to the correct choice. The "explanation_ja" and "explanation_en" MUST refer to the SAME letter as "correct" (correct=0→A, correct=1→B, correct=2→C, correct=3→D). NEVER write "正解は(C)" if correct=3, NEVER write "The answer is B" if correct=0. ALWAYS verify the correct letter matches before responding.\nEXPLANATION FORMAT — MANDATORY: explanation_ja MUST start with "正解は(X)。" where X is the correct letter (A/B/C/D). Then explain why it is correct and why each wrong answer is wrong. Example: "正解は(B)。[理由]。(A)は[なぜ間違い]。(C)は[なぜ間違い]。(D)は[なぜ間違い]。"\nDISTRACTOR QUALITY — ALL PARTS: Wrong answers must NOT be valid answers to the question. Each wrong answer must fail for a clear, identifiable reason. If a wrong answer could reasonably be correct, replace it with something clearly wrong.'
 AUDIO_RULE = '\nAUDIO CONSISTENCY RULE — CRITICAL: The "audio" field MUST contain the EXACT SAME text as what will be shown/read. For Part 1: audio MUST be verbatim "(A) <choice A text>. (B) <choice B text>. (C) <choice C text>. (D) <choice D text>." with the EXACT same wording as in the "choices" array. For Part 2: audio MUST be "<spoken question>. (A) <choice A>. (B) <choice B>. (C) <choice C>." with identical text. For Part 3: audio MUST be the EXACT "conversation" text. For Part 4: audio MUST be the EXACT "talk" text. NEVER use placeholders like [spoken] or [same as talk] — always write the literal text. If audio text differs from choices/conversation/talk, the output is INVALID.'
 
 def get_level_rules(part, level):
@@ -151,13 +151,13 @@ def get_level_rules(part, level):
             "advanced": '- Question: negative questions ("Shouldn\'t we have...?"), tag questions ("The shipment arrived, didn\'t it?"), embedded questions ("Do you know when...?"), statements requiring response ("The printer seems jammed.")\n- Correct answer: predominantly INDIRECT (about 70%) — the difficulty is in UNDERSTANDING the implied meaning\n- Indirect response patterns (use variety):\n  (1) REFERRAL: "When is the training?" → "Susan is coordinating it." (= ask her)\n  (2) UNKNOWN/UNDECIDED: "When will the project start?" → "It hasn\'t been finalized yet."\n  (3) SITUATION HINT: "Are you going to the reception?" → "I have a deadline tonight." (= no)\n  (4) PREMISE DENIAL: "Did you submit the monthly report?" → "We only submit it quarterly." (= no monthly report exists)\n  (5) COUNTER-QUESTION: "Shouldn\'t we have received the shipment?" → "Who did you speak with at the warehouse?"\n  (6) THIRD OPTION: "Should we meet Monday or Tuesday?" → "Actually, let\'s do it by email."\n- Distractors: classic TOEIC traps — (1) WORD REPETITION: repeats keyword from question but wrong topic ("quarterly figures" → "quarterly meeting"), (2) TOPIC SHIFT: sounds work-related but addresses completely different subject, (3) WRONG CONTEXT: grammatically fine but logically unrelated\n- Scenario: standard TOEIC business — budget review, deadline confirmation, staff meeting, client follow-up, schedule coordination. NOT exotic vocabulary — difficulty comes from response indirectness, not word difficulty',
         },
         "part3": {
-            "beginner": '- Questions: all 3 should be straightforward detail questions (Who/What/Where/When)\n- Answers are directly stated in the conversation — no inference needed\n- Vocabulary in conversation: basic everyday business words',
-            "intermediate": '- Questions: 2 detail + 1 inference ("What will the man probably do next?" or "What is the woman\'s concern?")\n- Some answers require paraphrasing — not using the exact words from the conversation\n- Vocabulary: standard business terms',
+            "beginner": '- Questions: all 3 should be straightforward detail questions (Who/What/Where/When)\n- Answers are directly stated in the conversation — no inference needed\n- Wrong answers: mention things NOT said in the conversation, or attribute actions to the wrong speaker\n- Vocabulary in conversation: basic everyday business words',
+            "intermediate": '- Questions: 2 detail + 1 inference ("What will the man probably do next?" or "What is the woman\'s concern?")\n- Some answers require paraphrasing — not using the exact words from the conversation\n- Wrong answers: use words from the conversation but about the wrong speaker or wrong detail\n- Vocabulary: standard business terms',
             "advanced": '- Questions: at least 2 inference/implied-meaning questions\n- MUST include one "What does the speaker mean when he/she says, \'...\'?" question\n- Answers heavily paraphrased or require synthesizing multiple statements\n- Correct answer: uses DIFFERENT WORDS from the conversation to express the same meaning (paraphrasing = difficulty)\n- Wrong answers: use EXACT WORDS from the conversation but answer a DIFFERENT question or describe the WRONG person\'s action\n- Example: conversation says "I\'ll handle the client meeting" → Correct: "He will attend to the appointment" (paraphrased) / Wrong: "He will handle the budget" (same verb, wrong object)\n- Vocabulary: sophisticated business language, idiomatic expressions',
         },
         "part4": {
-            "beginner": '- Questions: 3 straightforward detail questions\n- Direct quotes from the talk in correct answers\n- Vocabulary: basic monologue language',
-            "intermediate": '- Questions: 2 detail + 1 inference\n- Some paraphrased answers\n- Talk: includes signal words (however, additionally, in particular)',
+            "beginner": '- Questions: 3 straightforward detail questions\n- Direct quotes from the talk in correct answers\n- Wrong answers: mention details NOT in the talk, or misquote numbers/dates\n- Vocabulary: basic monologue language',
+            "intermediate": '- Questions: 2 detail + 1 inference\n- Some paraphrased answers\n- Wrong answers: use words from the talk but in the wrong context\n- Talk: includes signal words (however, additionally, in particular)',
             "advanced": '- Questions: at least 1 "What does the speaker imply when she says, \'...\'?" question\n- Talk uses formal language, subordinate clauses, implicit logical connections\n- Correct answer: paraphrased from the talk — requires understanding the meaning, not just matching words\n- Wrong answers: contain words/phrases from the talk but answer a different question or misrepresent the context\n- Include 1 detail question requiring careful listening (numbers, dates, conditions)',
         },
         "part5": {
@@ -166,9 +166,9 @@ def get_level_rules(part, level):
             "advanced": '- Tests: subjunctive, inversion, parallel structure, advanced collocations\n- Grammar questions: only ONE answer fits the grammatical rule — distractors fail for identifiable grammar reasons (wrong tense, wrong form, wrong structure)\n- Vocabulary questions: 4 words with similar meanings, but only ONE fits the SPECIFIC context — wrong answers have wrong nuance or collocational mismatch\n- The difficulty is in KNOWING the grammar rule or precise word meaning, NOT in all choices being equally valid',
         },
         "part6": {
-            "beginner": '- Blanks 1-3: simple word forms or vocabulary\n- Blank 4 (sentence): obvious choice based on context',
-            "intermediate": '- Blanks 1-3: vocabulary in context, tense consistency\n- Blank 4: requires understanding the paragraph flow',
-            "advanced": '- Blanks 1-3: subtle vocabulary distinctions, complex grammar\n- Blank 4: requires understanding the document\'s rhetorical structure',
+            "beginner": '- Blanks 1-3: simple word forms or vocabulary\n- Blank 4 (sentence): obvious choice based on context\n- Wrong answers: grammatically incorrect or clearly don\'t fit the sentence',
+            "intermediate": '- Blanks 1-3: vocabulary in context, tense consistency\n- Blank 4: requires understanding the paragraph flow\n- Wrong answers: grammatically possible but semantically wrong for the context',
+            "advanced": '- Blanks 1-3: subtle vocabulary distinctions, complex grammar\n- Blank 4: requires understanding the document\'s rhetorical structure\n- Wrong answers: near-synonyms that don\'t fit the specific context or tone',
         },
         "part7s": {
             "beginner": '- Questions: detail questions with direct quotes\n- Document: straightforward business email/notice with clear structure',
@@ -207,16 +207,16 @@ def build_prompt(level, part, t):
     R7d = get_level_rules("part7d", level)
     R7t = get_level_rules("part7t", level)
     B = {
-        "part1": lambda: f'{sys}{R1}\nPart 1 (Photographs). SCENE: {tt} — {td}. 4 statements (A-D), 5-8 words each describing the photo objectively.\n- Correct answer: accurately describes what is visible.\n- Distractors: mention objects/actions that are NOT visible, wrong tense, or wrong subject.\nDO NOT include an "audio" field — it will be auto-generated from choices.\n{{"scene":"vivid 20-30 word description for image generation","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"日本語で正解理由と各誤答のトラップタイプを解説","explanation_en":"Short 1-2 sentence English explanation"{VEX}}}',
-        "part2": lambda: f'{sys}{R2}\nPart 2 (Question-Response). TYPE: {tt} — {td}. 3 responses (A-C). Correct answer is frequently INDIRECT (not a literal yes/no).\nVOCABULARY — CRITICAL FOR PART 2: Use NORMAL workplace English. Words like "meeting", "schedule", "report", "office", "delivery", "budget", "order" are correct. DO NOT use Part 5/7 vocabulary like "remuneration", "procurement", "notwithstanding", "forthcoming", "necessitate", "contingent upon", "arbitration". Part 2 difficulty comes from INDIRECT RESPONSES, not from exotic words.\nSCENARIO DIVERSITY — CRITICAL: Each question MUST be about a DIFFERENT workplace topic. Choose from: office supplies, meeting schedule, travel plans, lunch, parking, delivery, project deadline, new employee, equipment repair, training session, client visit, holiday schedule, building maintenance, job opening, company event. DO NOT repeat audit/compliance/regulatory themes.\nQUESTION TYPE COMPLIANCE — CRITICAL: The question MUST match the type "{tt}". If type is "yesno_do", use "Do/Does/Did". If "negative_isnt", use "Isn\'t/Aren\'t". If "wh_where_place", use "Where". Do NOT generate a different question type.\nCRITICAL FORMAT: EXACTLY 3 choices (A)(B)(C). NEVER include (D). Each response MUST be 3-8 words (short spoken fragments).\nGood: "(A) In the conference room." / Bad: "(A) I believe the meeting was rescheduled to next Tuesday." (too long!)\nDO NOT include an "audio" field — it will be auto-generated.\n{{"spoken":"Natural question or statement 5-15 words","choices":["(A) 3-8 word response.","(B) 3-8 word response.","(C) 3-8 word response."],"correct":0,"explanation_ja":"【出題: {tt}】\\n和訳: (spoken の日本語訳)\\n正解理由と各誤答のトラップタイプを解説","explanation_en":"Short English"{VEX}}}',
-        "part3": lambda: f'{sys}{R3}\nPart 3 (Conversations). SCENARIO: {tt} — {td}. "Man:"/"Woman:" labels. 5-8 turns, 60-100 words MAXIMUM. Keep conversation SHORT and natural. EXACTLY 3 questions. INCLUDE "translation_ja".\nGENDER RULES — STRICT:\n- "Man:" = MALE character (male names, he/him/his). "Woman:" = FEMALE character (female names, she/her).\n- In questions: "the man" = Man speaker, "the woman" = Woman speaker. NEVER swap.\n- translation_ja: Man = 男性, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated from conversation.\n{{"conversation":"Man: first line...\\nWoman: response...\\nMan: reply...\\nWoman: next...\\nMan: final...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What does the man/woman suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What will the speaker most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
-        "part3_3p": lambda: f'{sys}{R3}\nPart 3 (Conversations) with EXACTLY 3 speakers.\nFORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"\nSCENARIO: {tt} — {td}. 7-10 turns, 80-120 words. All 3 speakers must have substantial lines. EXACTLY 3 questions.\nGENDER RULES — STRICT:\n- "Man 1:"/"Man 2:" = MALE. "Woman:"/"Woman 1:"/"Woman 2:" = FEMALE. NEVER swap.\n- translation_ja: Man 1 = 男性1, Man 2 = 男性2, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated.\n{{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...","translation_ja":"男性1: ...\\n女性: ...\\n男性2: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
-        "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}. Single-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
+        "part1": lambda: f'{sys}{R1}\nPart 1 (Photographs). SCENE: {tt} — {td}. 4 statements (A-D), 5-8 words each describing the photo objectively.\n- Correct answer: accurately describes what is visible.\n- Distractors: mention objects/actions that are NOT visible, wrong tense, or wrong subject.\nDO NOT include an "audio" field — it will be auto-generated from choices.\n{{"scene":"vivid 20-30 word description for image generation","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答のトラップタイプ]","explanation_en":"Short 1-2 sentence English explanation"{VEX}}}',
+        "part2": lambda: f'{sys}{R2}\nPart 2 (Question-Response). TYPE: {tt} — {td}. 3 responses (A-C). Correct answer is frequently INDIRECT (not a literal yes/no).\nVOCABULARY — CRITICAL FOR PART 2: Use NORMAL workplace English. Words like "meeting", "schedule", "report", "office", "delivery", "budget", "order" are correct. DO NOT use Part 5/7 vocabulary like "remuneration", "procurement", "notwithstanding", "forthcoming", "necessitate", "contingent upon", "arbitration". Part 2 difficulty comes from INDIRECT RESPONSES, not from exotic words.\nSCENARIO DIVERSITY — CRITICAL: Each question MUST be about a DIFFERENT workplace topic. Choose from: office supplies, meeting schedule, travel plans, lunch, parking, delivery, project deadline, new employee, equipment repair, training session, client visit, holiday schedule, building maintenance, job opening, company event. DO NOT repeat audit/compliance/regulatory themes.\nQUESTION TYPE COMPLIANCE — CRITICAL: The question MUST match the type "{tt}". If type is "yesno_do", use "Do/Does/Did". If "negative_isnt", use "Isn\'t/Aren\'t". If "wh_where_place", use "Where". Do NOT generate a different question type.\nDISTRACTOR VALIDITY — CRITICAL: Wrong answers must NOT be valid responses to the question. Test each: if someone said it in real conversation, would it make sense as a response? If yes, it is TOO GOOD for a wrong answer — change it. Wrong answers fail for: (1) answers a DIFFERENT question, (2) repeats a word but about a different topic, (3) completely unrelated subject. Example: Q="How long to deliver chairs?" GOOD wrong="The conference room is on the third floor." (unrelated) BAD wrong="The warehouse said next Friday." (this ANSWERS the question!)\nCRITICAL FORMAT: EXACTLY 3 choices (A)(B)(C). NEVER include (D). Each response MUST be 3-8 words (short spoken fragments).\nGood: "(A) In the conference room." / Bad: "(A) I believe the meeting was rescheduled to next Tuesday." (too long!)\nDO NOT include an "audio" field — it will be auto-generated.\n{{"spoken":"Natural question or statement 5-15 words","choices":["(A) 3-8 word response.","(B) 3-8 word response.","(C) 3-8 word response."],"correct":0,"explanation_ja":"【出題: {tt}】\\n和訳: (spoken の日本語訳)\\n正解理由と各誤答のトラップタイプを解説","explanation_en":"Short English"{VEX}}}',
+        "part3": lambda: f'{sys}{R3}\nPart 3 (Conversations). SCENARIO: {tt} — {td}. "Man:"/"Woman:" labels. 5-8 turns, 60-100 words MAXIMUM. Keep conversation SHORT and natural. EXACTLY 3 questions. INCLUDE "translation_ja".\nGENDER RULES — STRICT:\n- "Man:" = MALE character (male names, he/him/his). "Woman:" = FEMALE character (female names, she/her).\n- In questions: "the man" = Man speaker, "the woman" = Woman speaker. NEVER swap.\n- translation_ja: Man = 男性, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated from conversation.\n{{"conversation":"Man: first line...\\nWoman: response...\\nMan: reply...\\nWoman: next...\\nMan: final...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the man/woman suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What will the speaker most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part3_3p": lambda: f'{sys}{R3}\nPart 3 (Conversations) with EXACTLY 3 speakers.\nFORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"\nSCENARIO: {tt} — {td}. 7-10 turns, 80-120 words. All 3 speakers must have substantial lines. EXACTLY 3 questions.\nGENDER RULES — STRICT:\n- "Man 1:"/"Man 2:" = MALE. "Woman:"/"Woman 1:"/"Woman 2:" = FEMALE. NEVER swap.\n- translation_ja: Man 1 = 男性1, Man 2 = 男性2, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated.\n{{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...","translation_ja":"男性1: ...\\n女性: ...\\n男性2: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}. Single-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
         "part5": lambda: f'{sys}{BLANK_RULE}{R5}\nPart 5 (Incomplete Sentences). CATEGORY: {tt} — {td}.\n\nRULES:\n1. Write a business sentence (15-25 words) with EXACTLY ONE blank: -------\n2. The ------- replaces the tested word. Without it, the output is INVALID.\n3. All 4 choices (A-D) must be plausible.\n4. "correct" = index of the right answer (0=A, 1=B, 2=C, 3=D).\n5. explanation_ja MUST name the correct letter first: "正解は(X)..." where X matches "correct".\n\nGOOD: "The ------- of the new policy was announced yesterday."\nBAD: "The implementation of the new policy was announced yesterday." (NO BLANK = REJECTED)\n\n{{"sentence":"The manager asked all employees to ------- the updated safety guidelines before Friday.","choices":["(A) review","(B) reviewing","(C) reviewed","(D) reviewer"],"correct":0,"explanation_ja":"正解は(A) review。ask + 人 + to + 動詞原形の形。(B)はing形、(C)は過去形、(D)は名詞なので不可。","explanation_en":"ask someone to + base verb"{VEX}}}',
-        "part6": lambda: f'{sys}{BLANK_RULE6}{R6}\nPart 6 (Text Completion). DOC TYPE: {tt} — {td}.\n150-200 words with EXACTLY 4 blanks: (1)------- (2)------- (3)------- (4)-------.\nBlanks 1-3: word/phrase choices. Blank 4: SENTENCE INSERTION (choices are full sentences).\nINCLUDE "translation_ja" (with answers filled in).\n{{"doc_type":"{tt}","header":"To: ...\\nFrom: ...\\nSubject: ...","text":"Full text 150-200 words with (1)------- and (2)------- and (3)------- and (4)-------","translation_ja":"日本語訳（空所に正解が入った状態）","questions":[{{"blank":1,"question":"Context around blank (1)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"blank":2,"question":"Context around blank (2)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"blank":3,"question":"Context around blank (3)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"blank":4,"question":"Which sentence best fits?","choices":["(A) Full sentence A.","(B) Full sentence B.","(C) Full sentence C.","(D) Full sentence D."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
-        "part7s": lambda: f'{sys}{R7s}\nPart 7 Single Passage. DOC TYPE: {tt} — {td}. 150-250 words. Generate 2-4 questions.\nINCLUDE "translation_ja".\n{{"doc_type":"{tt}","header":"document header if applicable","text":"150-250 word passage","translation_ja":"文書全文の日本語訳","questions":[{{"question":"What is the main purpose?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What is indicated/suggested about X?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"According to the document, what...?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
-        "part7d": lambda: f'{sys}{R7d}\nPart 7 Double Passage. PAIR: {tt} — {td}. Two related documents, 100-180 words each. EXACTLY 5 questions, including at least 1 CROSS-REFERENCE question requiring info from BOTH documents.\nINCLUDE "translation_ja_1","translation_ja_2".\n{{"doc_type_1":"email/notice/memo","header_1":"...","text_1":"100-180 words","translation_ja_1":"日本語訳1","doc_type_2":"reply/schedule","header_2":"...","text_2":"100-180 words","translation_ja_2":"日本語訳2","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"Cross-reference: based on BOTH documents, ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説（クロスリファレンス問題）","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
-        "part7t": lambda: f'{sys}{R7t}\nPart 7 Triple Passage. SET: {tt} — {td}. Three related documents, 80-150 words each. EXACTLY 5 questions, including at least 2 CROSS-REFERENCE questions requiring info from multiple documents.\nINCLUDE "translation_ja_1","translation_ja_2","translation_ja_3".\n{{"doc_type_1":"...","header_1":"...","text_1":"80-150 words","translation_ja_1":"日本語訳1","doc_type_2":"...","header_2":"...","text_2":"80-150 words","translation_ja_2":"日本語訳2","doc_type_3":"...","header_3":"...","text_3":"80-150 words","translation_ja_3":"日本語訳3","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 1+2 (or 1+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説（クロスリファレンス）","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 2+3 (or 1+2+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説（クロスリファレンス）","explanation_en":"Short English"}}]{VEX}}}',
+        "part6": lambda: f'{sys}{BLANK_RULE6}{R6}\nPart 6 (Text Completion). DOC TYPE: {tt} — {td}.\n150-200 words with EXACTLY 4 blanks: (1)------- (2)------- (3)------- (4)-------.\nBlanks 1-3: word/phrase choices. Blank 4: SENTENCE INSERTION (choices are full sentences).\nINCLUDE "translation_ja" (with answers filled in).\n{{"doc_type":"{tt}","header":"To: ...\\nFrom: ...\\nSubject: ...","text":"Full text 150-200 words with (1)------- and (2)------- and (3)------- and (4)-------","translation_ja":"日本語訳（空所に正解が入った状態）","questions":[{{"blank":1,"question":"Context around blank (1)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":2,"question":"Context around blank (2)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":3,"question":"Context around blank (3)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":4,"question":"Which sentence best fits?","choices":["(A) Full sentence A.","(B) Full sentence B.","(C) Full sentence C.","(D) Full sentence D."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part7s": lambda: f'{sys}{R7s}\nPart 7 Single Passage. DOC TYPE: {tt} — {td}. 150-250 words. Generate 2-4 questions.\nINCLUDE "translation_ja".\n{{"doc_type":"{tt}","header":"document header if applicable","text":"150-250 word passage","translation_ja":"文書全文の日本語訳","questions":[{{"question":"What is the main purpose?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What is indicated/suggested about X?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"According to the document, what...?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part7d": lambda: f'{sys}{R7d}\nPart 7 Double Passage. PAIR: {tt} — {td}. Two related documents, 100-180 words each. EXACTLY 5 questions, including at least 1 CROSS-REFERENCE question requiring info from BOTH documents.\nINCLUDE "translation_ja_1","translation_ja_2".\n{{"doc_type_1":"email/notice/memo","header_1":"...","text_1":"100-180 words","translation_ja_1":"日本語訳1","doc_type_2":"reply/schedule","header_2":"...","text_2":"100-180 words","translation_ja_2":"日本語訳2","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on BOTH documents, ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[クロスリファレンス解説]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part7t": lambda: f'{sys}{R7t}\nPart 7 Triple Passage. SET: {tt} — {td}. Three related documents, 80-150 words each. EXACTLY 5 questions, including at least 2 CROSS-REFERENCE questions requiring info from multiple documents.\nINCLUDE "translation_ja_1","translation_ja_2","translation_ja_3".\n{{"doc_type_1":"...","header_1":"...","text_1":"80-150 words","translation_ja_1":"日本語訳1","doc_type_2":"...","header_2":"...","text_2":"80-150 words","translation_ja_2":"日本語訳2","doc_type_3":"...","header_3":"...","text_3":"80-150 words","translation_ja_3":"日本語訳3","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 1+2 (or 1+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説（クロスリファレンス）","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 2+3 (or 1+2+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説（クロスリファレンス）","explanation_en":"Short English"}}]{VEX}}}',
     }
     if part == "part7":
         sub = random.choice(["part7s","part7d","part7t"])
@@ -323,32 +323,51 @@ def check_answer_consistency(qs, part):
         correct_letter = ["A","B","C","D"][correct]
         expl_ja = q.get("explanation_ja","").strip()
         expl_en = q.get("explanation_en","").strip()
-        first_ja = re.split(r'[。\n]', expl_ja, maxsplit=1)[0]
-        first_en = re.split(r'[.\n]', expl_en, maxsplit=1)[0]
-        # Check Japanese explanation
-        m_ja = re.search(r'(?:正解は|答えは|正解|答え)\s*[\(（]?([A-D])[\)）]?', first_ja)
-        if m_ja:
-            mentioned = m_ja.group(1).upper()
-            if mentioned != correct_letter:
-                # Auto-fix: trust the explanation, update correct index
-                new_correct = {"A":0,"B":1,"C":2,"D":3}.get(mentioned)
+        # Check Japanese explanation — broad patterns
+        # Match: 正解は(A), 正解は（B）, 正解：(C), 正解理由：Aは, 答え：B
+        ja_patterns = [
+            r'(?:正解は|答えは|正解[:：]\s*|正解理由[:：]\s*)\s*[\(（]?([A-D])[\)）]?',
+            r'[\(（]([A-D])[\)）]\s*(?:が正解|が正しい|が適切)',
+        ]
+        mentioned_ja = None
+        for pat in ja_patterns:
+            m = re.search(pat, expl_ja)
+            if m:
+                mentioned_ja = m.group(1).upper()
+                break
+        ja_confirmed = False
+        if mentioned_ja:
+            if mentioned_ja != correct_letter:
+                new_correct = {"A":0,"B":1,"C":2,"D":3}.get(mentioned_ja)
                 if new_correct is not None:
-                    print(f"[FIX] Q{qi+1} {part}: correct={correct_letter}→{mentioned} (matched explanation_ja)", flush=True)
+                    print(f"[FIX] Q{qi+1} {part}: correct={correct_letter}→{mentioned_ja} (matched explanation_ja)", flush=True)
                     q["correct"] = new_correct
+                    ja_confirmed = True
                 else:
                     all_ok = False
-        # Check English explanation
-        m_en = re.search(r'(?:answer is|correct (?:answer )?is)\s*\(?([A-D])\)?', first_en, re.I)
-        if m_en:
-            mentioned = m_en.group(1).upper()
-            new_letter = ["A","B","C","D"][q.get("correct",0)]
-            if mentioned != new_letter:
-                new_correct = {"A":0,"B":1,"C":2,"D":3}.get(mentioned)
-                if new_correct is not None:
-                    print(f"[FIX] Q{qi+1} {part}: correct→{mentioned} (matched explanation_en)", flush=True)
-                    q["correct"] = new_correct
-                else:
-                    all_ok = False
+            else:
+                ja_confirmed = True  # Japanese matches correct — trusted
+        # Check English explanation — only if Japanese didn't confirm
+        if not ja_confirmed:
+            en_patterns = [
+                r'(?:answer is|correct (?:answer )?is)\s*\(?([A-D])\)?',
+                r'\(?([A-D])\)?\s*is (?:the )?correct',
+            ]
+            mentioned_en = None
+            for pat in en_patterns:
+                m = re.search(pat, expl_en, re.I)
+                if m:
+                    mentioned_en = m.group(1).upper()
+                    break
+            if mentioned_en:
+                new_letter = ["A","B","C","D"][q.get("correct",0)]
+                if mentioned_en != new_letter:
+                    new_correct = {"A":0,"B":1,"C":2,"D":3}.get(mentioned_en)
+                    if new_correct is not None:
+                        print(f"[FIX] Q{qi+1} {part}: correct→{mentioned_en} (matched explanation_en)", flush=True)
+                        q["correct"] = new_correct
+                    else:
+                        all_ok = False
     return all_ok
 
 def normalize_set(raw, part):
@@ -1271,28 +1290,59 @@ MOCK_DIR = SCRIPT_DIR / "mock_data"  # Each batch = separate file
 # ── Audio store: separate from session_state for performance ──
 # session_state holds lightweight items (no audioOpus)
 # _audio_store holds audioOpus keyed by createdAt
-_audio_store = {}  # {createdAt: audioOpus_base64}
+# Use cache_resource to persist across reruns (not serialized with session_state)
+@st.cache_resource
+def _get_audio_store():
+    return {}
+_audio_store = _get_audio_store()
 
 def _strip_audio(item):
-    """Remove audioOpus from item, store in _audio_store. Returns lightweight item."""
+    """Remove ALL audio from item, store in _audio_store. Returns lightweight item."""
     ts = item.get("createdAt", 0)
+    audio_data = {}
+    # Main audio
     if item.get("audioOpus"):
-        _audio_store[ts] = item.pop("audioOpus")
+        audio_data["audioOpus"] = item.pop("audioOpus")
         item.pop("audioFormat", None)
+    # Vocab audio
+    qs = item.get("qSet", {})
+    for vi, v in enumerate(qs.get("vocab", [])):
+        if v.get("audio"):
+            audio_data[f"v{vi}_a"] = v.pop("audio")
+        if v.get("example_audio"):
+            audio_data[f"v{vi}_e"] = v.pop("example_audio")
+    # Listen Q&A audio
+    for qi, q in enumerate(qs.get("questions", [])):
+        if q.get("audio_q"):
+            audio_data[f"q{qi}_q"] = q.pop("audio_q")
+        if q.get("audio_ans"):
+            audio_data[f"q{qi}_a"] = q.pop("audio_ans")
+    if audio_data:
+        _audio_store[ts] = audio_data
     return item
 
 def _restore_audio(item):
-    """Restore audioOpus from _audio_store into item for save/export."""
+    """Restore ALL audio from _audio_store into item for save/export."""
     ts = item.get("createdAt", 0)
-    if ts in _audio_store:
-        item["audioOpus"] = _audio_store[ts]
+    ad = _audio_store.get(ts, {})
+    if not ad: return item
+    if ad.get("audioOpus"):
+        item["audioOpus"] = ad["audioOpus"]
         item["audioFormat"] = "opus"
+    qs = item.get("qSet", {})
+    for vi, v in enumerate(qs.get("vocab", [])):
+        if ad.get(f"v{vi}_a"): v["audio"] = ad[f"v{vi}_a"]
+        if ad.get(f"v{vi}_e"): v["example_audio"] = ad[f"v{vi}_e"]
+    for qi, q in enumerate(qs.get("questions", [])):
+        if ad.get(f"q{qi}_q"): q["audio_q"] = ad[f"q{qi}_q"]
+        if ad.get(f"q{qi}_a"): q["audio_ans"] = ad[f"q{qi}_a"]
     return item
 
 def get_audio(item):
-    """Get audioOpus for an item (from _audio_store or item itself)."""
+    """Get main audioOpus for an item."""
     ts = item.get("createdAt", 0)
-    return _audio_store.get(ts) or item.get("audioOpus")
+    ad = _audio_store.get(ts, {})
+    return ad.get("audioOpus") or item.get("audioOpus")
 
 def load_results(filepath):
     """Load results from JSON file. Strips audioOpus into _audio_store for lightweight session_state."""
@@ -1439,7 +1489,7 @@ def clear_all_mock_batches():
 
 
 if "_init" not in st.session_state:
-    st.session_state._init = True
+    # Set ALL defaults FIRST (before any logic that might fail)
     st.session_state.ollama_url = os.environ.get("OLLAMA_URL","http://localhost:11434")
     st.session_state.gemini_key = os.environ.get("GEMINI_API_KEY","")
     st.session_state.azure_speech_key = os.environ.get("AZURE_SPEECH_KEY","")
@@ -1447,15 +1497,27 @@ if "_init" not in st.session_state:
     st.session_state.azure_speech_endpoint = os.environ.get("AZURE_SPEECH_ENDPOINT","")
     st.session_state.model_key = "auto (per-part recommended)"
     st.session_state.part = "part5"; st.session_state.level = "advanced"; st.session_state.count = 10
+    st.session_state.enable_tts = False; st.session_state.enable_image = False
+    st.session_state.prac_idx = 0; st.session_state.prac_answered = {}
     # Default TTS: Azure if key set, else Edge if available, else Gemini
-    _default_tts = "azure" if st.session_state.azure_speech_key else ("edge" if check_edge_tts() else "gemini")
-    st.session_state.tts_engine = _default_tts; st.session_state.enable_tts = False; st.session_state.enable_image = False
+    try:
+        _default_tts = "azure" if st.session_state.azure_speech_key else ("edge" if check_edge_tts() else "gemini")
+    except Exception:
+        _default_tts = "gemini"
+    st.session_state.tts_engine = _default_tts
     # Load persisted data on startup
     st.session_state.results = load_results(RESULTS_FILE)
     st.session_state.mock_results = load_all_mock_batches()
-    st.session_state.prac_idx = 0; st.session_state.prac_answered = {}
     gk = st.session_state.gemini_key
     print(f"[INIT] key={'set' if gk else 'empty'} | results={len(st.session_state.results)} | mock={len(st.session_state.mock_results)}", flush=True)
+    st.session_state._init = True  # Set LAST so incomplete init retries
+
+# Safety defaults — ensure critical keys exist even if init was from old version
+for _k, _v in {"enable_tts": False, "enable_image": False, "prac_idx": 0, "prac_answered": {},
+               "tts_engine": "edge", "azure_speech_key": "", "azure_speech_region": "eastus",
+               "azure_speech_endpoint": ""}.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
 # ══════════════════════════════════════
 # Sidebar
@@ -1773,10 +1835,14 @@ with st.sidebar:
             if st.button(label, use_container_width=True, key="part_delete"):
                 if selected_part == "全パート":
                     st.session_state.results = []
+                    _audio_store.clear()
                 else:
                     st.session_state.results = [r for r in st.session_state.results if r.get("part") != selected_part]
                 save_results(RESULTS_FILE, st.session_state.results)
                 st.session_state.pop("_export_data", None)
+                st.session_state.pop("_prac_cache_key", None)
+                st.session_state.prac_idx = 0
+                st.session_state.prac_answered = {}
                 st.rerun()
 
     # HTML export — lazy (don't json.dumps until clicked)
