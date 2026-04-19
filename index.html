@@ -1591,13 +1591,9 @@ async function stockSave(part, level, qSet, imgUrl) {
     console.warn(`[STOCK REJECT] part1: photograph question without image`);
     throw new Error(`part1 requires an image but none generated`);
   }
-  // Rule 3: Graphic questions require BOTH image AND table data.
-  // Some graphics (maps, floor plans) can't be rendered as tables, so image is mandatory.
+  // Rule 3: Graphic questions require table data (headers+rows).
+  // Image is optional — if absent, renderGraphic() displays as HTML table.
   if (qSet && qSet.graphic) {
-    if (!imgUrl) {
-      console.warn(`[STOCK REJECT] ${part}: graphic question without image`);
-      throw new Error(`${part} graphic question requires an image`);
-    }
     const g = qSet.graphic;
     if (!g.headers || !g.rows || !g.rows.length) {
       console.warn(`[STOCK REJECT] ${part}: graphic missing headers/rows`);
@@ -1682,9 +1678,8 @@ function validateStockItem(item) {
   const isListening = ["part1","part2","part3","part4"].includes(item.part);
   if (isListening && !item.audioOpus && !item.audioPcm) return {ok:false, reason:"listening without audio"};
   if (item.part === "part1" && !item.imgUrl) return {ok:false, reason:"part1 without image"};
-  // Graphic questions: require BOTH image AND graphic data
+  // Graphic questions: require table data (headers+rows). Image is optional.
   if (item.qSet && item.qSet.graphic) {
-    if (!item.imgUrl) return {ok:false, reason:"graphic without image"};
     const g = item.qSet.graphic;
     if (!g.headers || !g.rows || !g.rows.length) {
       return {ok:false, reason:"graphic missing headers/rows"};
@@ -3751,10 +3746,13 @@ async function mockStockImport(items) {
       console.warn("[MOCK IMPORT] Rejecting Part 1 without image");
       rejected++; continue;
     }
-    // Reject graphic questions without image (maps/floorplans can't be tables)
-    if (item.qSet && item.qSet.graphic && !item.imgUrl) {
-      console.warn("[MOCK IMPORT] Rejecting graphic question without image");
-      rejected++; continue;
+    // Graphic questions: table data validated at display time (image optional)
+    if (item.qSet && item.qSet.graphic) {
+      const g = item.qSet.graphic;
+      if (!g.headers || !g.rows || !g.rows.length) {
+        console.warn("[MOCK IMPORT] Rejecting graphic question without table data");
+        rejected++; continue;
+      }
     }
     const ts = item.createdAt || Date.now();
     if (seen.has(ts)) { skipped++; continue; }
@@ -4055,7 +4053,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19a · listen audio playClip · check→shuffle fix · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19b · graphic table fallback · listen audio playClip · check→shuffle fix · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
