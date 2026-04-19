@@ -2481,9 +2481,53 @@ function handleAnswer(idx) {
   // （途中の設問ではタイマー継続）
   // 判定モードON → 記録 + 不正解は自動ストック
   if (S.judgeMode && !S.stockCreateMode) {
+    // Determine question type from multiple sources
+    let qType = "unknown";
+    // 1. Fresh generation: _sessionTypes has the type
     const typePool = _sessionTypes[S.part] || [];
     const typeObj = typePool[S.sessionNum-1] || {};
-    judgeSave(S.part, S.level, typeObj.type, qi, isCorrect, q.question, elapsed).catch(e=>console.warn('judge save failed:', e));
+    if (typeObj.type) { qType = typeObj.type; }
+    // 2. Stock item: extract type from explanation_ja (pattern: 出題: xxx or 出題タイプ: xxx)
+    if (qType === "unknown" && q.explanation_ja) {
+      const m = q.explanation_ja.match(/出題[タイプ]*[:：]\s*([a-z0-9_]+)/);
+      if (m) qType = m[1];
+    }
+    // 3. Stock item: try qSet-level type fields (talk_type for Part4, doc_type for Part6/7, _questionType for new)
+    if (qType === "unknown" && S.qSet) {
+      qType = S.qSet._questionType || S.qSet.talk_type || S.qSet.doc_type || S.qSet.doc_type_1 || "unknown";
+    }
+    // 4. Part 5: infer type from choices structure
+    if (qType === "unknown" && S.part === "part5" && q.choices) {
+      const ch = q.choices.map(c=>c.replace(/^\([A-D]\)\s*/,"").toLowerCase());
+      const preps = ["in","on","at","by","for","to","with","from","of","about","during","since","until","between","among","through","within","toward"];
+      const conjs = ["although","because","however","therefore","unless","whereas","while","despite","moreover","furthermore","nevertheless","since","though","if"];
+      if (ch.every(c=>preps.includes(c.trim()))) qType = "preposition_basic";
+      else if (ch.some(c=>conjs.includes(c.trim()))) qType = "conjunction_contrast";
+      else {
+        // Check word form: do choices share a root (first 4 letters)?
+        const roots = ch.map(c=>c.replace(/[^a-z]/g,"").slice(0,4));
+        if (roots[0].length >= 4 && roots.filter(r=>r===roots[0]).length >= 3) qType = "word_form";
+        else qType = "vocab_context";
+      }
+    }
+    // 5. Part 3: infer scenario from conversation keywords
+    if (qType === "unknown" && S.part === "part3" && S.qSet) {
+      const conv = (S.qSet.conversation||"").toLowerCase();
+      const kw = [
+        ["printer|copier|computer|server|network","office_equipment"],["schedule|reschedule|postpone|cancel the meeting","schedule_change"],
+        ["project|deadline|milestone|progress","project_discussion"],["hotel|check.in|check.out|room","hotel_checkin"],
+        ["restaurant|reserv|table for|menu","restaurant_order"],["flight|airport|boarding|luggage","airport_travel"],
+        ["repair|fix|broken|maintenance","repair_maintenance"],["interview|candidate|hiring|resume","hiring_interview"],
+        ["train|workshop|certification|seminar","training_workshop"],["client|contract|proposal|negotiate","client_negotiation"],
+        ["complaint|refund|dissatisfied|apologize","complaint_resolution"],["new employee|orientation|first day","new_employee"],
+        ["transfer|promotion|department|position","promotion_transfer"],["event|conference|venue|catering","event_planning"],
+      ];
+      for (const [pattern, type] of kw) {
+        if (new RegExp(pattern).test(conv)) { qType = type; break; }
+      }
+      if (qType === "unknown") qType = "office_general";
+    }
+    judgeSave(S.part, S.level, qType, qi, isCorrect, q.question, elapsed).catch(e=>console.warn('judge save failed:', e));
     // 不正解 → 苦手問題として自動ストック（同一qSetで1回だけ）
     if (!isCorrect && S.qSet && !S.qSet._weakStocked) {
       S.qSet._weakStocked = true;

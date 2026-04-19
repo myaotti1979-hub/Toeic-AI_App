@@ -1073,6 +1073,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
             print(f"[WARN] Retry also inconsistent, keeping original", flush=True)
     # Shuffle AFTER consistency check
     qs = shuffle_answer_positions(qs)
+    qs["_questionType"] = to.get("type", "unknown")  # Save type for diagnosis
     real_part = qs.get("part", actual_part)
     item = {"part": real_part, "level": level,
             "createdAt": int(time.time()*1000) + idx_seed,
@@ -2137,6 +2138,7 @@ with tab_gen:
                         print(f"[WARN] Retry also inconsistent, keeping original", flush=True)
                 # Shuffle AFTER consistency check
                 qs = shuffle_answer_positions(qs)
+                qs["_questionType"] = to.get("type", "unknown")  # Save type for diagnosis
                 real_part = qs.get("part", actual_part)
                 item = {"part":real_part,"level":level,"createdAt":int(time.time()*1000)+i,"qSet":qs,"imgUrl":None,"audioOpus":None}
                 if do_tts and qs.get("audio"):
