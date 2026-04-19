@@ -80,7 +80,7 @@ PART_DEFAULT_MODEL = {
     "part2": "gemini-3-flash (API best value)",
     "part3": "gemini-3-flash (API best value)",
     "part3_3p": "gemini-3-flash (API best value)",
-    "part4": "gemma3:12b (12B local GPU)",
+    "part4": "gemini-3-flash (API best value)",
     "part5": "gemma3:12b (12B local GPU)",
     "part6": "gemini-3-flash (API best value)",
     "part7": "gemini-3-flash (API best value)",
@@ -659,15 +659,34 @@ def azure_tts(text, key, region, voice=None, rate="0%"):
     return resp.content  # MP3 bytes
 
 def azure_tts_conv(text, key, region, speakers=None):
-    """Azure Speech multi-speaker TTS for conversations. Returns MP3 bytes."""
+    """Azure Speech multi-speaker TTS. Assigns fixed voice per speaker."""
+    # Build speaker → voice mapping (consistent throughout conversation)
+    spk = speakers or ["Man", "Woman"]
+    fp, mp = AZURE_VOICES_F.copy(), AZURE_VOICES_M.copy()
+    random.shuffle(fp); random.shuffle(mp)
+    fi = mi = 0; voice_map = {}
+    for s in spk:
+        if s.lower().startswith("woman"):
+            voice_map[s] = fp[fi % len(fp)]; fi += 1
+        else:
+            voice_map[s] = mp[mi % len(mp)]; mi += 1
+    print(f"[AZURE-TTS] Voice map: {voice_map}", flush=True)
+
     lines = [l.strip() for l in text.replace("\\n","\n").split("\n") if l.strip()]
     all_mp3 = b""
     for line in lines:
-        m = re.match(r'(Man|Woman|Speaker)\s*\d?\s*:\s*(.*)', line, re.I)
+        m = re.match(r'((?:Man|Woman|Speaker)\s*\d?)\s*:\s*(.*)', line, re.I)
         if m:
-            gender = "female" if m.group(1).lower() == "woman" else "male"
-            voice = random.choice(AZURE_VOICES_F if gender == "female" else AZURE_VOICES_M)
+            label = m.group(1).strip()
             spoken = m.group(2).strip()
+            # Find voice from map (try exact match, then prefix match)
+            voice = voice_map.get(label)
+            if not voice:
+                for k, v in voice_map.items():
+                    if k.lower().startswith(label.lower()[:3]):
+                        voice = v; break
+            if not voice:
+                voice = random.choice(AZURE_VOICES_F + AZURE_VOICES_M)
         else:
             voice = random.choice(AZURE_VOICES_F + AZURE_VOICES_M)
             spoken = line
