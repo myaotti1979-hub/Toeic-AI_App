@@ -1497,7 +1497,7 @@ if "_init" not in st.session_state:
     st.session_state.azure_speech_endpoint = os.environ.get("AZURE_SPEECH_ENDPOINT","")
     st.session_state.model_key = "auto (per-part recommended)"
     st.session_state.part = "part5"; st.session_state.level = "advanced"; st.session_state.count = 10
-    st.session_state.enable_tts = False; st.session_state.enable_image = False
+    st.session_state.enable_tts = True; st.session_state.enable_image = False
     st.session_state.prac_idx = 0; st.session_state.prac_answered = {}
     # Default TTS: Azure if key set, else Edge if available, else Gemini
     try:
@@ -1952,16 +1952,6 @@ with tab_gen:
     c3,c4,c5 = st.columns([2,1,1])
     with c3: st.number_input("Questions",1,500,key="count")
     is_listening = st.session_state.part in ("part1","part2","part3","part4","graphic")
-    # Auto-enable TTS when listening part is selected
-    if is_listening and not st.session_state.enable_tts:
-        st.session_state.enable_tts = True
-    elif not is_listening and st.session_state.enable_tts:
-        st.session_state.enable_tts = False
-    # Auto-enable image when graphic mode is selected (and Part 1)
-    if st.session_state.part in ("part1","graphic") and not st.session_state.enable_image:
-        st.session_state.enable_image = True
-    elif st.session_state.part not in ("part1","graphic"):
-        st.session_state.enable_image = False
     with c4: st.checkbox("🔊 TTS", key="enable_tts", disabled=not is_listening)
     with c5: st.checkbox("🖼️ Image", key="enable_image", disabled=st.session_state.part not in ("part1","graphic"))
 
