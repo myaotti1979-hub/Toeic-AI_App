@@ -1850,25 +1850,143 @@ async function updateStockStreak(id, correct) {
   });
 }
 
+// Generic file download helper
+function downloadFile(data, filename) {
+  const file = new File([data], filename, {type:"application/json"});
+  if (navigator.canShare && navigator.canShare({files:[file]})) {
+    navigator.share({files:[file], title:filename}).catch(()=>{});
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function stockExport() {
   const all = await stockGetAll();
-  const json = JSON.stringify(all);
-  const d = new Date().toISOString().slice(0,10);
-  const filename = `toeic-stock-${d}.json`;
-  const file = new File([json], filename, {type:"application/json"});
+  downloadFile(JSON.stringify(all), `toeic-stock-${new Date().toISOString().slice(0,10)}.json`);
+}
 
-  // 共有APIが使えればフォルダ選択可能（Google Drive等）
-  if (navigator.canShare && navigator.canShare({files:[file]})) {
-    try {
-      await navigator.share({files:[file], title:"TOEICストック", text:`${all.length}問のストックデータ`});
-      return;
-    } catch(e) { if(e.name==="AbortError") return; }
+// Per-part export (streaming: loads 100 items at a time, outputs 1 file)
+async function stockExportPart(partId, onProgress) {
+  const db = await openStockDB();
+  // Collect all IDs for this part (light scan — no audio loaded)
+  const ids = await new Promise((resolve, reject) => {
+    const arr = [];
+    const tx = db.transaction("questions","readonly");
+    const req = tx.objectStore("questions").openCursor();
+    req.onsuccess = (e) => {
+      const c = e.target.result;
+      if (c) { if (c.value.part === partId) arr.push(c.value.id); c.continue(); }
+      else resolve(arr);
+    };
+    req.onerror = () => reject(req.error);
+  });
+  if (ids.length === 0) { alert(`${partId} のストックがありません`); return null; }
+
+  // Build Blob in chunks of 100 items (never hold more than ~35MB in memory)
+  const CHUNK = 100;
+  const blobParts = ["["];
+  let totalSize = 1;
+  const totalChunks = Math.ceil(ids.length / CHUNK);
+
+  for (let ci = 0; ci < totalChunks; ci++) {
+    const chunkIds = ids.slice(ci * CHUNK, (ci + 1) * CHUNK);
+    const items = [];
+    for (const id of chunkIds) {
+      const item = await stockGetById(id);
+      if (item) items.push(item);
+    }
+    const json = JSON.stringify(items);
+    // Strip outer [ ] and append
+    const inner = json.slice(1, -1);
+    if (ci > 0) { blobParts.push(","); totalSize += 1; }
+    blobParts.push(inner);
+    totalSize += inner.length;
+    if (onProgress) onProgress(ci + 1, totalChunks);
   }
-  // フォールバック: 通常ダウンロード
-  const url = URL.createObjectURL(file);
-  const a = document.createElement("a");
-  a.href=url; a.download=filename; a.click();
-  URL.revokeObjectURL(url);
+  blobParts.push("]");
+  totalSize += 1;
+
+  const blob = new Blob(blobParts, {type: "application/json"});
+  const d = new Date().toISOString().slice(0,10);
+  const filename = `toeic-stock-${partId}-${d}.json`;
+  const file = new File([blob], filename, {type: "application/json"});
+
+  if (navigator.canShare && navigator.canShare({files:[file]})) {
+    try { await navigator.share({files:[file], title:filename}); }
+    catch(e) { if (e.name !== "AbortError") throw e; }
+  } else {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+  return {count: ids.length, sizeMB: (totalSize / 1024 / 1024).toFixed(1)};
+}
+
+// Vocab export
+async function vocabExportAll() {
+  const words = await vocabGetAll();
+  if (words.length === 0) { alert("単語帳にデータがありません"); return; }
+  downloadFile(JSON.stringify({type:"vocab", data: words}), `toeic-vocab-${new Date().toISOString().slice(0,10)}.json`);
+  return words.length;
+}
+
+// Judge history export
+async function judgeExportAll() {
+  const history = await judgeGetAll();
+  if (history.length === 0) { alert("判定データがありません"); return; }
+  downloadFile(JSON.stringify({type:"judge", data: history}), `toeic-judge-${new Date().toISOString().slice(0,10)}.json`);
+  return history.length;
+}
+
+// Smart import: detect file type and import accordingly
+async function dataImportSmart(file) {
+  const text = await file.text();
+  const parsed = JSON.parse(text);
+
+  // Detect type
+  if (parsed.type === "vocab" && Array.isArray(parsed.data)) {
+    // Vocab import
+    const db = await openVocabDB();
+    let added = 0;
+    for (const w of parsed.data) {
+      await new Promise((resolve) => {
+        const tx = db.transaction("words","readwrite");
+        const store = tx.objectStore("words");
+        // Remove id to let auto-increment assign new ones
+        const entry = {...w}; delete entry.id;
+        store.add(entry);
+        tx.oncomplete = () => { added++; resolve(); };
+        tx.onerror = () => resolve(); // skip duplicates
+      });
+    }
+    return {type:"vocab", count: added, total: parsed.data.length};
+  }
+
+  if (parsed.type === "judge" && Array.isArray(parsed.data)) {
+    // Judge history import
+    const db = await openJudgeDB();
+    let added = 0;
+    for (const h of parsed.data) {
+      await new Promise((resolve) => {
+        const tx = db.transaction("history","readwrite");
+        const entry = {...h}; delete entry.id;
+        tx.objectStore("history").add(entry);
+        tx.oncomplete = () => { added++; resolve(); };
+        tx.onerror = () => resolve();
+      });
+    }
+    return {type:"judge", count: added, total: parsed.data.length};
+  }
+
+  // Default: stock questions (array of items)
+  if (Array.isArray(parsed)) {
+    const r = await stockImport(file);
+    return {type:"stock", ...r};
+  }
+
+  throw new Error("不明なファイル形式です");
 }
 
 async function stockImport(file) {
@@ -2727,9 +2845,73 @@ async function renderStockSelect() {
       ${totalMastered>0?`<button class="btn-s" id="stockResetMastered" style="font-size:12px;color:#60a5fa">🔄 卒業フラグをリセット</button>`:""}
     </div>
     <input type="file" id="stockFileInput" accept=".json" style="display:none">
+
+    <div style="margin-top:24px;padding:16px;background:rgba(129,140,248,0.05);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
+      <div style="font-size:13px;font-weight:700;color:#7b9cf7;margin-bottom:8px">📱 データ移行（スマホ機種変更時）</div>
+      <div style="font-size:11px;color:#7a8ea5;margin-bottom:10px">パート別にエクスポートすれば大容量でも安全です</div>
+      <div style="font-size:12px;font-weight:600;color:#a0b4c8;margin-bottom:6px">エクスポート</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+        ${PARTS.map(p=>{
+          const items = byPart[p.id]||[];
+          if (!items.length) return "";
+          return `<button class="btn-s" data-export-part="${p.id}" style="font-size:10px;padding:3px 8px">${p.icon} ${p.label} (${items.length})</button>`;
+        }).join("")}
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn-s" id="vocabExportBtn" style="font-size:10px;padding:3px 8px;color:#60a5fa">📝 単語帳</button>
+        <button class="btn-s" id="judgeExportBtn" style="font-size:10px;padding:3px 8px;color:#4ade80">📊 学習履歴</button>
+      </div>
+      <div style="font-size:12px;font-weight:600;color:#a0b4c8;margin:8px 0 6px">インポート</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-bottom:6px">ストック / 単語帳 / 学習履歴を自動判別</div>
+      <button class="btn-s" id="migImportBtn" style="font-size:12px;width:100%">📥 ファイルを選択してインポート</button>
+      <input type="file" id="migFileInput" accept=".json" multiple style="display:none">
+    </div>
+
     ${total>0?`<div style="margin-top:60px;text-align:center"><button class="btn-s" id="stockClearBtn" style="color:#f87171;font-size:11px;opacity:0.6">🗑️ 全ストック削除</button></div>`:""}`;
 
-  // 卒業済削除（パート別）
+  // パート別エクスポート（1パート1ファイル・ストリーミング）
+  document.querySelectorAll("[data-export-part]").forEach(el=>{
+    el.onclick=async()=>{
+      const partId = el.dataset.exportPart;
+      el.textContent="⏳ 準備中...";
+      try {
+        const r = await stockExportPart(partId, (done, total) => {
+          el.textContent = `⏳ ${Math.round(done/total*100)}%...`;
+        });
+        if (r) el.textContent = `✅ ${r.count}問 (${r.sizeMB}MB)`;
+      } catch(e) { el.textContent="❌ 失敗"; console.error(e); }
+    };
+  });
+  // 単語帳エクスポート
+  const veb=$("vocabExportBtn"); if(veb) veb.onclick=async()=>{
+    veb.textContent="⏳...";
+    const n = await vocabExportAll();
+    if (n) veb.textContent=`✅ ${n}語`;
+  };
+  // 学習履歴エクスポート
+  const jeb=$("judgeExportBtn"); if(jeb) jeb.onclick=async()=>{
+    jeb.textContent="⏳...";
+    const n = await judgeExportAll();
+    if (n) jeb.textContent=`✅ ${n}件`;
+  };
+  // スマートインポート
+  const mib=$("migImportBtn"); if(mib) mib.onclick=()=>$("migFileInput").click();
+  const mfi=$("migFileInput"); if(mfi) mfi.onchange=async(e)=>{
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    mib.textContent=`⏳ ${files.length}ファイル処理中...`;
+    const results = [];
+    for (const f of files) {
+      try {
+        const r = await dataImportSmart(f);
+        results.push(`${f.name}: ${r.type}${r.count!==undefined?` ${r.count}件`:""}`);
+      } catch(err) {
+        results.push(`${f.name}: ❌ ${err.message}`);
+      }
+    }
+    alert(`インポート結果:\n${results.join("\n")}`);
+    render();
+  };  // 卒業済削除（パート別）
   document.querySelectorAll("[data-del-mastered]").forEach(el=>{
     el.onclick=async()=>{
       const partId = el.dataset.delMastered;
