@@ -133,7 +133,7 @@ BLANK_RULE = '\nCRITICAL BLANK RULE — The sentence MUST contain EXACTLY ONE bl
 BLANK_RULE6 = '\nCRITICAL: The text MUST contain exactly 4 blanks written as (1)------- (2)------- (3)------- (4)-------. Without these blanks the output is INVALID.'
 ANSWER_POSITION = '\nANSWER POSITION RULE — CRITICAL: The correct answer MUST be RANDOMLY distributed across positions. Do NOT always put the correct answer at (A)/index 0. Vary the "correct" field: use 0, 1, 2, 3 with roughly equal frequency. If generating multiple questions, NEVER make them all the same position.'
 CHOICE_RULE = '\nCHOICE COUNT RULE — STRICT: Every question MUST have EXACTLY 4 choices labeled (A), (B), (C), (D). NEVER include (E) or more. Part 2 MUST have EXACTLY 3 choices (A), (B), (C). This is a hard TOEIC format requirement — violating it makes the output INVALID.'
-VOCAB_RULE = '\nVOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence). Choose words KEY to solving the question.'
+VOCAB_RULE = '\nVOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence), "level" (word difficulty: "A" = basic ~600 level words like delay/confirm/available, "B" = intermediate 600-800 words like negotiate/reimburse/mandatory, "C" = advanced 800+ words like procurement/arbitration/discretionary). IMPORTANT: "level" reflects the WORD ITSELF difficulty, NOT the question difficulty. A basic word like "schedule" is always "A" even in an advanced question. Choose words KEY to solving the question.'
 CONSISTENCY = '\nCONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointing to the correct choice. The "explanation_ja" and "explanation_en" MUST refer to the SAME letter as "correct" (correct=0→A, correct=1→B, correct=2→C, correct=3→D). NEVER write "正解は(C)" if correct=3, NEVER write "The answer is B" if correct=0. ALWAYS verify the correct letter matches before responding.\nEXPLANATION FORMAT — MANDATORY: explanation_ja MUST start with "正解は(X)。" where X is the correct letter (A/B/C/D). Then explain why it is correct and why each wrong answer is wrong. Example: "正解は(B)。[理由]。(A)は[なぜ間違い]。(C)は[なぜ間違い]。(D)は[なぜ間違い]。"\nDISTRACTOR QUALITY — ALL PARTS: Wrong answers must NOT be valid answers to the question. Each wrong answer must fail for a clear, identifiable reason. If a wrong answer could reasonably be correct, replace it with something clearly wrong.'
 AUDIO_RULE = '\nAUDIO CONSISTENCY RULE — CRITICAL: The "audio" field MUST contain the EXACT SAME text as what will be shown/read. For Part 1: audio MUST be verbatim "(A) <choice A text>. (B) <choice B text>. (C) <choice C text>. (D) <choice D text>." with the EXACT same wording as in the "choices" array. For Part 2: audio MUST be "<spoken question>. (A) <choice A>. (B) <choice B>. (C) <choice C>." with identical text. For Part 3: audio MUST be the EXACT "conversation" text. For Part 4: audio MUST be the EXACT "talk" text. NEVER use placeholders like [spoken] or [same as talk] — always write the literal text. If audio text differs from choices/conversation/talk, the output is INVALID.'
 
@@ -200,7 +200,7 @@ def build_prompt(level, part, t):
     GRULE = ""
     if is_graphic:
         GRULE = '\\nGRAPHIC DATA — MANDATORY: You MUST include a "graphic" field in the JSON with structured data that the test-taker will see alongside the conversation/talk/text. The conversation/talk MUST reference specific data from this graphic. EXACTLY ONE of the 3 questions MUST start with "Look at the graphic." and can ONLY be answered by reading the graphic data.\\nGraphic format: "graphic":{{"title":"Graphic Title","headers":["Column1","Column2","Column3"],"rows":[["row1col1","row1col2","row1col3"],["row2col1","row2col2","row2col3"]]}}\\nMatch the graphic to the scenario type:\\n- Schedule/Agenda: headers=["Time","Event","Room"], rows=[["9:00 AM","Opening Remarks","Main Hall"],["10:00 AM","Workshop A","Room 201"]]\\n- Price list/Menu: headers=["Service","Standard","Premium"], rows=[["Oil Change","$35","$55"],["Tire Rotation","$25","$40"]]\\n- Order form/Invoice: headers=["Item","Qty","Unit Price","Total"], rows=[["Desk lamp","5","$35.00","$175.00"],["Monitor stand","3","$48.00","$144.00"]]\\n- Floor map/Seating: headers=["Room/Area","Department","Contact"], rows=[["Suite 301","Marketing","Ms. Chen"],["Suite 302","Finance","Mr. Park"]]\\n- Bar/Pie chart data: headers=["Quarter","Revenue ($M)","Growth (%)"], rows=[["Q1","12.4","8%"],["Q2","14.1","14%"],["Q3","11.8","-16%"]]\\n- Survey results: headers=["Category","Satisfaction (%)","Responses"], rows=[["Customer Service","92%","847"],["Delivery Speed","78%","823"]]\\n- Map/Directions: headers=["Destination","Building","Walking Time"], rows=[["Cafeteria","Building B","5 min"],["Parking","Lot C","8 min"]]\\n- Comparison: headers=["Feature","Plan A","Plan B","Plan C"], rows=[["Storage","10 GB","50 GB","Unlimited"],["Price/mo","$9.99","$19.99","$29.99"]]\\nUse 3-6 rows and 3-5 columns. Data must be SPECIFIC (real numbers, names, times) — never use placeholder text.'
-    VEX = ',"vocab":[{{"word":"English word","pos":"noun","ja":"日本語","example":"Short sentence"}},{{"word":"word2","pos":"verb","ja":"訳","example":"sentence"}},{{"word":"word3","pos":"adjective","ja":"訳","example":"sentence"}}]'
+    VEX = ',"vocab":[{{"word":"English word","pos":"noun","ja":"日本語","example":"Short sentence","level":"B"}},{{"word":"word2","pos":"verb","ja":"訳","example":"sentence","level":"A"}},{{"word":"word3","pos":"adjective","ja":"訳","example":"sentence","level":"C"}}]'
     # Get level-specific rules per part
     R1 = get_level_rules("part1", level)
     R2 = get_level_rules("part2", level)
@@ -1754,6 +1754,8 @@ def build_vocab_list(results):
             audio = v.get("audio","") or ad.get(f"v{vi}_a","")
             ex_audio = v.get("example_audio","") or ad.get(f"v{vi}_e","")
             if not word: continue
+            word_level = v.get("level", "").strip().upper()  # A/B/C word difficulty
+            if word_level not in ("A","B","C"): word_level = ""
             base = lemmatize(word)
             if base in word_map:
                 idx = word_map[base]
@@ -1764,9 +1766,11 @@ def build_vocab_list(results):
                     all_vocab[idx]["_meanings"] = existing_meanings
                 if audio and not all_vocab[idx].get("_audio"):
                     all_vocab[idx]["_audio"] = audio
+                if word_level and not all_vocab[idx].get("_word_level"):
+                    all_vocab[idx]["_word_level"] = word_level
             else:
                 entry = {"word":word, "ja":ja, "example":example, "_part":part, "_level":level,
-                         "_pos":pos, "_audio":audio, "_example_audio":ex_audio,
+                         "_pos":pos, "_audio":audio, "_example_audio":ex_audio, "_word_level":word_level,
                          "_meanings":[{"ja":ja,"example":example,"example_audio":ex_audio}]}
                 word_map[base] = len(all_vocab)
                 all_vocab.append(entry)
@@ -1928,7 +1932,7 @@ with st.sidebar:
 
 
     st.divider()
-    st.caption("v2026.04.19a · check→shuffle fix · listen audio(Edge) · 303 types")
+    st.caption("v2026.04.19d · vocab SRS + level(A/B/C) + same-POS quiz · flashcard queue · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2817,6 +2821,56 @@ with tab_vocab:
             with cc2:
                 if st.button("🤖 AI整理 (LLM類推)", key="vocab_cleanup_llm", help="LLMで意味の重複を高精度に判定"):
                     _do_llm_vocab_cleanup(all_vocab)
+            # Level classification
+            no_level = [v for v in all_vocab if not v.get("_word_level")]
+            if no_level:
+                if st.button(f"🏷️ レベル判定 ({len(no_level)}語)", key="vocab_level_btn", help="A基礎/B中級/C上級を一括判定"):
+                    api_key = st.session_state.gemini_key
+                    url = st.session_state.ollama_url
+                    if not api_key and not url:
+                        st.error("Gemini APIキーまたはOllama URLが必要です")
+                    else:
+                        prog = st.progress(0)
+                        stat = st.empty()
+                        done, failed = 0, 0
+                        for i in range(0, len(no_level), 30):
+                            batch = no_level[i:i+30]
+                            word_list = ", ".join(v.get("word","") for v in batch)
+                            prompt = f"""Classify each English word/phrase by TOEIC difficulty level.
+A = basic vocabulary (~600 level): common everyday/office words like schedule, confirm, available, delay, attend
+B = intermediate (600-800 level): business vocabulary like negotiate, reimburse, mandatory, comply, substantial
+C = advanced (800+ level): sophisticated vocabulary like procurement, arbitration, discretionary, remuneration
+
+Words to classify: {word_list}
+
+Respond with ONLY a JSON object, no markdown:
+{{"results":[{{"word":"...","level":"A"}},{{"word":"...","level":"B"}},...]}}'"""
+                            try:
+                                raw = generate_text(prompt, "gemini", "gemini-2.0-flash-lite", url, api_key)
+                                import json as _json
+                                cleaned = raw.replace("```json","").replace("```","").strip()
+                                parsed = _json.loads(cleaned)
+                                if parsed.get("results"):
+                                    level_map = {r["word"].lower(): r["level"].upper() for r in parsed["results"] if r.get("level","").upper() in ("A","B","C")}
+                                    for v in batch:
+                                        lv = level_map.get(v["word"].lower())
+                                        if lv:
+                                            # Find and update in results
+                                            for r in st.session_state.results:
+                                                qs = r.get("qSet",{})
+                                                for vw in qs.get("vocab",[]):
+                                                    if lemmatize(vw.get("word","")) == lemmatize(v["word"]):
+                                                        vw["level"] = lv
+                                            done += 1
+                            except Exception as e:
+                                print(f"[LEVEL] batch error: {e}", flush=True)
+                                failed += len(batch)
+                            prog.progress(min((i+30)/len(no_level), 1.0))
+                            stat.info(f"⏳ {done}/{len(no_level)}語を判定中...")
+                            if i + 30 < len(no_level): time.sleep(1.5)
+                        save_results(RESULTS_FILE, st.session_state.results)
+                        stat.success(f"✅ レベル判定完了: {done}語 (失敗: {failed}語)")
+                        st.rerun()
 
             # POS tabs
             POS_LABELS = {"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ","other":"その他"}
@@ -2847,7 +2901,9 @@ with tab_vocab:
                         with lc1:
                             pos_badge = v.get("_pos","")
                             pos_color = {"noun":"#60a5fa","verb":"#4ade80","adjective":"#fbbf24","adverb":"#c084fc","phrase":"#f472b6"}.get(pos_badge,"#94a3b8")
-                            st.markdown(f"**{v.get('word','')}**<br><span style='font-size:10px;color:{pos_color}'>{pos_badge}</span>", unsafe_allow_html=True)
+                            wlv = v.get("_word_level","")
+                            wlv_html = {"A":"<span style='font-size:9px;background:#22c55e22;color:#22c55e;padding:1px 4px;border-radius:3px;margin-left:4px'>A</span>","B":"<span style='font-size:9px;background:#f59e0b22;color:#f59e0b;padding:1px 4px;border-radius:3px;margin-left:4px'>B</span>","C":"<span style='font-size:9px;background:#ef444422;color:#ef4444;padding:1px 4px;border-radius:3px;margin-left:4px'>C</span>"}.get(wlv,"")
+                            st.markdown(f"**{v.get('word','')}**<br><span style='font-size:10px;color:{pos_color}'>{pos_badge}</span>{wlv_html}", unsafe_allow_html=True)
                         with lc2:
                             for mi, m in enumerate(meanings):
                                 prefix = f"{'❶❷❸❹❺❻❼❽❾❿'[mi]} " if len(meanings)>1 and mi<10 else f"({mi+1}) " if len(meanings)>1 else ""
@@ -2900,36 +2956,61 @@ with tab_vocab:
                                     st.rerun()
                 else:  # Flashcard
                     fck = f"fc_{tab_key}"
-                    if fck+"_idx" not in st.session_state: st.session_state[fck+"_idx"] = 0
+                    if fck+"_queue" not in st.session_state:
+                        q = list(range(len(vocab_list)))
+                        random.shuffle(q)
+                        st.session_state[fck+"_queue"] = q
+                        st.session_state[fck+"_got"] = 0
+                        st.session_state[fck+"_miss"] = 0
                     if fck+"_show" not in st.session_state: st.session_state[fck+"_show"] = False
-                    fi = st.session_state[fck+"_idx"] % len(vocab_list)
-                    v = vocab_list[fi]
-                    st.markdown(f"<div style='text-align:center;padding:8px'><span style='font-size:12px;color:#64748b'>{fi+1}/{len(vocab_list)}</span></div>", unsafe_allow_html=True)
-                    if not st.session_state[fck+"_show"]:
-                        st.markdown(f"<div style='text-align:center;padding:40px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:36px;margin:0'>{v.get('word','')}</h1></div>", unsafe_allow_html=True)
-                        fc1, fc2, fc3 = st.columns([1,2,1])
-                        with fc1:
-                            audio_data = v.get("_audio","")
-                            if audio_data and st.button("🔊", key=f"fcp_{fck}", use_container_width=True):
-                                import streamlit.components.v1 as comp
-                                comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{audio_data}"></audio>', height=0)
-                        with fc2:
-                            if st.button("👁️ Show", use_container_width=True, type="primary", key=f"fcs_{fck}"):
-                                st.session_state[fck+"_show"] = True; st.rerun()
-                        with fc3:
-                            if st.button("⏭️", use_container_width=True, key=f"fcn_{fck}"):
-                                st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
+                    queue = st.session_state[fck+"_queue"]
+                    if not queue:
+                        got = st.session_state.get(fck+"_got",0)
+                        miss = st.session_state.get(fck+"_miss",0)
+                        st.success(f"🎉 全{got+miss}語完了！ ✅{got} / ❌{miss}")
+                        if st.button("🔄 もう一度", key=f"fcr_{fck}"):
+                            del st.session_state[fck+"_queue"]; st.rerun()
                     else:
-                        meanings = v.get("_meanings",[])
-                        mhtml = "".join(f"<div style='margin:6px 0'><span style='font-size:20px;color:#818cf8'>{'❶❷❸❹❺❻❼❽❾❿'[i] if len(meanings)>1 and i<10 else ''} {m.get('ja','')}</span><br><span style='font-size:13px;color:#94a3b8'>💬 {m.get('example','')}</span></div>" for i,m in enumerate(meanings))
-                        st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{mhtml}</div>", unsafe_allow_html=True)
-                        fc1, fc2 = st.columns(2)
-                        with fc1:
-                            if st.button("❌ Didn't Know", use_container_width=True, key=f"fcx_{fck}"):
-                                st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
-                        with fc2:
-                            if st.button("✅ Got It!", use_container_width=True, type="primary", key=f"fcy_{fck}"):
-                                st.session_state[fck+"_idx"] = fi+1; st.session_state[fck+"_show"] = False; st.rerun()
+                        fi = queue[0]
+                        v = vocab_list[fi % len(vocab_list)]
+                        got = st.session_state.get(fck+"_got",0)
+                        miss = st.session_state.get(fck+"_miss",0)
+                        done = got + miss
+                        wlv = v.get("_word_level","")
+                        wlv_html = {"A":"<span style='color:#22c55e;font-size:11px'> Ⓐ</span>","B":"<span style='color:#f59e0b;font-size:11px'> Ⓑ</span>","C":"<span style='color:#ef4444;font-size:11px'> Ⓒ</span>"}.get(wlv,"")
+                        st.markdown(f"<div style='text-align:center;padding:4px'><span style='font-size:12px;color:#64748b'>{done+1}/{done+len(queue)} (✅{got} ❌{miss})</span></div>", unsafe_allow_html=True)
+                        if not st.session_state[fck+"_show"]:
+                            st.markdown(f"<div style='text-align:center;padding:40px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:36px;margin:0'>{v.get('word','')}</h1>{wlv_html}</div>", unsafe_allow_html=True)
+                            fc1, fc2, fc3 = st.columns([1,2,1])
+                            with fc1:
+                                audio_data = v.get("_audio","")
+                                if audio_data and st.button("🔊", key=f"fcp_{fck}", use_container_width=True):
+                                    import streamlit.components.v1 as comp
+                                    comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{audio_data}"></audio>', height=0)
+                            with fc2:
+                                if st.button("👁️ Show", use_container_width=True, type="primary", key=f"fcs_{fck}"):
+                                    st.session_state[fck+"_show"] = True; st.rerun()
+                            with fc3:
+                                if st.button("⏭️", use_container_width=True, key=f"fcn_{fck}"):
+                                    queue.pop(0); st.session_state[fck+"_show"] = False; st.rerun()
+                        else:
+                            meanings = v.get("_meanings",[])
+                            mhtml = "".join(f"<div style='margin:6px 0'><span style='font-size:20px;color:#818cf8'>{'❶❷❸❹❺❻❼❽❾❿'[i] if len(meanings)>1 and i<10 else ''} {m.get('ja','')}</span><br><span style='font-size:13px;color:#94a3b8'>💬 {m.get('example','')}</span></div>" for i,m in enumerate(meanings))
+                            st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{wlv_html}{mhtml}</div>", unsafe_allow_html=True)
+                            fc1, fc2 = st.columns(2)
+                            with fc1:
+                                if st.button("❌ Didn't Know", use_container_width=True, key=f"fcx_{fck}"):
+                                    queue.pop(0)
+                                    # Re-insert 3-5 positions ahead for review
+                                    reinsert = min(random.randint(3,5), len(queue))
+                                    queue.insert(reinsert, fi)
+                                    st.session_state[fck+"_miss"] = miss + 1
+                                    st.session_state[fck+"_show"] = False; st.rerun()
+                            with fc2:
+                                if st.button("✅ Got It!", use_container_width=True, type="primary", key=f"fcy_{fck}"):
+                                    queue.pop(0)
+                                    st.session_state[fck+"_got"] = got + 1
+                                    st.session_state[fck+"_show"] = False; st.rerun()
 
             # Render each POS tab
             with pos_tabs[0]:  # All
@@ -2959,7 +3040,7 @@ with tab_quiz:
                 w = v.get("word","").strip()
                 j = v.get("ja","").strip()
                 if w and j:
-                    quiz_pool.append({"word":w, "ja":j,
+                    quiz_pool.append({"word":w, "ja":j, "pos": v.get("pos","other").lower(),
                         "audio": v.get("audio","") or ad.get(f"v{vi}_a",""),
                         "example": v.get("example",""),
                         "example_audio": v.get("example_audio","") or ad.get(f"v{vi}_e","")})
@@ -3010,7 +3091,16 @@ with tab_quiz:
                     st.session_state.quiz_queue = q
                 idx = st.session_state.quiz_queue.pop(0)
                 target = quiz_pool[idx]
-                distractors = random.sample([v for v in quiz_pool if v["word"]!=target["word"]], min(3, len(quiz_pool)-1))
+                # Prefer same-POS distractors (harder quiz — can't guess by word type)
+                target_pos = target.get("pos","other")
+                same_pos = [v for v in quiz_pool if v["word"]!=target["word"] and v.get("pos","other")==target_pos]
+                if len(same_pos) >= 3:
+                    distractors = random.sample(same_pos, 3)
+                else:
+                    # Fallback: fill remaining from any POS
+                    distractors = same_pos[:]
+                    others = [v for v in quiz_pool if v["word"]!=target["word"] and v not in distractors]
+                    distractors += random.sample(others, min(3-len(distractors), len(others)))
                 if st.session_state.quiz_mode == "en_ja":
                     choices = [target["ja"]] + [d["ja"] for d in distractors]
                 else:

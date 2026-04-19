@@ -731,7 +731,7 @@ CONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointi
 EXPLANATION FORMAT — MANDATORY: explanation_ja MUST start with "正解は(X)。" where X is the correct letter (A/B/C/D). Then explain why correct and why each wrong answer is wrong.
 DISTRACTOR QUALITY — ALL PARTS: Wrong answers must NOT be valid answers to the question. Each wrong answer must fail for a clear, identifiable reason.
 CHOICE COUNT RULE — STRICT: Every question MUST have EXACTLY 4 choices labeled (A), (B), (C), (D). NEVER include (E) or more. Part 2 MUST have EXACTLY 3 choices (A), (B), (C). This is a hard TOEIC format requirement — violating it makes the output INVALID.
-VOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence). Choose words KEY to solving the question.`;
+VOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence), "level" (word difficulty: "A" = basic ~600 level like delay/confirm/available, "B" = intermediate 600-800 like negotiate/reimburse/mandatory, "C" = advanced 800+ like procurement/arbitration/discretionary). IMPORTANT: "level" is the WORD's own difficulty, NOT the question difficulty. Choose words KEY to solving the question.`;
   const t = typeObj || {};
 
   const builders = {
@@ -1295,26 +1295,37 @@ async function judgeClear() {
 const VOCAB_DB = "toeic-vocab";
 function openVocabDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(VOCAB_DB, 1);
+    const req = indexedDB.open(VOCAB_DB, 2);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
+      let store;
       if (!db.objectStoreNames.contains("words")) {
-        db.createObjectStore("words", {keyPath:"id", autoIncrement:true});
+        store = db.createObjectStore("words", {keyPath:"id", autoIncrement:true});
+      } else {
+        store = e.target.transaction.objectStore("words");
       }
+      // Add indexes (v2) — enables fast filtering by POS, part, level, review status
+      if (!store.indexNames.contains("word")) store.createIndex("word", "word", {unique:false});
+      if (!store.indexNames.contains("pos")) store.createIndex("pos", "pos", {unique:false});
+      if (!store.indexNames.contains("part")) store.createIndex("part", "part", {unique:false});
+      if (!store.indexNames.contains("level")) store.createIndex("level", "level", {unique:false});
+      if (!store.indexNames.contains("timestamp")) store.createIndex("timestamp", "timestamp", {unique:false});
+      if (!store.indexNames.contains("wrongCount")) store.createIndex("wrongCount", "wrongCount", {unique:false});
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
-async function vocabSave(word, meaning, context, part, pos, audio, exampleAudio) {
+async function vocabSave(word, meaning, context, part, pos, audio, exampleAudio, level) {
   const db = await openVocabDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("words","readwrite");
     tx.objectStore("words").add({
       word, meaning:meaning||"", context:context||"", part:part||"",
-      pos:pos||"other",
+      pos:pos||"other", level:level||"",    // A/B/C word difficulty
       audio: audio||"",          // Opus base64 of word pronunciation
       exampleAudio: exampleAudio||"",  // Opus base64 of example sentence
+      correctCount:0, wrongCount:0,    // SRS tracking
       timestamp:Date.now()
     });
     tx.oncomplete = () => resolve();
@@ -1430,6 +1441,7 @@ async function vocabAutoSave(vocabArr, part) {
         }
         if (v.audio && !match.audio) updates.audio = v.audio;
         if (v.example_audio && !match.exampleAudio) updates.exampleAudio = v.example_audio;
+        if (v.level && !match.level) updates.level = v.level;
         if (Object.keys(updates).length > 0) {
           toUpdate.push({id: match.id, updates});
           // Update local cache so subsequent vocab in same batch see updates
@@ -1443,8 +1455,10 @@ async function vocabAutoSave(vocabArr, part) {
           context: newExample,
           part: part || "",
           pos,
+          level: (v.level || "").toUpperCase(),  // A/B/C word difficulty
           audio: v.audio || "",
           exampleAudio: v.example_audio || "",
+          correctCount: 0, wrongCount: 0,
           timestamp: Date.now()
         };
         toAdd.push(newRecord);
@@ -2470,6 +2484,26 @@ function handleAnswer(idx) {
     const typePool = _sessionTypes[S.part] || [];
     const typeObj = typePool[S.sessionNum-1] || {};
     judgeSave(S.part, S.level, typeObj.type, qi, isCorrect, q.question, elapsed).catch(e=>console.warn('judge save failed:', e));
+    // Judge → Vocab linkage: update SRS weights for words from this question
+    if (S.qSet && S.qSet.vocab && S.qSet.vocab.length) {
+      (async () => {
+        try {
+          const allVocab = await vocabGetAll();
+          const vocabByBase = {};
+          for (const w of allVocab) vocabByBase[lemmatize(w.word)] = w;
+          for (const v of S.qSet.vocab) {
+            const match = vocabByBase[lemmatize(v.word || "")];
+            if (match) {
+              if (!isCorrect) {
+                await vocabUpdate(match.id, {wrongCount: (match.wrongCount||0)+1});
+              } else {
+                await vocabUpdate(match.id, {correctCount: (match.correctCount||0)+1});
+              }
+            }
+          }
+        } catch(e) { console.warn("judge→vocab linkage error:", e); }
+      })();
+    }
     // 不正解 → 苦手問題として自動ストック（同一qSetで1回だけ）
     if (!isCorrect && S.qSet && !S.qSet._weakStocked) {
       S.qSet._weakStocked = true;
@@ -3016,7 +3050,7 @@ async function renderVocab() {
       return `<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);display:flex;align-items:start;gap:6px">
         <button class="vocab-play" data-vword="${esc(w.word)}" data-vid="${w.id}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px;flex-shrink:0">🔊</button>
         <div style="flex:1">
-          <div style="font-size:14px;color:#dce6f0;font-weight:600">${esc(w.word)} <span style="font-size:10px;color:${posColor};font-weight:400">${posLabel}</span></div>
+          <div style="font-size:14px;color:#dce6f0;font-weight:600">${esc(w.word)} <span style="font-size:10px;color:${posColor};font-weight:400">${posLabel}</span>${({"A":"<span style='font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 4px;border-radius:3px;margin-left:4px'>A</span>","B":"<span style='font-size:9px;background:rgba(245,158,11,0.15);color:#f59e0b;padding:1px 4px;border-radius:3px;margin-left:4px'>B</span>","C":"<span style='font-size:9px;background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 4px;border-radius:3px;margin-left:4px'>C</span>"})[w.level]||""}</div>
           ${detailHtml}
         </div>
         <button class="btn-s" data-vdel="${w.id}" style="font-size:10px;color:#f87171;padding:2px 6px;flex-shrink:0">✕</button>
@@ -3041,8 +3075,8 @@ async function renderVocab() {
 
   app.innerHTML=`
     <div class="header"><h1 style="font-size:20px">📝 単語帳</h1><div class="sub">${words.length}語</div></div>
-    ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日 Quiz</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英 Quiz</button></div>`:""}
-    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
+    ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>`:""}
+    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button> <button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24;margin-left:4px">🏷️ レベル判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
     <div style="display:flex;gap:4px;overflow-x:auto;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
     <style>.pos-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
     .pos-tab.active{background:rgba(129,140,248,0.2);color:#7b9cf7;border-color:rgba(129,140,248,0.4)}</style>
@@ -3147,8 +3181,56 @@ async function renderVocab() {
     alert(`✅ 再構築完了\nストック: ${r.processed}/${r.total}問にvocabあり\nvocabエントリ: ${r.foundVocab}個を処理\n単語帳: ${before}語 → ${after}語 (+${after-before})`);
     render();
   };
+  // Level classification button
+  const lb=$("vocabLevelBtn"); if(lb)lb.onclick=async()=>{
+    if (!S.apiKey) { alert("Gemini APIキーを設定してください"); return; }
+    const allWords = await vocabGetAll();
+    const needLevel = allWords.filter(w => !w.level || !["A","B","C"].includes(w.level));
+    if (needLevel.length === 0) { alert("すべての単語にレベルが設定済みです"); return; }
+    if (!confirm(`${needLevel.length}語のレベル判定を実行します。\nGemini APIを使用します（${Math.ceil(needLevel.length/30)}回のAPI呼び出し）。\n続行しますか？`)) return;
+    lb.textContent = `⏳ 判定中... 0/${needLevel.length}`;
+    let done = 0, failed = 0;
+    // Process in batches of 30
+    for (let i = 0; i < needLevel.length; i += 30) {
+      const batch = needLevel.slice(i, i + 30);
+      const wordList = batch.map(w => w.word).join(", ");
+      const prompt = `Classify each English word/phrase by TOEIC difficulty level.
+A = basic vocabulary (~600 level): common everyday/office words like schedule, confirm, available, delay, attend, submit
+B = intermediate (600-800 level): business vocabulary like negotiate, reimburse, mandatory, comply, substantial, expedite
+C = advanced (800+ level): sophisticated vocabulary like procurement, arbitration, discretionary, remuneration, notwithstanding
+
+Words to classify: ${wordList}
+
+Respond with ONLY a JSON object, no markdown, no backticks:
+{"results":[{"word":"...","level":"A"},{"word":"...","level":"B"},...]}`;
+      try {
+        const raw = await geminiText(prompt, "gemini-2.0-flash-lite");
+        const cleaned = raw.replace(/```json|```/g, "").trim();
+        const parsed = JSON.parse(cleaned);
+        if (parsed.results && Array.isArray(parsed.results)) {
+          for (const r of parsed.results) {
+            const lv = (r.level || "").toUpperCase();
+            if (!["A","B","C"].includes(lv)) continue;
+            const match = batch.find(w => w.word.toLowerCase() === (r.word||"").toLowerCase());
+            if (match) {
+              await vocabUpdate(match.id, {level: lv});
+              done++;
+            }
+          }
+        }
+      } catch(e) {
+        console.warn("[LEVEL] batch error:", e);
+        failed += batch.length;
+      }
+      lb.textContent = `⏳ 判定中... ${done}/${needLevel.length}`;
+      if (i + 30 < needLevel.length) await new Promise(r => setTimeout(r, 1500)); // rate limit
+    }
+    alert(`✅ レベル判定完了\n判定済み: ${done}語\n失敗: ${failed}語\n既存レベルあり: ${allWords.length - needLevel.length}語`);
+    render();
+  };
   const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
   const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
+  const qpos=$("vocabQuizPos"); if(qpos)qpos.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="pos_quiz";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;render();};
 }
 
 /* ── 単語クイズ画面 ── */
@@ -3160,42 +3242,110 @@ async function renderVocabQuiz() {
 
   // Generate question if needed
   if (!S.vocabQuizQ) {
-    // Avoid recent words (shuffle queue approach)
+    // SRS weighted queue: words with higher wrongCount appear more often
     if (!S._vocabQuizQueue || S._vocabQuizQueue.length === 0) {
-      S._vocabQuizQueue = words.map((_,i)=>i).sort(()=>Math.random()-0.5);
+      const weighted = [];
+      words.forEach((_,i) => {
+        const w = words[i];
+        const wrong = w.wrongCount || 0;
+        const correct = w.correctCount || 0;
+        // Weight: 1 (base) + 2 per wrong - 0.5 per correct (min 1)
+        const weight = Math.max(1, 1 + wrong * 2 - correct * 0.5);
+        for (let j=0; j<Math.round(weight); j++) weighted.push(i);
+      });
+      // Shuffle and dedupe consecutive repeats
+      for (let i=weighted.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [weighted[i],weighted[j]]=[weighted[j],weighted[i]]; }
+      // Take unique indices (preserving weighted order)
+      const seen = new Set(); const queue = [];
+      for (const idx of weighted) { if (!seen.has(idx)) { seen.add(idx); queue.push(idx); } }
+      S._vocabQuizQueue = queue;
     }
     const targetIdx = S._vocabQuizQueue.pop();
     const target = words[targetIdx];
-    const others = words.filter(w=>w.word!==target.word);
-    const shuffled = others.sort(()=>Math.random()-0.5).slice(0,3);
     const tMeaning = (target.meaning||"").split("\n")[0];
-    let choices;
-    if (mode === "en_ja") {
-      choices = [tMeaning, ...shuffled.map(w=>(w.meaning||"").split("\n")[0])];
+
+    if (mode === "pos_quiz") {
+      // POS quiz: sentence with blank → choose correct word (tests POS recognition like Part 5)
+      const ex = (target.context||"").split("\n")[0] || "";
+      // Build blanked sentence: replace target word with -------
+      const wordRe = new RegExp(`\\b${target.word.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\b`, "gi");
+      let blanked = ex ? ex.replace(wordRe, "-------") : `The ------- was discussed at the meeting.`;
+      if (blanked === ex) blanked = ex.replace(new RegExp(target.word.slice(0,4), "gi"), "-------"); // partial match
+      // Distractors: DIFFERENT POS (tests POS identification)
+      const targetPos = (target.pos || "other").toLowerCase();
+      const diffPos = words.filter(w=>w.word!==target.word && (w.pos||"other").toLowerCase()!==targetPos);
+      diffPos.sort(()=>Math.random()-0.5);
+      const distractors = diffPos.slice(0,3);
+      if (distractors.length < 3) {
+        const more = words.filter(w=>w.word!==target.word && !distractors.includes(w));
+        more.sort(()=>Math.random()-0.5);
+        distractors.push(...more.slice(0, 3-distractors.length));
+      }
+      const POS_JA = {noun:"名詞",verb:"動詞",adjective:"形容詞",adverb:"副詞",phrase:"フレーズ",other:"その他"};
+      let choices = [target.word, ...distractors.slice(0,3).map(w=>w.word)];
+      let posLabels = [POS_JA[targetPos]||targetPos, ...distractors.slice(0,3).map(w=>POS_JA[(w.pos||"other").toLowerCase()]||(w.pos||"other"))];
+      const indices = choices.map((_,i)=>i).sort(()=>Math.random()-0.5);
+      S.vocabQuizQ = {
+        target, tMeaning, blanked,
+        choices: indices.map(i=>choices[i]),
+        posLabels: indices.map(i=>posLabels[i]),
+        correct: indices.indexOf(0),
+        answered: null
+      };
     } else {
-      choices = [target.word, ...shuffled.map(w=>w.word)];
+      // en_ja / ja_en: Same-POS distractors (harder quiz)
+      const targetPos = (target.pos || "other").toLowerCase();
+      let samePos = words.filter(w=>w.word!==target.word && (w.pos||"other").toLowerCase()===targetPos);
+      let distractorPool;
+      if (samePos.length >= 3) {
+        samePos.sort(()=>Math.random()-0.5);
+        distractorPool = samePos.slice(0,3);
+      } else {
+        const others = words.filter(w=>w.word!==target.word && !samePos.includes(w));
+        others.sort(()=>Math.random()-0.5);
+        distractorPool = [...samePos, ...others].slice(0,3);
+      }
+      let choices;
+      if (mode === "en_ja") {
+        choices = [tMeaning, ...distractorPool.map(w=>(w.meaning||"").split("\n")[0])];
+      } else {
+        choices = [target.word, ...distractorPool.map(w=>w.word)];
+      }
+      const indices = choices.map((_,i)=>i).sort(()=>Math.random()-0.5);
+      S.vocabQuizQ = {
+        target, tMeaning,
+        choices: indices.map(i=>choices[i]),
+        correct: indices.indexOf(0),
+        answered: null
+      };
     }
-    const indices = choices.map((_,i)=>i).sort(()=>Math.random()-0.5);
-    S.vocabQuizQ = {
-      target, tMeaning,
-      choices: indices.map(i=>choices[i]),
-      correct: indices.indexOf(0),
-      answered: null
-    };
   }
   const q = S.vocabQuizQ;
   const pct = score.total>0 ? Math.round(score.correct/score.total*100) : 0;
+  const lvBadge = {"A":"<span style='font-size:10px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:4px;margin-left:6px'>A 基礎</span>","B":"<span style='font-size:10px;background:rgba(245,158,11,0.15);color:#f59e0b;padding:1px 6px;border-radius:4px;margin-left:6px'>B 中級</span>","C":"<span style='font-size:10px;background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;margin-left:6px'>C 上級</span>"}[q.target.level||""]||"";
+
+  const modeTitle = {"en_ja":"🇬🇧→🇯🇵 英→日","ja_en":"🇯🇵→🇬🇧 日→英","pos_quiz":"📝 品詞あて"}[mode] || mode;
 
   let html = `
     <div class="header">
-      <h1 style="font-size:18px">${mode==="en_ja"?"🇬🇧→🇯🇵 英→日":"🇯🇵→🇬🇧 日→英"} Quiz</h1>
+      <h1 style="font-size:18px">${modeTitle} Quiz</h1>
       <div class="sub">${score.correct}/${score.total} (${pct}%)</div>
+    </div>`;
+
+  if (mode === "pos_quiz") {
+    html += `
+    <div style="text-align:center;padding:20px;background:rgba(15,23,42,0.8);border-radius:16px;margin:12px 0;border:1px solid rgba(255,255,255,0.06)">
+      <div style="font-size:15px;color:#a0b4c8;line-height:1.8">${esc(q.blanked||"")}</div>
     </div>
+    <div style="font-size:13px;color:#7a8ea5;text-align:center;margin-bottom:10px">空欄に入る正しい単語は？</div>`;
+  } else {
+    html += `
     <div style="text-align:center;padding:24px;background:rgba(15,23,42,0.8);border-radius:16px;margin:12px 0;border:1px solid rgba(255,255,255,0.06)">
       <div style="font-size:${mode==="en_ja"?"32px":"26px"};font-weight:700;color:${mode==="en_ja"?"#e2e8f0":"#818cf8"}">${mode==="en_ja"?esc(q.target.word):esc(q.tMeaning)}</div>
       ${mode==="en_ja"?`<button class="btn-s" id="quizPlayWord" style="margin-top:8px;font-size:12px">🔊 発音</button>`:""}
     </div>
     <div style="font-size:13px;color:#7a8ea5;text-align:center;margin-bottom:10px">${mode==="en_ja"?"この単語の意味は？":"この意味の英単語は？"}</div>`;
+  }
 
   // Choices
   q.choices.forEach((c,i) => {
@@ -3211,14 +3361,16 @@ async function renderVocabQuiz() {
     } else {
       style += "background:rgba(255,255,255,0.03);color:#dce6f0;";
     }
-    html += `<div class="quiz-choice" data-qi="${i}" style="${style}${disabled}">${esc(c)}</div>`;
+    const posTag = (mode==="pos_quiz" && q.posLabels) ? ` <span style="font-size:11px;color:#7a8ea5;margin-left:6px">(${q.posLabels[i]})</span>` : "";
+    html += `<div class="quiz-choice" data-qi="${i}" style="${style}${disabled}">${esc(c)}${posTag}</div>`;
   });
 
-  // After answer: show example + next
+  // After answer: show example + level badge + POS info + next
   if (q.answered !== null) {
     const ex = (q.target.context||"").split("\n")[0] || "";
+    const posInfo = mode==="pos_quiz" ? ` <span style="font-size:11px;background:rgba(96,165,250,0.15);color:#60a5fa;padding:1px 6px;border-radius:4px">${({"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ"}[(q.target.pos||"").toLowerCase()]||q.target.pos||"")}</span>` : "";
     html += `<div style="margin-top:12px;padding:12px;background:rgba(129,140,248,0.08);border-radius:10px">`;
-    html += `<div style="font-size:14px;font-weight:600;color:#dce6f0;display:flex;align-items:center;gap:6px"><button class="btn-s" id="quizPlayWord2" style="font-size:11px;padding:2px 8px">🔊</button>${esc(q.target.word)} — <span style="color:#7b9cf7">${esc(q.tMeaning)}</span></div>`;
+    html += `<div style="font-size:14px;font-weight:600;color:#dce6f0;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><button class="btn-s" id="quizPlayWord2" style="font-size:11px;padding:2px 8px">🔊</button>${esc(q.target.word)}${posInfo} — <span style="color:#7b9cf7">${esc(q.tMeaning)}</span>${lvBadge}</div>`;
     if (ex) html += `<div style="font-size:12px;color:#a0b4c8;margin-top:4px">💬 ${esc(ex)}</div>`;
     html += `<button class="btn-s" id="quizPlayEx" style="margin-top:6px;font-size:11px">🔊 例文を聴く</button>`;
     html += `</div>`;
@@ -3236,6 +3388,14 @@ async function renderVocabQuiz() {
       score.total++;
       if(q.answered===q.correct) score.correct++;
       S.vocabQuizScore = score;
+      // SRS: update correctCount/wrongCount in IndexedDB
+      const isCorrect = q.answered === q.correct;
+      if (q.target.id) {
+        vocabUpdate(q.target.id, isCorrect
+          ? {correctCount: (q.target.correctCount||0)+1}
+          : {wrongCount: (q.target.wrongCount||0)+1}
+        ).catch(e=>console.warn("vocab SRS update failed:", e));
+      }
       render();
     };
   });
@@ -4133,7 +4293,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19c · light DB queries · lazy playlist · vocab import fix · graphic table fallback · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19d · vocab SRS + level + same-POS quiz · light DB queries · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
