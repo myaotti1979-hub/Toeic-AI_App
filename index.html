@@ -2484,26 +2484,6 @@ function handleAnswer(idx) {
     const typePool = _sessionTypes[S.part] || [];
     const typeObj = typePool[S.sessionNum-1] || {};
     judgeSave(S.part, S.level, typeObj.type, qi, isCorrect, q.question, elapsed).catch(e=>console.warn('judge save failed:', e));
-    // Judge → Vocab linkage: update SRS weights for words from this question
-    if (S.qSet && S.qSet.vocab && S.qSet.vocab.length) {
-      (async () => {
-        try {
-          const allVocab = await vocabGetAll();
-          const vocabByBase = {};
-          for (const w of allVocab) vocabByBase[lemmatize(w.word)] = w;
-          for (const v of S.qSet.vocab) {
-            const match = vocabByBase[lemmatize(v.word || "")];
-            if (match) {
-              if (!isCorrect) {
-                await vocabUpdate(match.id, {wrongCount: (match.wrongCount||0)+1});
-              } else {
-                await vocabUpdate(match.id, {correctCount: (match.correctCount||0)+1});
-              }
-            }
-          }
-        } catch(e) { console.warn("judge→vocab linkage error:", e); }
-      })();
-    }
     // 不正解 → 苦手問題として自動ストック（同一qSetで1回だけ）
     if (!isCorrect && S.qSet && !S.qSet._weakStocked) {
       S.qSet._weakStocked = true;
@@ -2514,6 +2494,31 @@ function handleAnswer(idx) {
     // ストック学習中: 正解ストリーク追跡（3回連続正解で卒業提案）
     if (S.stockMode && S.stockId) {
       updateStockStreak(S.stockId, isCorrect).catch(e=>console.warn('stock streak update failed:', e));
+    }
+  }
+  // Vocab SRS linkage: update correctCount/wrongCount for ALL practice modes
+  // (not just judgeMode — stock practice and normal practice also count)
+  if (!S.stockCreateMode && S.qSet && S.qSet.vocab && S.qSet.vocab.length && !S.qSet._vocabSrsUpdated) {
+    if (isLastQ || qi === S.qSet.questions.length - 1) {
+      S.qSet._vocabSrsUpdated = true;  // once per qSet, at last question
+      const anyWrong = S.answers.some((a,ai) => a.answered && a.selected !== (S.qSet.questions[ai]||{}).correct);
+      (async () => {
+        try {
+          const allVocab = await vocabGetAll();
+          const vocabByBase = {};
+          for (const w of allVocab) vocabByBase[lemmatize(w.word)] = w;
+          for (const v of S.qSet.vocab) {
+            const match = vocabByBase[lemmatize(v.word || "")];
+            if (match) {
+              if (anyWrong) {
+                await vocabUpdate(match.id, {wrongCount: (match.wrongCount||0)+1});
+              } else {
+                await vocabUpdate(match.id, {correctCount: (match.correctCount||0)+1});
+              }
+            }
+          }
+        } catch(e) { console.warn("vocab SRS linkage error:", e); }
+      })();
     }
   }
   // Auto-save vocabulary from this question set (once per qSet)
@@ -3204,7 +3209,7 @@ Words to classify: ${wordList}
 Respond with ONLY a JSON object, no markdown, no backticks:
 {"results":[{"word":"...","level":"A"},{"word":"...","level":"B"},...]}`;
       try {
-        const raw = await geminiText(prompt, "gemini-2.0-flash-lite");
+        const raw = await geminiText(prompt, GEMINI_FLASH);
         const cleaned = raw.replace(/```json|```/g, "").trim();
         const parsed = JSON.parse(cleaned);
         if (parsed.results && Array.isArray(parsed.results)) {
@@ -4293,7 +4298,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · GEMINI TTS · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ Gemini高音質音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19d · vocab SRS + level + same-POS quiz · light DB queries · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19d · vocab SRS + POS quiz + level + DB index · light DB queries · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>

@@ -2846,7 +2846,7 @@ Words to classify: {word_list}
 Respond with ONLY a JSON object, no markdown:
 {{"results":[{{"word":"...","level":"A"}},{{"word":"...","level":"B"}},...]}}'"""
                             try:
-                                raw = generate_text(prompt, "gemini", "gemini-2.0-flash-lite", url, api_key)
+                                raw = generate_text(prompt, "gemini", "gemini-2.5-flash", url, api_key)
                                 import json as _json
                                 cleaned = raw.replace("```json","").replace("```","").strip()
                                 parsed = _json.loads(cleaned)
