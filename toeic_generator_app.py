@@ -1847,7 +1847,7 @@ with st.sidebar:
         summary = " / ".join(f"{part_labels.get(p,p)}:{n}" for p,n in sorted(by_part.items()))
         st.caption(summary)
 
-        # Export/Delete — form prevents selectbox rerun
+        # Export/Delete
         with st.expander("📦 エクスポート / 🗑️ 削除"):
             # Detailed breakdown
             level_counts = {}
@@ -1856,68 +1856,58 @@ with st.sidebar:
                 lv = r.get("level","?")
                 level_counts[(p,lv)] = level_counts.get((p,lv),0) + 1
 
-            with st.form("stock_mgmt", border=False):
-                filter_options = ["全パート"] + sorted(by_part.keys())
-                selected_part = st.selectbox("パート選択", filter_options,
-                    format_func=lambda x: f"全パート ({len(st.session_state.results)})" if x=="全パート" else f"{part_labels.get(x,x)} ({by_part.get(x,0)}問)",
-                    key="stock_part_filter")
+            filter_options = ["全パート"] + sorted(by_part.keys())
+            selected_part = st.selectbox("パート選択", filter_options,
+                format_func=lambda x: f"全パート ({len(st.session_state.results)})" if x=="全パート" else f"{part_labels.get(x,x)} ({by_part.get(x,0)}問)",
+                key="stock_part_filter")
 
-                # Show level breakdown for selected part
-                if selected_part == "全パート":
-                    lv_info = {}
-                    for (p,lv), c in level_counts.items():
+            if selected_part == "全パート":
+                lv_info = {}
+                for (p,lv), c in level_counts.items():
+                    lv_info[lv] = lv_info.get(lv,0) + c
+            else:
+                lv_info = {}
+                for (p,lv), c in level_counts.items():
+                    if p == selected_part:
                         lv_info[lv] = lv_info.get(lv,0) + c
-                else:
-                    lv_info = {}
-                    for (p,lv), c in level_counts.items():
-                        if p == selected_part:
-                            lv_info[lv] = lv_info.get(lv,0) + c
-                if lv_info:
-                    lv_str = " / ".join(f"{lv}:{n}" for lv,n in sorted(lv_info.items()))
-                    st.caption(f"レベル内訳: {lv_str}")
+            if lv_info:
+                lv_str = " / ".join(f"{lv}:{n}" for lv,n in sorted(lv_info.items()))
+                st.caption(f"レベル内訳: {lv_str}")
 
-                ec1, ec2, ec3 = st.columns(3)
-                with ec1:
-                    do_export = st.form_submit_button("📤 Export", use_container_width=True)
-                with ec2:
-                    do_delete = st.form_submit_button("🗑️ パート削除", use_container_width=True)
-                with ec3:
-                    selected_level = st.selectbox("レベル", ["全レベル","beginner","intermediate","advanced"], key="stock_level_filter", label_visibility="collapsed")
-                do_delete_level = st.form_submit_button("🗑️ 選択レベルのみ削除", use_container_width=True)
+            # 1-click export: download_button directly with data
+            try:
+                with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+                    _exp_all = json.load(f)
+                _exp_data = _exp_all if selected_part == "全パート" else [r for r in _exp_all if r.get("part") == selected_part]
+                _exp_json = json.dumps(_exp_data, ensure_ascii=False, indent=None)
+                _exp_name = f"toeic-stock-{selected_part}-{datetime.now():%Y%m%d-%H%M}.json"
+                st.download_button(f"📤 エクスポート ({len(_exp_data)}問)", _exp_json, _exp_name, "application/json", key="part_dl")
+                del _exp_all, _exp_data, _exp_json  # Free memory
+            except Exception as e:
+                st.error(f"エクスポート準備エラー: {e}")
 
-            if do_export:
-                try:
-                    with open(RESULTS_FILE, "r", encoding="utf-8") as f:
-                        full_data = json.load(f)
-                    if selected_part != "全パート":
-                        full_data = [r for r in full_data if r.get("part") == selected_part]
-                    st.session_state._export_data = json.dumps(full_data, ensure_ascii=False, indent=None)
-                except Exception as e:
-                    st.session_state._export_data = "[]"
-                    print(f"[EXPORT ERR] {e}", flush=True)
-                st.session_state._export_name = f"toeic-stock-{selected_part}-{datetime.now():%Y%m%d-%H%M}.json"
-            if st.session_state.get("_export_data"):
-                st.download_button("💾 Download", st.session_state._export_data,
-                    st.session_state._export_name, "application/json", key="part_dl")
-
-            if do_delete:
-                if selected_part == "全パート":
-                    st.session_state.results = []
-                    _audio_store.clear()
-                else:
-                    st.session_state.results = [r for r in st.session_state.results if r.get("part") != selected_part]
-                save_results(RESULTS_FILE, st.session_state.results)
-                st.session_state.pop("_export_data", None)
-                st.session_state.pop("_prac_cache_key", None)
-                st.session_state.prac_idx = 0
-                st.session_state.prac_answered = {}
-                st.rerun()
-
-            if do_delete_level:
-                before = len(st.session_state.results)
+            # Delete operations
+            st.divider()
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                if st.button("🗑️ パート削除", key="do_delete"):
+                    if selected_part == "全パート":
+                        st.session_state.results = []
+                        _audio_store.clear()
+                    else:
+                        st.session_state.results = [r for r in st.session_state.results if r.get("part") != selected_part]
+                    save_results(RESULTS_FILE, st.session_state.results)
+                    st.session_state.pop("_prac_cache_key", None)
+                    st.session_state.prac_idx = 0
+                    st.session_state.prac_answered = {}
+                    st.rerun()
+            with dc2:
+                selected_level = st.selectbox("レベル", ["全レベル","beginner","intermediate","advanced"], key="stock_level_filter", label_visibility="collapsed")
+            if st.button("🗑️ 選択レベルのみ削除", key="do_delete_level"):
                 if selected_level == "全レベル":
-                    st.warning("レベルを選択してください（beginner / intermediate / advanced）")
+                    st.warning("レベルを選択してください")
                 else:
+                    before = len(st.session_state.results)
                     def matches(r):
                         if selected_part != "全パート" and r.get("part") != selected_part:
                             return False
@@ -1926,7 +1916,6 @@ with st.sidebar:
                     deleted = before - len(st.session_state.results)
                     if deleted > 0:
                         save_results(RESULTS_FILE, st.session_state.results)
-                        st.session_state.pop("_export_data", None)
                         st.session_state.pop("_prac_cache_key", None)
                         st.success(f"✅ {deleted}問を削除 ({selected_part} / {selected_level})")
                         st.rerun()
