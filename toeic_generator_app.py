@@ -1977,6 +1977,158 @@ with st.sidebar:
 
 
 
+    # ── タイプ修復 ──
+    results_count = len(st.session_state.results)
+    if results_count > 0:
+        no_type = [r for r in st.session_state.results if not r.get("qSet",{}).get("_questionType")]
+        if no_type:
+            st.divider()
+            st.markdown(f"**🏷️ タイプ修復** ({len(no_type)}/{results_count}問にタイプ未設定)")
+            repair_mode = st.radio("修復方法", ["📏 ルールベース (即座)", "🤖 AI判定 (API)"], key="repair_mode", horizontal=True, label_visibility="collapsed")
+            if st.button("🏷️ タイプ修復を実行", use_container_width=True, key="type_repair_btn"):
+                try:
+                    with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+                        full_data = json.load(f)
+                except Exception:
+                    full_data = []
+                stat = st.empty()
+                prog = st.progress(0)
+                repaired = 0
+                total_to_fix = len([r for r in full_data if not r.get("qSet",{}).get("_questionType")])
+                fixed_idx = 0
+                import re as _re
+
+                def infer_type_rule(item):
+                    qs = item.get("qSet", {})
+                    part = item.get("part", "")
+                    if qs.get("_questionType") and qs["_questionType"] != "unknown":
+                        return qs["_questionType"]
+                    if part == "part2":
+                        for q in qs.get("questions", []):
+                            m = _re.search(r'出題[タイプ]*[:：]\s*([a-z0-9_]+)', q.get("explanation_ja",""))
+                            if m: return m.group(1)
+                    if part == "part4" and qs.get("talk_type"): return qs["talk_type"]
+                    if part in ("part6","part7","part7s","part7d","part7t"):
+                        if qs.get("doc_type"): return qs["doc_type"]
+                        if qs.get("doc_type_1"): return qs["doc_type_1"]
+                    if part == "part5" and qs.get("questions"):
+                        ch = [_re.sub(r'^\([A-Da-d]\)\s*','',c).strip().lower() for c in qs["questions"][0].get("choices",[])]
+                        preps = {"in","on","at","by","for","to","with","from","of","about","during","since","until","between","among","through","within","toward"}
+                        if all(c in preps for c in ch if c): return "preposition_basic"
+                        roots = [_re.sub(r'[^a-z]','',c)[:4] for c in ch]
+                        if roots and roots[0] and len(roots[0])>=4 and sum(1 for r in roots if r==roots[0])>=3: return "word_form"
+                        return "vocab_context"
+                    if part in ("part3","part3_3p") and qs.get("conversation"):
+                        conv = qs["conversation"].lower()
+                        for pattern, ttype in [
+                            (r"printer|copier|computer|server|network","office_equipment"),
+                            (r"schedule|reschedule|postpone|cancel the meeting","schedule_change"),
+                            (r"project|deadline|milestone|progress","project_discussion"),
+                            (r"hotel|check.in|check.out|room","hotel_checkin"),
+                            (r"restaurant|reserv|table for|menu","restaurant_order"),
+                            (r"flight|airport|boarding|luggage","airport_travel"),
+                            (r"repair|fix|broken|maintenance","repair_maintenance"),
+                            (r"interview|candidate|hiring|resume","hiring_interview"),
+                            (r"train|workshop|certification|seminar","training_workshop"),
+                            (r"client|contract|proposal|negotiate","client_negotiation"),
+                            (r"complaint|refund|dissatisfied|apologize","complaint_resolution"),
+                            (r"new employee|orientation|first day","new_employee"),
+                            (r"transfer|promotion|department|position","promotion_transfer"),
+                            (r"event|conference|venue|catering","event_planning"),
+                            (r"market|campaign|advertis|social media","marketing_campaign"),
+                            (r"invoice|payment|billing|reimburse","bank_finance"),
+                        ]:
+                            if _re.search(pattern, conv): return ttype
+                        return "office_general"
+                    if part == "part1" and qs.get("scene"):
+                        scene = qs["scene"].lower()
+                        for pattern, ttype in [
+                            (r"desk|typing|computer|monitor","office_desk"),(r"meeting|conference","meeting_conference"),
+                            (r"restaurant|cafe|dining","restaurant_cafe"),(r"construction|scaffold","construction_site"),
+                            (r"warehouse|factory|forklift","warehouse_factory"),(r"park|bench|garden","park_bench"),
+                            (r"store|shop|retail","retail_shopping"),(r"train|station|platform","train_station"),
+                        ]:
+                            if _re.search(pattern, scene): return ttype
+                    return None
+
+                if "ルールベース" in repair_mode:
+                    for item in full_data:
+                        qs = item.get("qSet", {})
+                        if qs.get("_questionType") and qs["_questionType"] != "unknown": continue
+                        inferred = infer_type_rule(item)
+                        if inferred:
+                            qs["_questionType"] = inferred
+                            repaired += 1
+                        fixed_idx += 1
+                        if fixed_idx % 50 == 0:
+                            stat.info(f"⏳ {fixed_idx}/{total_to_fix}...")
+                            prog.progress(fixed_idx / max(total_to_fix, 1))
+                else:
+                    api_key = st.session_state.get("api_key", "")
+                    if not api_key:
+                        st.error("Gemini APIキーを設定してください")
+                    else:
+                        # Pass 1: rules
+                        for item in full_data:
+                            qs = item.get("qSet", {})
+                            if qs.get("_questionType") and qs["_questionType"] != "unknown": continue
+                            inferred = infer_type_rule(item)
+                            if inferred:
+                                qs["_questionType"] = inferred
+                                repaired += 1
+                        stat.info(f"ルールベース: {repaired}問。残りをAI判定中...")
+                        # Pass 2: API for remaining
+                        remaining = [(i, r) for i, r in enumerate(full_data) if not r.get("qSet",{}).get("_questionType")]
+                        BATCH = 10
+                        for b in range(0, len(remaining), BATCH):
+                            batch = remaining[b:b+BATCH]
+                            summaries = []
+                            for idx, (fi, item) in enumerate(batch):
+                                qs = item.get("qSet", {})
+                                part = item.get("part", "?")
+                                text = (qs.get("spoken") or qs.get("conversation") or qs.get("talk") or qs.get("sentence") or qs.get("text") or "")[:150]
+                                q_text = (qs.get("questions",[{}])[0].get("question",""))[:80] if qs.get("questions") else ""
+                                summaries.append(f"{idx+1}. part={part}, content: {text}, q: {q_text}")
+                            parts_in_batch = set(item.get("part","") for _,item in batch)
+                            type_hints = {}
+                            for p in parts_in_batch:
+                                pk = p if p in TYPES else ("part7s" if p.startswith("part7") else p)
+                                if pk in TYPES:
+                                    type_hints[p] = [t["type"] for t in TYPES[pk]][:20]
+                            prompt = f"Classify each TOEIC question into its type. Types per part:\n{json.dumps(type_hints)}\n\nQuestions:\n" + "\n".join(summaries) + "\n\nRespond ONLY with a JSON array of type strings. Example: [\"schedule_change\",\"word_form\"]"
+                            try:
+                                import urllib.request
+                                req = urllib.request.Request(
+                                    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_FLASH}:generateContent?key={api_key}",
+                                    data=json.dumps({"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.1}}).encode(),
+                                    headers={"Content-Type":"application/json"}, method="POST")
+                                with urllib.request.urlopen(req, timeout=30) as resp:
+                                    rj = json.loads(resp.read())
+                                text_resp = rj["candidates"][0]["content"]["parts"][0]["text"].strip().strip("`").strip()
+                                if text_resp.startswith("json"): text_resp = text_resp[4:].strip()
+                                types_list = json.loads(text_resp)
+                                for idx, (fi, item) in enumerate(batch):
+                                    if idx < len(types_list) and types_list[idx]:
+                                        item["qSet"]["_questionType"] = types_list[idx]
+                                        repaired += 1
+                            except Exception as e:
+                                print(f"[TYPE REPAIR] API error: {e}", flush=True)
+                            fixed_idx += len(batch)
+                            stat.info(f"⏳ AI判定: {fixed_idx}/{len(remaining)}...")
+                            prog.progress(min(1.0, fixed_idx / max(len(remaining), 1)))
+                            time.sleep(1.5)
+
+                prog.progress(1.0)
+                for i, item in enumerate(full_data):
+                    if i < len(st.session_state.results):
+                        qt = item.get("qSet",{}).get("_questionType")
+                        if qt:
+                            st.session_state.results[i].setdefault("qSet",{})["_questionType"] = qt
+                save_results(RESULTS_FILE, st.session_state.results)
+                stat.success(f"✅ タイプ修復完了: {repaired}問")
+                st.session_state.pop("_export_data", None)
+                st.session_state.pop("_html_export", None)
+
     st.divider()
     st.caption("v2026.04.19f · search + daily stats + mock timer + unplayed filter + drill · 303 types")
 
