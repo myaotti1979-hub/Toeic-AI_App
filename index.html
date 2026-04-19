@@ -1868,9 +1868,9 @@ async function stockExport() {
 }
 
 // Per-part export (streaming: loads 100 items at a time, outputs 1 file)
+// Each chunk is immediately Blob-ified so the JSON string can be GC'd
 async function stockExportPart(partId, onProgress) {
   const db = await openStockDB();
-  // Collect all IDs for this part (light scan — no audio loaded)
   const ids = await new Promise((resolve, reject) => {
     const arr = [];
     const tx = db.transaction("questions","readonly");
@@ -1884,13 +1884,13 @@ async function stockExportPart(partId, onProgress) {
   });
   if (ids.length === 0) { alert(`${partId} のストックがありません`); return null; }
 
-  // Build Blob in chunks of 100 items (never hold more than ~35MB in memory)
+  // Build Blob from sub-Blobs: each chunk's string → Blob → GC-eligible
   const CHUNK = 100;
-  const blobParts = ["["];
-  let totalSize = 1;
-  const totalChunks = Math.ceil(ids.length / CHUNK);
+  const blobChunks = [new Blob(["["])];
+  let totalSize = 2; // [ and ]
+  const totalPasses = Math.ceil(ids.length / CHUNK);
 
-  for (let ci = 0; ci < totalChunks; ci++) {
+  for (let ci = 0; ci < totalPasses; ci++) {
     const chunkIds = ids.slice(ci * CHUNK, (ci + 1) * CHUNK);
     const items = [];
     for (const id of chunkIds) {
@@ -1898,17 +1898,15 @@ async function stockExportPart(partId, onProgress) {
       if (item) items.push(item);
     }
     const json = JSON.stringify(items);
-    // Strip outer [ ] and append
-    const inner = json.slice(1, -1);
-    if (ci > 0) { blobParts.push(","); totalSize += 1; }
-    blobParts.push(inner);
-    totalSize += inner.length;
-    if (onProgress) onProgress(ci + 1, totalChunks);
+    const inner = json.slice(1, -1); // strip [ ]
+    if (ci > 0) blobChunks.push(new Blob([","]));
+    blobChunks.push(new Blob([inner])); // inner string becomes GC-eligible after this
+    totalSize += inner.length + (ci > 0 ? 1 : 0);
+    if (onProgress) onProgress(ci + 1, totalPasses);
   }
-  blobParts.push("]");
-  totalSize += 1;
+  blobChunks.push(new Blob(["]"]));
 
-  const blob = new Blob(blobParts, {type: "application/json"});
+  const blob = new Blob(blobChunks, {type: "application/json"});
   const d = new Date().toISOString().slice(0,10);
   const filename = `toeic-stock-${partId}-${d}.json`;
   const file = new File([blob], filename, {type: "application/json"});
@@ -4822,7 +4820,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19f · search + daily stats + mock timer + unplayed filter + drill · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19g · IRT score + type repair + data migration + drill + search · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
