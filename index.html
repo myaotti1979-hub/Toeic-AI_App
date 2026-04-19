@@ -115,6 +115,7 @@ body { min-height:100vh; background:#1a2332; color:#dce6f0; font-family:'Noto Sa
 
 const GEMINI_LITE        = "gemini-2.5-flash-lite";
 const GEMINI_FLASH       = "gemini-2.5-flash";
+const GEMINI_3FLASH      = "gemini-3-flash-preview";
 const GEMINI_PRO         = "gemini-2.5-pro";
 const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 const GEMINI_TTS_MODEL   = "gemini-2.5-flash-preview-tts";
@@ -133,15 +134,15 @@ const LISTEN_AFTER_EXPL_MS = 2000;    // Pause after English explanation
 const LISTEN_BETWEEN_QUESTIONS_MS = 1500; // Pause between sub-questions (Part 3/4)
 const LISTEN_BETWEEN_ITEMS_MS = 2000;     // Pause before next stock item
 
-// 3段階モデル構成: Lite(単純) / Flash(中程度) / Pro(複雑)
+// 3-Flash = 高性能+低コスト (2.5 Pro超え、料金1/3)
 const PART_MODEL = {
-  part1: GEMINI_PRO,
-  part2: GEMINI_PRO,
-  part3: GEMINI_PRO,    part3_3p: GEMINI_PRO,
-  part4: GEMINI_PRO,
-  part5: GEMINI_PRO,
-  part6: GEMINI_PRO,
-  part7: GEMINI_PRO,    part7s: GEMINI_PRO,   part7d: GEMINI_PRO,   part7t: GEMINI_PRO,
+  part1: GEMINI_3FLASH,
+  part2: GEMINI_3FLASH,
+  part3: GEMINI_3FLASH,    part3_3p: GEMINI_3FLASH,
+  part4: GEMINI_3FLASH,
+  part5: GEMINI_3FLASH,
+  part6: GEMINI_3FLASH,
+  part7: GEMINI_3FLASH,    part7s: GEMINI_3FLASH,   part7d: GEMINI_3FLASH,   part7t: GEMINI_3FLASH,
 };
 
 const LEVELS = [
@@ -275,7 +276,7 @@ async function throttledFetch(url, opts, maxRetries=2, signal=null) {
    GEMINI TEXT API
 ────────────────────────────────────────────── */
 async function geminiText(prompt, model) {
-  const m = model || GEMINI_PRO;
+  const m = model || GEMINI_3FLASH;
   const genConfig = {temperature:0.9};
   // thinking制御（2.5系: thinkingBudget、3.x系: thinkingLevel）
   if (m.includes("preview")) {
@@ -713,10 +714,10 @@ GRAMMAR TESTED: present perfect vs past simple, passive voice variations, condit
 IMPORTANT: Audio speed, conversation length, and document length are IDENTICAL to all levels. Only vocabulary complexity, answer directness, and distractor subtlety differ.`,
 
     advanced: `DIFFICULTY: HARD (questions a 800+ scorer can answer — requires 80%+ correct rate)
-VOCABULARY: sophisticated/formal business language — use DIVERSE vocabulary from different fields (finance, HR, logistics, legal, marketing, IT, manufacturing). Do NOT always use the same words. Examples: procurement, compliance, amendment, forthcoming, notwithstanding, expedite, remuneration, discretionary, contingent upon, arbitration, disclosure, depreciation, subsidiary, litigation, scalability
+VOCABULARY: For Part 5/6/7 — use sophisticated business vocabulary from diverse fields: procurement, compliance, amendment, forthcoming, expedite, remuneration, discretionary, contingent upon, arbitration, disclosure, depreciation, subsidiary, litigation, scalability. For Part 2 — use NORMAL workplace vocabulary (the difficulty comes from indirect responses, NOT from exotic words). For Part 3/4 — use natural conversational English with some business terms.
 CORRECT ANSWER: heavily paraphrased, indirect, or requires synthesizing information from multiple parts of the text or multiple documents. In Part 2, use negative questions with indirect responses.
 DISTRACTORS: use common TOEIC traps but keep them identifiable: repeated words from the question in wrong context, similar-sounding words, information that is true but doesn't answer the specific question. For Part 2: distractors should be CLEARLY WRONG for a specific reason (topic shift, word trap), NOT near-correct. For Part 5/7: distractors can be more subtle (near-synonyms, one-word difference).
-  Example Part 2: "Shouldn't the revised proposal have been circulated to the board by now?" → "I believe the legal team is still vetting the liability clause." (negative question + formal vocabulary + indirect response)
+  Example Part 2: "Hasn't the new schedule been posted yet?" → "I think Karen is still working on it." (negative question + normal vocabulary + indirect response)
   Example Part 5: "The merger, ------- initially opposed by a majority of shareholders, ultimately received regulatory approval." → although/despite/whereas/nevertheless (conjunction in complex sentence with interrupting clause)
   Example Part 7: "What can be inferred from both documents?" / "In the second email, what does the phrase 'moving forward' most likely mean?" / "What is NOT indicated about the renovation project?" (cross-reference, vocabulary-in-context, NOT questions)
 GRAMMAR TESTED: subjunctive (recommend that he attend), inversion (Not only did...), participle clauses, advanced collocations (comply with, in accordance with), parallel structure in formal context
@@ -760,21 +761,32 @@ Create a TOEIC Part 2 (Question-Response) question.
 REQUIRED QUESTION TYPE: **${t.type||"varied"}** — ${t.desc||"any question type"}
 - 3 responses (A)(B)(C). Only 3 choices.
 - Natural spoken English with contractions and fragments.
-- IMPORTANT: Use DIVERSE workplace scenarios and vocabulary. Do not repeat the same topics or words across questions.
+VOCABULARY — CRITICAL FOR PART 2: Use NORMAL workplace English. Words like "meeting", "schedule", "report", "office", "delivery", "budget", "order" are correct. DO NOT use Part 5/7 vocabulary like "remuneration", "procurement", "notwithstanding", "forthcoming", "necessitate", "contingent upon", "arbitration". Part 2 difficulty comes from INDIRECT RESPONSES, not from exotic words.
+SCENARIO DIVERSITY — CRITICAL: Choose from DIFFERENT topics each time: office supplies, meeting schedule, travel plans, lunch, parking, delivery, project deadline, new employee, equipment repair, training session, client visit, holiday schedule, building maintenance. DO NOT repeat audit/compliance/regulatory themes.
+QUESTION TYPE COMPLIANCE — CRITICAL: The question MUST match the type "${t.type||"varied"}". If type is "yesno_do", use "Do/Does/Did". If "negative_isnt", use "Isn't/Aren't". If "wh_where_place", use "Where". Do NOT generate a different question type.
 LEVEL-SPECIFIC PART 2 RULES:
-${level==="beginner"?`- Question: simple WH-question or basic Yes/No with common vocabulary
-- Correct answer: DIRECT and clear. "Where is the copy room?" → "Down the hall on your left."
-- Distractors: use repeated-word trap or clearly unrelated response
-- Avoid: negative questions, tag questions, embedded questions, indirect responses`
-:level==="intermediate"?`- Question: mix of WH, Yes/No, suggestions ("Why don't we...?"), and offers
-- Correct answer: sometimes INDIRECT — "Did you finish the report?" → "I've been in meetings all day." (implies no)
-- Distractors: use similar-sound traps and related-word traps
-- Include some paraphrased responses that require understanding context`
-:`- Question: negative questions ("Shouldn't we have...?"), tag questions, embedded questions, statements requiring response
-- Correct answer: predominantly INDIRECT — referral, deflection, counter-question, or implied meaning
-- Distractors: use classic TOEIC traps — (1) WORD REPETITION: repeats a keyword but answers a different topic, (2) TOPIC SHIFT: work-related but different subject, (3) WRONG CONTEXT: grammatically fine but logically unrelated
-- The difficulty is in UNDERSTANDING the indirect correct answer, NOT in making wrong answers also seem correct
-- Example: "Shouldn't we have received the quarterly figures?" → Correct: "Ms. Chen said the data is still being verified." / Wrong: "The quarterly meeting was productive." (word trap)`}
+${level==="beginner"?`- Question: simple WH-question or basic Yes/No with common workplace vocabulary
+- Correct answer: DIRECT response. "Where is the copy room?" → "Down the hall on your left."
+- All responses are short spoken fragments (3-8 words)
+- Distractors: ONE uses a repeated keyword but wrong topic, ONE is clearly unrelated
+- Scenario: simple office situations — meeting time, supply room location, number of copies, office directions
+- Avoid: negative questions, tag questions, embedded questions, statements, indirect responses`
+:level==="intermediate"?`- Question: WH, Yes/No, suggestions ("Why don't we...?"), offers, choice ("A or B?")
+- Correct answer: sometimes INDIRECT (about 40%)
+- Indirect patterns: (1) situation-hint — "Did you finish the report?" → "I've been in meetings all day." (implies no), (2) referral — "Who is leading the project?" → "Check the internal memo.", (3) counter-question — "Would you like something to drink?" → "Do you have orange juice?"
+- Distractors: similar-sound traps ("filed"/"filled") and related-word traps
+- Scenario: standard business — project progress, client meeting, business trip, deadline, schedule change`
+:`- Question: negative questions ("Shouldn't we have...?"), tag questions ("The shipment arrived, didn't it?"), embedded questions ("Do you know when...?"), statements requiring response ("The printer seems jammed.")
+- Correct answer: predominantly INDIRECT (about 70%) — the difficulty is in UNDERSTANDING the implied meaning
+- Indirect response patterns (use variety):
+  (1) REFERRAL: "When is the training?" → "Susan is coordinating it." (= ask her)
+  (2) UNKNOWN/UNDECIDED: "When will the project start?" → "It hasn't been finalized yet."
+  (3) SITUATION HINT: "Are you going to the reception?" → "I have a deadline tonight." (= no)
+  (4) PREMISE DENIAL: "Did you submit the monthly report?" → "We only submit it quarterly." (= no monthly report exists)
+  (5) COUNTER-QUESTION: "Shouldn't we have received the shipment?" → "Who did you speak with at the warehouse?"
+  (6) THIRD OPTION: "Should we meet Monday or Tuesday?" → "Actually, let's do it by email."
+- Distractors: classic TOEIC traps — (1) WORD REPETITION: repeats keyword but wrong topic ("quarterly figures" → "quarterly meeting"), (2) TOPIC SHIFT: work-related but different subject, (3) WRONG CONTEXT: grammatically fine but logically unrelated
+- Scenario: standard TOEIC business — budget review, deadline confirmation, staff meeting, client follow-up. NOT exotic vocabulary — difficulty comes from response indirectness`}
 CRITICAL — CORRECT ANSWER STYLE: The correct answer should frequently be INDIRECT, not a textbook direct answer. Real TOEIC uses these patterns:
   * Indirect answer: "Where is the meeting?" → "Check the schedule on the board."
   * Referral: "Who handles this account?" → "You should ask Ms. Chen."
@@ -1339,36 +1351,40 @@ function lemmatize(w) {
 // Normalize Japanese meaning into a set of segments for comparison
 function meaningSegments(m) {
   if (!m) return new Set();
-  return new Set(m.trim().split(/[、,（()]/).map(s=>s.trim()).filter(Boolean));
+  return new Set(m.trim().split(/[、,（()）)・「」【】]/).map(s=>s.trim()).filter(Boolean));
 }
-// Normalize Japanese text for fuzzy comparison
-function jaNormalize(s) {
-  s = s.trim().replace(/^[～〜]/,"");
+function jaCore(s) {
+  s = s.trim().replace(/^[～〜を]/,"");
+  s = s.replace(/[をにがでとのはもな]+$/, "");
   s = s.replace(/(する|して|した|している|させる|される|しない|すること|するもの)$/, "する");
   s = s.replace(/(いる|いて|いた|いない)$/, "いる");
   s = s.replace(/(れる|れて|れた)$/, "れる");
   s = s.replace(/(ある|あって|あった)$/, "ある");
-  s = s.replace(/[をにがでとのはも]+$/, "");
+  s = s.replace(/的な$/, "的");
+  s = s.replace(/のある$/, "");
   return s;
 }
-// Check if two meanings are semantically similar
 function meaningsMatch(m1, m2) {
   if (!m1 || !m2) return false;
   if (m1.trim() === m2.trim()) return true;
   const s1 = meaningSegments(m1);
   const s2 = meaningSegments(m2);
-  // Exact segment overlap
   for (const seg of s1) if (s2.has(seg)) return true;
-  // Normalized form matching
-  const n1 = new Set([...s1].map(jaNormalize));
-  const n2 = new Set([...s2].map(jaNormalize));
-  for (const n of n1) if (n2.has(n)) return true;
-  // Substring containment (min 3 chars)
-  for (const a of s1) {
-    for (const b of s2) {
-      const na = jaNormalize(a), nb = jaNormalize(b);
-      if (na.length >= 3 && nb.length >= 3 && (na.includes(nb) || nb.includes(na))) return true;
+  const c1 = new Set([...s1].map(jaCore).filter(s=>s.length>=1));
+  const c2 = new Set([...s2].map(jaCore).filter(s=>s.length>=1));
+  for (const c of c1) if (c2.has(c)) return true;
+  for (const a of c1) {
+    for (const b of c2) {
+      if (a.length >= 2 && b.length >= 2 && (a.includes(b) || b.includes(a))) return true;
     }
+  }
+  // Kanji root extraction + substring
+  const kanjiRe = /[\u4e00-\u9fff]{2,}/g;
+  const k1 = new Set([...s1].flatMap(s=>(s.match(kanjiRe)||[])));
+  const k2 = new Set([...s2].flatMap(s=>(s.match(kanjiRe)||[])));
+  if (k1.size > 0 && k2.size > 0) {
+    for (const k of k1) if (k2.has(k)) return true;
+    for (const a of k1) { for (const b of k2) { if (a.length>=2 && b.length>=2 && (a.includes(b)||b.includes(a))) return true; } }
   }
   return false;
 }
@@ -4347,7 +4363,7 @@ function renderStudy() {
         <span class="tag" id="timerDisplay" style="background:rgba(100,116,139,0.1);color:#a0b4c8;font-size:10px;font-family:monospace">⏱ 0s</span>
         ${S.stockMode
           ?`<span class="tag" style="background:rgba(251,191,36,0.15);color:#fbbf24;font-size:10px">📦 ${S.stockPlayIdx+1}/${S.stockPlaylist.length}</span>`
-          :`<span class="tag" style="background:${PART_MODEL[S.part]===GEMINI_PRO?"rgba(168,85,247,0.15)":PART_MODEL[S.part]===GEMINI_FLASH?"rgba(59,130,246,0.15)":"rgba(100,116,139,0.1)"};color:${PART_MODEL[S.part]===GEMINI_PRO?"#a855f7":PART_MODEL[S.part]===GEMINI_FLASH?"#3b82f6":"#64748b"};font-size:10px">${PART_MODEL[S.part]===GEMINI_PRO?"Pro":PART_MODEL[S.part]===GEMINI_FLASH?"Flash":"Lite"}</span>
+          :`<span class="tag" style="background:${PART_MODEL[S.part]===GEMINI_3FLASH?"rgba(52,211,153,0.15)":PART_MODEL[S.part]===GEMINI_PRO?"rgba(168,85,247,0.15)":PART_MODEL[S.part]===GEMINI_FLASH?"rgba(59,130,246,0.15)":"rgba(100,116,139,0.1)"};color:${PART_MODEL[S.part]===GEMINI_3FLASH?"#34d399":PART_MODEL[S.part]===GEMINI_PRO?"#a855f7":PART_MODEL[S.part]===GEMINI_FLASH?"#3b82f6":"#64748b"};font-size:10px">${PART_MODEL[S.part]===GEMINI_3FLASH?"3-Flash":PART_MODEL[S.part]===GEMINI_PRO?"Pro":PART_MODEL[S.part]===GEMINI_FLASH?"Flash":"Lite"}</span>
            <span class="tag" style="background:rgba(251,191,36,0.1);color:#fbbf24">${S.sessionNum}/${SESSION_SIZE}</span>`}
       </div>
     </div>

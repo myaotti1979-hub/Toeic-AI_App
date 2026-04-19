@@ -60,32 +60,33 @@ MODEL_OPTIONS = {
     "gemma3:4b (4B lightweight)": {"engine":"ollama","model":"gemma3:4b"},
     "gemini-2.5-flash-lite (API fastest)": {"engine":"gemini","model":"gemini-2.5-flash-lite"},
     "gemini-2.5-flash (API balanced)": {"engine":"gemini","model":"gemini-2.5-flash"},
-    "gemini-2.5-pro (API best quality)": {"engine":"gemini","model":"gemini-2.5-pro"},
+    "gemini-3-flash (API best value)": {"engine":"gemini","model":"gemini-3-flash-preview"},
+    "gemini-2.5-pro (API premium)": {"engine":"gemini","model":"gemini-2.5-pro"},
 }
 
-GEMINI_THINKING = {"gemini-2.5-flash-lite":0,"gemini-2.5-flash":0,"gemini-2.5-pro":1024}
+GEMINI_THINKING = {"gemini-2.5-flash-lite":0,"gemini-2.5-flash":0,"gemini-3-flash-preview":0,"gemini-2.5-pro":1024}
 
-# 503フォールバックチェーン: Pro → Flash → Flash-Lite → ローカル gemma3
+# 503フォールバックチェーン: 3-Flash → 2.5-Flash → Flash-Lite → ローカル gemma3
 GEMINI_FALLBACK_CHAIN = [
-    {"engine":"gemini","model":"gemini-2.5-pro",        "label":"Pro"},
-    {"engine":"gemini","model":"gemini-2.5-flash",      "label":"Flash"},
-    {"engine":"gemini","model":"gemini-2.5-flash-lite",  "label":"Flash-Lite"},
-    {"engine":"ollama","model":"gemma3:12b",             "label":"gemma3:12b (local)"},
+    {"engine":"gemini","model":"gemini-3-flash-preview",  "label":"3-Flash"},
+    {"engine":"gemini","model":"gemini-2.5-flash",        "label":"2.5-Flash"},
+    {"engine":"gemini","model":"gemini-2.5-flash-lite",   "label":"Flash-Lite"},
+    {"engine":"ollama","model":"gemma3:12b",              "label":"gemma3:12b (local)"},
 ]
 
-# パート別の推奨モデル（短文はローカル、長文はGemini Pro）
+# パート別の推奨モデル（3-Flash = 高性能+低コスト）
 PART_DEFAULT_MODEL = {
-    "part1": "gemini-2.5-pro (API best quality)",
+    "part1": "gemini-3-flash (API best value)",
     "part2": "gemma3:12b (12B local GPU)",
-    "part3": "gemini-2.5-pro (API best quality)",
-    "part3_3p": "gemini-2.5-pro (API best quality)",
+    "part3": "gemini-3-flash (API best value)",
+    "part3_3p": "gemini-3-flash (API best value)",
     "part4": "gemma3:12b (12B local GPU)",
     "part5": "gemma3:12b (12B local GPU)",
-    "part6": "gemini-2.5-pro (API best quality)",
-    "part7": "gemini-2.5-pro (API best quality)",
-    "part7s": "gemini-2.5-pro (API best quality)",
-    "part7d": "gemini-2.5-pro (API best quality)",
-    "part7t": "gemini-2.5-pro (API best quality)",
+    "part6": "gemini-3-flash (API best value)",
+    "part7": "gemini-3-flash (API best value)",
+    "part7s": "gemini-3-flash (API best value)",
+    "part7d": "gemini-3-flash (API best value)",
+    "part7t": "gemini-3-flash (API best value)",
 }
 
 # ══════════════════════════════════════
@@ -113,10 +114,10 @@ DISTRACTORS: plausible and related to the topic — require careful reading/list
 GRAMMAR TESTED: present perfect vs past simple, passive voice variations, conditionals, relative clauses, gerund vs infinitive, subject-verb agreement with complex subjects
 IMPORTANT: Audio speed, conversation length, and document length are IDENTICAL to all levels. Only vocabulary complexity, answer directness, and distractor subtlety differ.""",
     "advanced": """DIFFICULTY: HARD (questions a 800+ scorer can answer — requires 80%+ correct rate)
-VOCABULARY: sophisticated/formal business language — use DIVERSE vocabulary from different fields (finance, HR, logistics, legal, marketing, IT, manufacturing). Do NOT always use the same words. Examples: procurement, compliance, amendment, forthcoming, notwithstanding, expedite, remuneration, discretionary, contingent upon, arbitration, disclosure, depreciation, subsidiary, litigation, scalability
+VOCABULARY: For Part 5/6/7 — use sophisticated business vocabulary from diverse fields: procurement, compliance, amendment, forthcoming, expedite, remuneration, discretionary, contingent upon, arbitration, disclosure, depreciation, subsidiary, litigation, scalability. For Part 2 — use NORMAL workplace vocabulary (the difficulty comes from indirect responses, NOT from exotic words). For Part 3/4 — use natural conversational English with some business terms.
 CORRECT ANSWER: heavily paraphrased, indirect, or requires synthesizing information from multiple parts of the text or multiple documents. In Part 2, use negative questions with indirect responses.
 DISTRACTORS: use common TOEIC traps but keep them identifiable: repeated words from the question in wrong context, similar-sounding words, information that is true but doesn't answer the specific question. For Part 2: distractors should be CLEARLY WRONG for a specific reason (topic shift, word trap), NOT near-correct. For Part 5/7: distractors can be more subtle (near-synonyms, one-word difference).
-  Example Part 2: "Shouldn't the revised proposal have been circulated to the board by now?" → "I believe the legal team is still vetting the liability clause." (negative question + formal vocabulary + indirect response)
+  Example Part 2: "Hasn't the new schedule been posted yet?" → "I think Karen is still working on it." (negative question + normal vocabulary + indirect response)
   Example Part 5: "The merger, ------- initially opposed by a majority of shareholders, ultimately received regulatory approval." → although/despite/whereas/nevertheless (conjunction in complex sentence with interrupting clause)
   Example Part 7: "What can be inferred from both documents?" / "In the second email, what does the phrase 'moving forward' most likely mean?" / "What is NOT indicated about the renovation project?" (cross-reference, vocabulary-in-context, NOT questions)
 GRAMMAR TESTED: subjunctive (recommend that he attend), inversion (Not only did...), participle clauses, advanced collocations (comply with, in accordance with), parallel structure in formal context
@@ -145,9 +146,9 @@ def get_level_rules(part, level):
             "advanced": '- Use passive voice states and perfect passive: "The vehicle has been parked along the curb." / "Merchandise is being displayed."\n- Require distinguishing ongoing action vs completed state: "are being arranged" vs "have been arranged"\n- Distractors: each must be wrong for ONE clear reason — (1) wrong SUBJECT (describes different person/object), (2) wrong ACTION (person is doing something else), (3) wrong STATE (ongoing vs completed: "are being stacked" vs "have been stacked"), (4) wrong PREPOSITION/LOCATION ("on" vs "next to")\n- The difficulty is in the CORRECT answer using advanced grammar, NOT in making distractors also seem correct\n- Use advanced vocabulary: scaffolding, docked, paved, stacked, mounted, overlooking\n- Scene: complex scene with multiple people/objects where details matter',
         },
         "part2": {
-            "beginner": '- Question: simple WH-question or basic Yes/No with common vocabulary\n- Correct answer: DIRECT and clear. "Where is the copy room?" → "Down the hall on your left."\n- Distractors: repeated-word trap or clearly unrelated response\n- Avoid: negative questions, tag questions, embedded questions, indirect responses',
-            "intermediate": '- Question: mix of WH, Yes/No, suggestions ("Why don\'t we...?"), and offers\n- Correct answer: sometimes INDIRECT — "Did you finish the report?" → "I\'ve been in meetings all day." (implies no)\n- Distractors: use similar-sound traps and related-word traps\n- Include some paraphrased responses that require understanding context',
-            "advanced": '- Question: negative questions ("Shouldn\'t we have...?"), tag questions, embedded questions, statements requiring response\n- Correct answer: predominantly INDIRECT — referral, deflection, counter-question, or implied meaning\n- Distractors: use classic TOEIC traps — (1) WORD REPETITION trap: repeats a keyword from the question but answers a different topic, (2) TOPIC SHIFT: sounds work-related but addresses a completely different subject, (3) WRONG CONTEXT: grammatically fine but logically unrelated to the situation\n- The difficulty is in UNDERSTANDING the indirect correct answer, NOT in making wrong answers also seem correct\n- Example: "Shouldn\'t we have received the quarterly figures by now?" → Correct: "Ms. Chen said the data is still being verified." (indirect=implies delay) / Wrong: "The quarterly meeting was very productive." (word trap: quarterly)',
+            "beginner": '- Question: simple WH-question or basic Yes/No with common workplace vocabulary\n- Correct answer: DIRECT response. "Where is the copy room?" → "Down the hall on your left."\n- All responses are short spoken fragments (3-8 words)\n- Distractors: ONE uses a repeated keyword from the question but wrong topic, ONE is clearly unrelated\n- Scenario: simple office situations — meeting time, supply room location, number of copies, office directions\n- Avoid: negative questions, tag questions, embedded questions, statements, indirect responses',
+            "intermediate": '- Question: WH, Yes/No, suggestions ("Why don\'t we...?"), offers, and choice ("A or B?")\n- Correct answer: sometimes INDIRECT (about 40% of the time)\n- Indirect patterns to use: (1) situation-hint — "Did you finish the report?" → "I\'ve been in meetings all day." (implies no), (2) referral — "Who is leading the project?" → "Check the internal memo." (implies answer is there), (3) counter-question — "Would you like something to drink?" → "Do you have orange juice?"\n- Distractors: use similar-sound traps ("filed"/"filled") and related-word traps ("meeting" in question → "conference" in wrong answer about different topic)\n- Scenario: standard business — project progress, client meeting, business trip, deadline, schedule change',
+            "advanced": '- Question: negative questions ("Shouldn\'t we have...?"), tag questions ("The shipment arrived, didn\'t it?"), embedded questions ("Do you know when...?"), statements requiring response ("The printer seems jammed.")\n- Correct answer: predominantly INDIRECT (about 70%) — the difficulty is in UNDERSTANDING the implied meaning\n- Indirect response patterns (use variety):\n  (1) REFERRAL: "When is the training?" → "Susan is coordinating it." (= ask her)\n  (2) UNKNOWN/UNDECIDED: "When will the project start?" → "It hasn\'t been finalized yet."\n  (3) SITUATION HINT: "Are you going to the reception?" → "I have a deadline tonight." (= no)\n  (4) PREMISE DENIAL: "Did you submit the monthly report?" → "We only submit it quarterly." (= no monthly report exists)\n  (5) COUNTER-QUESTION: "Shouldn\'t we have received the shipment?" → "Who did you speak with at the warehouse?"\n  (6) THIRD OPTION: "Should we meet Monday or Tuesday?" → "Actually, let\'s do it by email."\n- Distractors: classic TOEIC traps — (1) WORD REPETITION: repeats keyword from question but wrong topic ("quarterly figures" → "quarterly meeting"), (2) TOPIC SHIFT: sounds work-related but addresses completely different subject, (3) WRONG CONTEXT: grammatically fine but logically unrelated\n- Scenario: standard TOEIC business — budget review, deadline confirmation, staff meeting, client follow-up, schedule coordination. NOT exotic vocabulary — difficulty comes from response indirectness, not word difficulty',
         },
         "part3": {
             "beginner": '- Questions: all 3 should be straightforward detail questions (Who/What/Where/When)\n- Answers are directly stated in the conversation — no inference needed\n- Vocabulary in conversation: basic everyday business words',
@@ -207,7 +208,7 @@ def build_prompt(level, part, t):
     R7t = get_level_rules("part7t", level)
     B = {
         "part1": lambda: f'{sys}{R1}\nPart 1 (Photographs). SCENE: {tt} — {td}. 4 statements (A-D), 5-8 words each describing the photo objectively.\n- Correct answer: accurately describes what is visible.\n- Distractors: mention objects/actions that are NOT visible, wrong tense, or wrong subject.\nDO NOT include an "audio" field — it will be auto-generated from choices.\n{{"scene":"vivid 20-30 word description for image generation","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"日本語で正解理由と各誤答のトラップタイプを解説","explanation_en":"Short 1-2 sentence English explanation"{VEX}}}',
-        "part2": lambda: f'{sys}{R2}\nPart 2 (Question-Response). TYPE: {tt} — {td}. 3 responses (A-C). Correct answer is frequently INDIRECT (not a literal yes/no).\nIMPORTANT: Use DIVERSE workplace scenarios and vocabulary. Avoid repeating the same topics.\nCRITICAL FORMAT: EXACTLY 3 choices (A)(B)(C). NEVER include (D). Each response MUST be 3-8 words (short spoken fragments).\nGood: "(A) In the conference room." / Bad: "(A) I believe the meeting was rescheduled to next Tuesday." (too long!)\nDO NOT include an "audio" field — it will be auto-generated.\n{{"spoken":"Natural question or statement 5-15 words","choices":["(A) 3-8 word response.","(B) 3-8 word response.","(C) 3-8 word response."],"correct":0,"explanation_ja":"【出題: {tt}】\\n和訳: (spoken の日本語訳)\\n正解理由と各誤答のトラップタイプを解説","explanation_en":"Short English"{VEX}}}',
+        "part2": lambda: f'{sys}{R2}\nPart 2 (Question-Response). TYPE: {tt} — {td}. 3 responses (A-C). Correct answer is frequently INDIRECT (not a literal yes/no).\nVOCABULARY — CRITICAL FOR PART 2: Use NORMAL workplace English. Words like "meeting", "schedule", "report", "office", "delivery", "budget", "order" are correct. DO NOT use Part 5/7 vocabulary like "remuneration", "procurement", "notwithstanding", "forthcoming", "necessitate", "contingent upon", "arbitration". Part 2 difficulty comes from INDIRECT RESPONSES, not from exotic words.\nSCENARIO DIVERSITY — CRITICAL: Each question MUST be about a DIFFERENT workplace topic. Choose from: office supplies, meeting schedule, travel plans, lunch, parking, delivery, project deadline, new employee, equipment repair, training session, client visit, holiday schedule, building maintenance, job opening, company event. DO NOT repeat audit/compliance/regulatory themes.\nQUESTION TYPE COMPLIANCE — CRITICAL: The question MUST match the type "{tt}". If type is "yesno_do", use "Do/Does/Did". If "negative_isnt", use "Isn\'t/Aren\'t". If "wh_where_place", use "Where". Do NOT generate a different question type.\nCRITICAL FORMAT: EXACTLY 3 choices (A)(B)(C). NEVER include (D). Each response MUST be 3-8 words (short spoken fragments).\nGood: "(A) In the conference room." / Bad: "(A) I believe the meeting was rescheduled to next Tuesday." (too long!)\nDO NOT include an "audio" field — it will be auto-generated.\n{{"spoken":"Natural question or statement 5-15 words","choices":["(A) 3-8 word response.","(B) 3-8 word response.","(C) 3-8 word response."],"correct":0,"explanation_ja":"【出題: {tt}】\\n和訳: (spoken の日本語訳)\\n正解理由と各誤答のトラップタイプを解説","explanation_en":"Short English"{VEX}}}',
         "part3": lambda: f'{sys}{R3}\nPart 3 (Conversations). SCENARIO: {tt} — {td}. "Man:"/"Woman:" labels. 5-8 turns, 60-100 words MAXIMUM. Keep conversation SHORT and natural. EXACTLY 3 questions. INCLUDE "translation_ja".\nGENDER RULES — STRICT:\n- "Man:" = MALE character (male names, he/him/his). "Woman:" = FEMALE character (female names, she/her).\n- In questions: "the man" = Man speaker, "the woman" = Woman speaker. NEVER swap.\n- translation_ja: Man = 男性, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated from conversation.\n{{"conversation":"Man: first line...\\nWoman: response...\\nMan: reply...\\nWoman: next...\\nMan: final...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What does the man/woman suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What will the speaker most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
         "part3_3p": lambda: f'{sys}{R3}\nPart 3 (Conversations) with EXACTLY 3 speakers.\nFORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"\nSCENARIO: {tt} — {td}. 7-10 turns, 80-120 words. All 3 speakers must have substantial lines. EXACTLY 3 questions.\nGENDER RULES — STRICT:\n- "Man 1:"/"Man 2:" = MALE. "Woman:"/"Woman 1:"/"Woman 2:" = FEMALE. NEVER swap.\n- translation_ja: Man 1 = 男性1, Man 2 = 男性2, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated.\n{{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...","translation_ja":"男性1: ...\\n女性: ...\\n男性2: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
         "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}. Single-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説","explanation_en":"Short English"}}]{VEX}}}',
@@ -584,6 +585,77 @@ def wav_to_opus(wav):
         r = subprocess.run(['ffmpeg','-i','pipe:','-c:a','libopus','-b:a','24k','-f','webm','pipe:'],input=wav,capture_output=True,timeout=30)
         return r.stdout if r.returncode==0 else None
     except FileNotFoundError: return None
+
+# ── Azure Speech TTS (Microsoft Neural Voices, Paid) ──
+AZURE_VOICES_F = ["en-US-AvaMultilingualNeural", "en-US-AriaNeural", "en-US-JennyNeural", "en-GB-SoniaNeural"]
+AZURE_VOICES_M = ["en-US-AndrewMultilingualNeural", "en-US-GuyNeural", "en-US-DavisNeural", "en-GB-RyanNeural"]
+
+_azure_token_cache = {"token": None, "expires": 0}
+
+def _azure_get_token(key, region):
+    """Get Azure access token (cached for 9 minutes)."""
+    import time
+    now = time.time()
+    if _azure_token_cache["token"] and now < _azure_token_cache["expires"]:
+        return _azure_token_cache["token"]
+    ep = st.session_state.get("azure_speech_endpoint","").strip().rstrip("/")
+    if ep:
+        token_url = f"{ep}/sts/v1.0/issueToken"
+    else:
+        token_url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+    resp = requests.post(token_url,
+        headers={"Ocp-Apim-Subscription-Key": key, "Content-Length": "0"},
+        timeout=10)
+    resp.raise_for_status()
+    token = resp.text
+    _azure_token_cache["token"] = token
+    _azure_token_cache["expires"] = now + 540
+    return token
+
+def _azure_tts_endpoint():
+    """Get Azure TTS synthesis endpoint."""
+    ep = st.session_state.get("azure_speech_endpoint","").strip().rstrip("/")
+    if ep:
+        return f"{ep}/tts/cognitiveservices/v1"
+    region = st.session_state.get("azure_speech_region","eastus")
+    return f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
+
+def azure_tts(text, key, region, voice=None, rate="0%"):
+    """Azure Speech TTS. Returns MP3 bytes."""
+    if not voice:
+        voice = random.choice(AZURE_VOICES_F + AZURE_VOICES_M)
+    token = _azure_get_token(key, region)
+    ssml = f"""<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>
+<voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>"""
+    resp = requests.post(
+        _azure_tts_endpoint(),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
+        },
+        data=ssml.encode("utf-8"),
+        timeout=30)
+    resp.raise_for_status()
+    return resp.content  # MP3 bytes
+
+def azure_tts_conv(text, key, region, speakers=None):
+    """Azure Speech multi-speaker TTS for conversations. Returns MP3 bytes."""
+    lines = [l.strip() for l in text.replace("\\n","\n").split("\n") if l.strip()]
+    all_mp3 = b""
+    for line in lines:
+        m = re.match(r'(Man|Woman|Speaker)\s*\d?\s*:\s*(.*)', line, re.I)
+        if m:
+            gender = "female" if m.group(1).lower() == "woman" else "male"
+            voice = random.choice(AZURE_VOICES_F if gender == "female" else AZURE_VOICES_M)
+            spoken = m.group(2).strip()
+        else:
+            voice = random.choice(AZURE_VOICES_F + AZURE_VOICES_M)
+            spoken = line
+        if spoken:
+            mp3 = azure_tts(spoken, key, region, voice)
+            all_mp3 += mp3
+    return all_mp3 if all_mp3 else None
 
 # Gemini TTS
 # ── Edge TTS (Microsoft Neural Voices, Free) ──
@@ -967,6 +1039,17 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
                     print(f"[TTS] ✅ OK ({len(o)//1024}KB opus)", flush=True)
                 else:
                     print(f"[TTS] ⚠️ Edge TTS: mp3→opus conversion failed", flush=True)
+            elif tts_eng == "azure" and st.session_state.get("azure_speech_key"):
+                az_key = st.session_state.azure_speech_key
+                az_region = st.session_state.get("azure_speech_region", "eastus")
+                print(f"[TTS] Part={real_part}, engine=azure{'_conv' if real_part=='part3' else ''}", flush=True)
+                mp3 = azure_tts_conv(at, az_key, az_region, qs.get("speakers")) if real_part == "part3" else azure_tts(at, az_key, az_region)
+                o = mp3_to_opus(mp3)
+                if o:
+                    item["audioOpus"] = base64.b64encode(o).decode(); item["audioFormat"] = "opus"
+                    print(f"[TTS] ✅ OK ({len(o)//1024}KB opus)", flush=True)
+                else:
+                    print(f"[TTS] ⚠️ Azure TTS: mp3→opus conversion failed", flush=True)
             elif tts_eng == "gemini" and api_key:
                 if real_part == "part3":
                     print(f"[TTS] Part={real_part}, engine=gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
@@ -1359,9 +1442,14 @@ if "_init" not in st.session_state:
     st.session_state._init = True
     st.session_state.ollama_url = os.environ.get("OLLAMA_URL","http://localhost:11434")
     st.session_state.gemini_key = os.environ.get("GEMINI_API_KEY","")
+    st.session_state.azure_speech_key = os.environ.get("AZURE_SPEECH_KEY","")
+    st.session_state.azure_speech_region = os.environ.get("AZURE_SPEECH_REGION","eastus")
+    st.session_state.azure_speech_endpoint = os.environ.get("AZURE_SPEECH_ENDPOINT","")
     st.session_state.model_key = "auto (per-part recommended)"
     st.session_state.part = "part5"; st.session_state.level = "advanced"; st.session_state.count = 10
-    st.session_state.tts_engine = "gemini"; st.session_state.enable_tts = False; st.session_state.enable_image = False
+    # Default TTS: Azure if key set, else Edge if available, else Gemini
+    _default_tts = "azure" if st.session_state.azure_speech_key else ("edge" if check_edge_tts() else "gemini")
+    st.session_state.tts_engine = _default_tts; st.session_state.enable_tts = False; st.session_state.enable_image = False
     # Load persisted data on startup
     st.session_state.results = load_results(RESULTS_FILE)
     st.session_state.mock_results = load_all_mock_batches()
@@ -1394,49 +1482,65 @@ def norm_meaning(m):
 
 def meaning_segments(m):
     if not m: return set()
-    return set(s.strip() for s in re.split(r'[、,（()]', m.strip()) if s.strip())
+    # Split by all bracket types, commas, and ・
+    return set(s.strip() for s in re.split(r'[、,（()）)・「」【】]', m.strip()) if s.strip())
 
-def _ja_normalize(s):
-    """Normalize Japanese text for fuzzy comparison.
-    Strips particles, normalizes verb endings, removes common prefixes."""
+def _ja_core(s):
+    """Extract core meaning by stripping particles, prefixes, suffixes."""
     s = s.strip()
-    # Remove ～ prefix
-    s = s.lstrip("～〜")
-    # Normalize verb endings: して→する, した→する, させる→する, される→する, etc.
+    s = s.lstrip("～〜を")
+    # Remove trailing particles/copula
+    s = re.sub(r'[をにがでとのはもな]+$', '', s)
+    # Normalize verb/adj endings
     s = re.sub(r'(する|して|した|している|させる|される|しない|すること|するもの)$', 'する', s)
     s = re.sub(r'(いる|いて|いた|いない)$', 'いる', s)
     s = re.sub(r'(れる|れて|れた)$', 'れる', s)
     s = re.sub(r'(ある|あって|あった)$', 'ある', s)
-    # Remove trailing particles
-    s = re.sub(r'[をにがでとのはも]+$', '', s)
+    # Remove common adj suffixes: 的な→的, のある→""
+    s = re.sub(r'的な$', '的', s)
+    s = re.sub(r'のある$', '', s)
     return s
 
 def meanings_match(m1, m2):
-    """Check if two Japanese meanings are semantically similar.
-    Uses segment overlap + substring containment + normalized form matching."""
+    """Check if two Japanese meanings are semantically similar."""
     if not m1 or not m2: return False
-    # Exact match
     if m1.strip() == m2.strip(): return True
-    # Segment overlap (split by 、,（)
+    
     s1 = meaning_segments(m1)
     s2 = meaning_segments(m2)
+    # Exact segment overlap
     if s1 & s2: return True
-    # Normalized form matching
-    n1 = {_ja_normalize(s) for s in s1}
-    n2 = {_ja_normalize(s) for s in s2}
-    if n1 & n2: return True
-    # Substring containment (either direction, min 3 chars)
-    for a in s1:
-        for b in s2:
-            na, nb = _ja_normalize(a), _ja_normalize(b)
-            if len(na) >= 3 and len(nb) >= 3:
-                if na in nb or nb in na: return True
+    
+    # Core-normalized overlap
+    c1 = {_ja_core(s) for s in s1 if len(s) >= 1}
+    c2 = {_ja_core(s) for s in s2 if len(s) >= 1}
+    c1.discard(""); c2.discard("")
+    if c1 & c2: return True
+    
+    # Substring containment (min 2 chars for Japanese)
+    for a in c1:
+        for b in c2:
+            if len(a) >= 2 and len(b) >= 2:
+                if a in b or b in a: return True
+    
+    # Kanji root extraction: "迅速に処理する" → {"迅速", "処理"}
+    kanji_re = re.compile(r'[\u4e00-\u9fff]{2,}')
+    k1 = set()
+    k2 = set()
+    for s in s1: k1.update(kanji_re.findall(s))
+    for s in s2: k2.update(kanji_re.findall(s))
+    if k1 and k2:
+        if k1 & k2: return True
+        # Kanji substring: "迅速" ⊂ "迅速化"
+        for a in k1:
+            for b in k2:
+                if len(a) >= 2 and len(b) >= 2 and (a in b or b in a): return True
+    
     return False
 
 
 def _do_llm_vocab_cleanup(all_vocab):
     """Use LLM to deduplicate similar meanings for each word."""
-    # Find words with 2+ meanings
     multi = [(v["word"], v.get("_meanings",[])) for v in all_vocab if len(v.get("_meanings",[])) >= 2]
     if not multi:
         st.info("重複候補の単語がありません")
@@ -1448,30 +1552,39 @@ def _do_llm_vocab_cleanup(all_vocab):
     stat = st.empty()
     stat.info(f"🤖 {len(multi)}語の意味を AI で整理中...")
 
-    # Build batches of ~15 words
-    BATCH = 15
-    keep_map = {}  # word → [kept_ja_meanings]
+    BATCH = 10
+    keep_map = {}
     for bi in range(0, len(multi), BATCH):
         batch = multi[bi:bi+BATCH]
         prompt_lines = []
         for word, meanings in batch:
-            m_list = "\n".join(f"  {i+1}. {m.get('ja','')}" for i,m in enumerate(meanings))
-            prompt_lines.append(f"{word}:\n{m_list}")
-        prompt = f"""以下の英単語について、日本語の意味が複数あります。
-同じ意味・類義語・活用違いをまとめて、本当に異なる意味だけを残してください。
+            m_list = " / ".join(m.get('ja','') for m in meanings)
+            prompt_lines.append(f"  {word}: {m_list}")
+        prompt = f"""英単語の日本語訳を整理する。同じ意味の重複を統合し、本質的に異なる意味だけ残せ。
 
-ルール:
-- 同じ概念の言い換え（例: 「迅速にする」「早める」「迅速化する」）は最も自然な1つにまとめる
-- 本当に異なる意味は両方残す（例: 「連絡係」と「連絡・連携」は異なる）
-- 各単語について残す意味を列挙
-- JSON形式で返す: {{"word1": ["意味1", "意味2"], "word2": ["意味1"]}}
+判定基準:
+- 「課す」「課する」→ 同じ（活用違い）→ 1つにまとめる
+- 「迅速に処理する」「迅速化する」「早める」→ 同じ概念 → 最も自然な1つ
+- 「売却、分離」「事業売却」→ 同じ（売却が共通）→ 1つ
+- 「独占的な」「独占の」→ 同じ（語尾違い）→ 1つ
+- 「連絡係」「連携」→ 異なる → 両方残す
 
+具体例:
+INPUT: expedite: を迅速に処理する / を迅速化する / を早める / をはかどらせる
+OUTPUT: {{"expedite": ["迅速に処理する"]}}
+
+INPUT: levy: （税金を）課す / （税金を）課する
+OUTPUT: {{"levy": ["（税金を）課す"]}}
+
+INPUT: liaison: 連絡係、窓口 / 連絡担当者 / 連絡、連携
+OUTPUT: {{"liaison": ["連絡係", "連携"]}}
+
+以下を整理せよ:
 {chr(10).join(prompt_lines)}
 
-JSONのみ返してください:"""
+JSONのみ出力:"""
 
         try:
-            # Try local Ollama first (free)
             try:
                 resp = requests.post(f"{url}/api/generate", json={
                     "model":"gemma3:12b","prompt":prompt,"stream":False,
@@ -1482,7 +1595,6 @@ JSONのみ返してください:"""
                 else:
                     raise RuntimeError(f"Ollama {resp.status_code}")
             except Exception:
-                # Fallback to Gemini
                 if not api_key: raise
                 resp = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
@@ -1491,7 +1603,6 @@ JSONのみ返してください:"""
                 if not resp.ok: raise RuntimeError(f"Gemini {resp.status_code}")
                 raw = resp.json().get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text","")
 
-            # Parse JSON from response
             raw = re.sub(r'```json\s*|```\s*', '', raw).strip()
             parsed = json.loads(raw)
             for word, kept in parsed.items():
@@ -1607,14 +1718,20 @@ with st.sidebar:
     edge = check_edge_tts()
     opts = []
     if edge: opts.append("edge")
-    opts += ["gemini","off"]
-    # session_stateの値がoptsに含まれない場合はリセット
+    opts += ["azure", "gemini", "off"]
     if st.session_state.tts_engine not in opts:
         st.session_state.tts_engine = opts[0]
     st.radio("Engine", opts, key="tts_engine",
-             format_func={"edge":"Edge TTS (無料)","gemini":"🌟 Gemini TTS (高品質)","off":"🔇 Off"}.get,
+             format_func={"edge":"Edge TTS (無料)","azure":"☁️ Azure Speech ($15/1M文字)","gemini":"🌟 Gemini TTS","off":"🔇 Off"}.get,
              horizontal=True)
-    if not edge: st.caption("⚠️ Edge TTS が使えません。インストール: `pip install edge-tts`")
+    if st.session_state.tts_engine == "azure":
+        st.text_input("Azure Speech Key", key="azure_speech_key", type="password")
+        st.text_input("Azure Endpoint", key="azure_speech_endpoint",
+                       help="例: https://toeic-tts.cognitiveservices.azure.com")
+        if not st.session_state.get("azure_speech_endpoint"):
+            rgn = st.session_state.get("azure_speech_region","eastus")
+            st.caption(f"⚠️ Endpoint未設定 → リージョン `{rgn}` を使用")
+    if not edge: st.caption("⚠️ Edge TTS が使えません: `pip install edge-tts`")
 
     st.divider()
     st.markdown(f"**Results: {len(st.session_state.results)}**")
@@ -1867,6 +1984,17 @@ with tab_gen:
                                 print(f"[TTS] ✅ OK ({len(o)//1024}KB)", flush=True)
                             else:
                                 print(f"[TTS] ❌ Opus encode failed", flush=True)
+                        elif tts_eng=="azure" and st.session_state.get("azure_speech_key"):
+                            az_key = st.session_state.azure_speech_key
+                            az_region = st.session_state.get("azure_speech_region","eastus")
+                            print(f"[TTS] Part={tts_part}, engine=azure{'_conv' if tts_part=='part3' else ''}", flush=True)
+                            mp3 = azure_tts_conv(at,az_key,az_region,qs.get("speakers")) if tts_part=="part3" else azure_tts(at,az_key,az_region)
+                            o = mp3_to_opus(mp3)
+                            if o:
+                                item["audioOpus"]=base64.b64encode(o).decode(); item["audioFormat"]="opus"
+                                print(f"[TTS] ✅ OK ({len(o)//1024}KB)", flush=True)
+                            else:
+                                print(f"[TTS] ❌ Azure opus encode failed", flush=True)
                         elif tts_eng=="gemini" and api_key:
                             if tts_part=="part3":
                                 print(f"[TTS] Part={tts_part}, engine=gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
