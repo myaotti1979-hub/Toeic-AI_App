@@ -3067,41 +3067,41 @@ async function renderVocab() {
   words.forEach(w => { const p=w.pos||"other"; if(!groups[p])groups[p]=[]; groups[p].push(w); });
   const posKeys = Object.keys(groups).sort();
 
-  // Tab buttons
-  const tabBtns = [`<button class="pos-tab active" data-pos="all">All (${words.length})</button>`]
-    .concat(posKeys.map(p => `<button class="pos-tab" data-pos="${p}">${POS_LABELS[p]||p} (${groups[p].length})</button>`)).join("");
+  // Count for level/progress filters
+  const weakWords = words.filter(w=>(w.wrongCount||0)>0);
+  const lvA = words.filter(w=>w.level==="A");
+  const lvB = words.filter(w=>w.level==="B");
+  const lvC = words.filter(w=>w.level==="C");
+  const newWords = words.filter(w=>!(w.correctCount||0) && !(w.wrongCount||0));
+  const masteredWords = words.filter(w=>(w.correctCount||0)>=3 && (w.correctCount||0)>(w.wrongCount||0)*2);
 
-  // Tab content
-  const allList = renderWordList(words);
-  let tabContents = `<div class="pos-content" data-pos="all">${allList}</div>`;
-  posKeys.forEach(p => {
-    tabContents += `<div class="pos-content" data-pos="${p}" style="display:none">${renderWordList(groups[p])}</div>`;
-  });
+  // Filter buttons (top row: level/progress)
+  const filterBtns = [
+    `<button class="filter-tab active" data-filter="all">全て (${words.length})</button>`,
+    weakWords.length ? `<button class="filter-tab" data-filter="weak" style="color:#f87171">❌苦手 (${weakWords.length})</button>` : "",
+    lvA.length ? `<button class="filter-tab" data-filter="A" style="color:#22c55e">🟢A (${lvA.length})</button>` : "",
+    lvB.length ? `<button class="filter-tab" data-filter="B" style="color:#f59e0b">🟡B (${lvB.length})</button>` : "",
+    lvC.length ? `<button class="filter-tab" data-filter="C" style="color:#ef4444">🔴C (${lvC.length})</button>` : "",
+    newWords.length ? `<button class="filter-tab" data-filter="new" style="color:#60a5fa">🆕未学習 (${newWords.length})</button>` : "",
+    masteredWords.length ? `<button class="filter-tab" data-filter="mastered" style="color:#4ade80">✅済 (${masteredWords.length})</button>` : "",
+  ].filter(Boolean).join("");
+
+  // POS tab buttons (bottom row)
+  const tabBtns = [`<button class="pos-tab active" data-pos="all">All</button>`]
+    .concat(posKeys.map(p => `<button class="pos-tab" data-pos="${p}">${POS_LABELS[p]||p} (${groups[p].length})</button>`)).join("");
 
   app.innerHTML=`
     <div class="header"><h1 style="font-size:20px">📝 単語帳</h1><div class="sub">${words.length}語</div></div>
     ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>`:""}
     ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button> <button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24;margin-left:4px">🏷️ レベル判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
-    <div style="display:flex;gap:4px;overflow-x:auto;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
-    <style>.pos-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
-    .pos-tab.active{background:rgba(129,140,248,0.2);color:#7b9cf7;border-color:rgba(129,140,248,0.4)}</style>
-    <div id="posTabArea">${tabContents}</div>
+    <div style="display:flex;gap:4px;overflow-x:auto;padding:6px 0;flex-wrap:wrap">${filterBtns}</div>
+    <div style="display:flex;gap:4px;overflow-x:auto;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
+    <style>.pos-tab,.filter-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
+    .pos-tab.active{background:rgba(129,140,248,0.2);color:#7b9cf7;border-color:rgba(129,140,248,0.4)}
+    .filter-tab.active{background:rgba(129,140,248,0.2);border-color:rgba(129,140,248,0.4)}</style>
+    <div id="vocabListArea"></div>
     <button class="btn-s" id="vocabBackBtn" style="margin:16px auto;display:block">← ホームに戻る</button>`;
 
-  // Tab switching
-  document.querySelectorAll(".pos-tab").forEach(tab=>{
-    tab.onclick=()=>{
-      document.querySelectorAll(".pos-tab").forEach(t=>t.classList.remove("active"));
-      tab.classList.add("active");
-      document.querySelectorAll(".pos-content").forEach(c=>c.style.display="none");
-      const target=document.querySelector(`.pos-content[data-pos="${tab.dataset.pos}"]`);
-      if(target) target.style.display="block";
-    };
-  });
-  // Delete buttons
-  document.querySelectorAll("[data-vdel]").forEach(el=>{
-    el.onclick=async()=>{ await vocabDelete(parseInt(el.dataset.vdel)); render(); };
-  });
   // Play audio from base64 Opus (if stored), else fallback to Gemini TTS
   async function playVocabAudio(btn, originalLabel, storedAudio, fallbackText) {
     btn.textContent = "⏳";
@@ -3149,28 +3149,73 @@ async function renderVocab() {
     btn.textContent = "⚠️";
     setTimeout(() => { btn.textContent = originalLabel; }, 2000);
   }
-  // Pronunciation buttons - words (prefer stored audio)
-  document.querySelectorAll(".vocab-play").forEach(btn=>{
-    btn.onclick=async()=>{
-      const word = btn.dataset.vword;
-      const wid = parseInt(btn.dataset.vid);
-      if(!word)return;
-      // Lookup stored audio from DB
-      const w = words.find(w => w.id === wid);
-      await playVocabAudio(btn, "🔊", w?.audio || "", word);
+
+  // Bind audio/delete buttons (called after each filter render)
+  function bindVocabButtons(allWords) {
+    document.querySelectorAll("[data-vdel]").forEach(el=>{
+      el.onclick=async()=>{ await vocabDelete(parseInt(el.dataset.vdel)); render(); };
+    });
+    document.querySelectorAll(".vocab-play").forEach(btn=>{
+      btn.onclick=async()=>{
+        const word = btn.dataset.vword;
+        const wid = parseInt(btn.dataset.vid);
+        if(!word)return;
+        const w = allWords.find(w => w.id === wid);
+        await playVocabAudio(btn, "🔊", w?.audio || "", word);
+      };
+    });
+    document.querySelectorAll(".vocab-play-ex").forEach(btn=>{
+      btn.onclick=async(e)=>{
+        e.stopPropagation();
+        const ex = btn.dataset.vex;
+        const wid = parseInt(btn.dataset.vid);
+        if(!ex)return;
+        const w = allWords.find(w => w.id === wid);
+        await playVocabAudio(btn, "🔊", w?.exampleAudio || "", ex);
+      };
+    });
+  }
+
+  // Dynamic filtering
+  let activeFilter = "all";
+  let activePos = "all";
+
+  function applyFilters() {
+    let filtered = words;
+    if (activeFilter === "weak") filtered = filtered.filter(w=>(w.wrongCount||0)>0);
+    else if (activeFilter === "A") filtered = filtered.filter(w=>w.level==="A");
+    else if (activeFilter === "B") filtered = filtered.filter(w=>w.level==="B");
+    else if (activeFilter === "C") filtered = filtered.filter(w=>w.level==="C");
+    else if (activeFilter === "new") filtered = filtered.filter(w=>!(w.correctCount||0) && !(w.wrongCount||0));
+    else if (activeFilter === "mastered") filtered = filtered.filter(w=>(w.correctCount||0)>=3 && (w.correctCount||0)>(w.wrongCount||0)*2);
+    if (activePos !== "all") filtered = filtered.filter(w=>(w.pos||"other")===activePos);
+    const area = $("vocabListArea");
+    if (area) {
+      const countLabel = (activeFilter!=="all"||activePos!=="all") ? `<div style="font-size:11px;color:#7a8ea5;padding:6px 0">${filtered.length}語 表示中</div>` : "";
+      area.innerHTML = countLabel + renderWordList(filtered);
+      bindVocabButtons(words);
+    }
+  }
+
+  // Filter tab click handlers
+  document.querySelectorAll(".filter-tab").forEach(tab=>{
+    tab.onclick=()=>{
+      document.querySelectorAll(".filter-tab").forEach(t=>t.classList.remove("active"));
+      tab.classList.add("active");
+      activeFilter = tab.dataset.filter;
+      applyFilters();
     };
   });
-  // Pronunciation buttons - examples (prefer stored audio)
-  document.querySelectorAll(".vocab-play-ex").forEach(btn=>{
-    btn.onclick=async(e)=>{
-      e.stopPropagation();
-      const ex = btn.dataset.vex;
-      const wid = parseInt(btn.dataset.vid);
-      if(!ex)return;
-      const w = words.find(w => w.id === wid);
-      await playVocabAudio(btn, "🔊", w?.exampleAudio || "", ex);
+  document.querySelectorAll(".pos-tab").forEach(tab=>{
+    tab.onclick=()=>{
+      document.querySelectorAll(".pos-tab").forEach(t=>t.classList.remove("active"));
+      tab.classList.add("active");
+      activePos = tab.dataset.pos;
+      applyFilters();
     };
   });
+  applyFilters();
+
   $("vocabBackBtn").onclick=()=>{S.screen="home";render();};
   const dd=$("vocabDedupeBtn"); if(dd)dd.onclick=async()=>{
     dd.textContent="⏳ 整理中...";
