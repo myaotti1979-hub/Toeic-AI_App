@@ -2493,8 +2493,10 @@ function handleAnswer(idx) {
     }
   }
   // ストック学習中: 正解ストリーク+lastPracticed追跡（判定モードに関係なく常時記録）
-  if (S.stockMode && S.stockId && !S.stockCreateMode) {
-    updateStockStreak(S.stockId, isCorrect).catch(e=>console.warn('stock streak update failed:', e));
+  // IMPORTANT: Only update streak after the LAST question in the set (not per-question)
+  if (S.stockMode && S.stockId && !S.stockCreateMode && isLastQ) {
+    const allCorrect = S.answers.every((a,ai) => a.answered && a.selected === (S.qSet.questions[ai]||{}).correct);
+    updateStockStreak(S.stockId, allCorrect).catch(e=>console.warn('stock streak update failed:', e));
   }
   // Vocab SRS linkage: update correctCount/wrongCount for ALL practice modes
   // (not just judgeMode — stock practice and normal practice also count)
@@ -2674,6 +2676,7 @@ async function renderStockSelect() {
       <button class="btn-s" id="stockImportBtn" style="font-size:12px">📥 インポート</button>
       ${total>0?`<button class="btn-s" id="stockPurgeBtn" style="font-size:12px;color:#fbbf24">🧹 壊れた問題を浄化</button>`:""}
       ${totalMastered>0?`<button class="btn-s" id="stockDelAllMastered" style="font-size:12px;color:#f87171">🗑️ 全パート卒業済${totalMastered}問を一括削除</button>`:""}
+      ${totalMastered>0?`<button class="btn-s" id="stockResetMastered" style="font-size:12px;color:#60a5fa">🔄 卒業フラグをリセット</button>`:""}
     </div>
     <input type="file" id="stockFileInput" accept=".json" style="display:none">
     ${total>0?`<div style="margin-top:60px;text-align:center"><button class="btn-s" id="stockClearBtn" style="color:#f87171;font-size:11px;opacity:0.6">🗑️ 全ストック削除</button></div>`:""}`;
@@ -2700,6 +2703,29 @@ async function renderStockSelect() {
     dam.textContent="⏳ 削除中...";
     for (const item of mastered) { await stockDelete(item.id); }
     alert(`✅ ${mastered.length}問を削除しました`);
+    render();
+  };
+
+  // 卒業フラグリセット（バグで誤って卒業になった問題を復活）
+  const rmb=$("stockResetMastered"); if(rmb)rmb.onclick=async()=>{
+    const mastered = all.filter(q=>q.mastered);
+    if(!mastered.length) return;
+    if(!confirm(`卒業フラグを${mastered.length}問リセットしますか？\n\n問題は削除されません。卒業状態がリセットされ、再度学習対象になります。`)) return;
+    rmb.textContent="⏳ リセット中...";
+    const db = await openStockDB();
+    for (const item of mastered) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("questions","readwrite");
+        const req = tx.objectStore("questions").get(item.id);
+        req.onsuccess = () => {
+          const r = req.result;
+          if (r) { r.mastered = false; r.correctStreak = 0; delete r.masteredAt; tx.objectStore("questions").put(r); }
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+    alert(`✅ ${mastered.length}問の卒業フラグをリセットしました`);
     render();
   };
 
