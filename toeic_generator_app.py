@@ -81,7 +81,7 @@ PART_DEFAULT_MODEL = {
     "part3": "gemini-3-flash (API best value)",
     "part3_3p": "gemini-3-flash (API best value)",
     "part4": "gemini-3-flash (API best value)",
-    "part5": "gemma3:12b (12B local GPU)",
+    "part5": "gemini-3-flash (API best value)",
     "part6": "gemini-3-flash (API best value)",
     "part7": "gemini-3-flash (API best value)",
     "part7s": "gemini-3-flash (API best value)",
@@ -195,6 +195,11 @@ def build_prompt(level, part, t):
     audio_rule = AUDIO_RULE if is_listening else ""
     sys = f"You are an expert TOEIC test maker. {LEVEL_GUIDES[level]}\nRespond with EXACTLY ONE JSON object — no arrays, no wrapping, no markdown, no backticks. DO NOT wrap the output in {{\"part1\":[...]}} or similar. DO NOT produce multiple questions. Output ONLY a single {{...}} object matching the template below.{JA}{EN_EXPL}{CONSISTENCY}{CHOICE_RULE}{audio_rule}{VOCAB_RULE}"
     tt, td = t.get("type","varied"), t.get("desc","")
+    is_graphic = tt.startswith("graphic_")
+    # Graphic rule: appended to Part 3/4/7 prompts when type is graphic
+    GRULE = ""
+    if is_graphic:
+        GRULE = '\\nGRAPHIC DATA — MANDATORY: You MUST include a "graphic" field in the JSON with structured data that the test-taker will see alongside the conversation/talk/text. The conversation/talk MUST reference specific data from this graphic. EXACTLY ONE of the 3 questions MUST start with "Look at the graphic." and can ONLY be answered by reading the graphic data.\\nGraphic format: "graphic":{{"title":"Graphic Title","headers":["Column1","Column2","Column3"],"rows":[["row1col1","row1col2","row1col3"],["row2col1","row2col2","row2col3"]]}}\\nMatch the graphic to the scenario type:\\n- Schedule/Agenda: headers=["Time","Event","Room"], rows=[["9:00 AM","Opening Remarks","Main Hall"],["10:00 AM","Workshop A","Room 201"]]\\n- Price list/Menu: headers=["Service","Standard","Premium"], rows=[["Oil Change","$35","$55"],["Tire Rotation","$25","$40"]]\\n- Order form/Invoice: headers=["Item","Qty","Unit Price","Total"], rows=[["Desk lamp","5","$35.00","$175.00"],["Monitor stand","3","$48.00","$144.00"]]\\n- Floor map/Seating: headers=["Room/Area","Department","Contact"], rows=[["Suite 301","Marketing","Ms. Chen"],["Suite 302","Finance","Mr. Park"]]\\n- Bar/Pie chart data: headers=["Quarter","Revenue ($M)","Growth (%)"], rows=[["Q1","12.4","8%"],["Q2","14.1","14%"],["Q3","11.8","-16%"]]\\n- Survey results: headers=["Category","Satisfaction (%)","Responses"], rows=[["Customer Service","92%","847"],["Delivery Speed","78%","823"]]\\n- Map/Directions: headers=["Destination","Building","Walking Time"], rows=[["Cafeteria","Building B","5 min"],["Parking","Lot C","8 min"]]\\n- Comparison: headers=["Feature","Plan A","Plan B","Plan C"], rows=[["Storage","10 GB","50 GB","Unlimited"],["Price/mo","$9.99","$19.99","$29.99"]]\\nUse 3-6 rows and 3-5 columns. Data must be SPECIFIC (real numbers, names, times) — never use placeholder text.'
     VEX = ',"vocab":[{{"word":"English word","pos":"noun","ja":"日本語","example":"Short sentence"}},{{"word":"word2","pos":"verb","ja":"訳","example":"sentence"}},{{"word":"word3","pos":"adjective","ja":"訳","example":"sentence"}}]'
     # Get level-specific rules per part
     R1 = get_level_rules("part1", level)
@@ -209,21 +214,25 @@ def build_prompt(level, part, t):
     B = {
         "part1": lambda: f'{sys}{R1}\nPart 1 (Photographs). SCENE: {tt} — {td}. 4 statements (A-D), 5-8 words each describing the photo objectively.\n- Correct answer: accurately describes what is visible.\n- Distractors: mention objects/actions that are NOT visible, wrong tense, or wrong subject.\nDO NOT include an "audio" field — it will be auto-generated from choices.\n{{"scene":"vivid 20-30 word description for image generation","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答のトラップタイプ]","explanation_en":"Short 1-2 sentence English explanation"{VEX}}}',
         "part2": lambda: f'{sys}{R2}\nPart 2 (Question-Response). TYPE: {tt} — {td}. 3 responses (A-C). Correct answer is frequently INDIRECT (not a literal yes/no).\nVOCABULARY — CRITICAL FOR PART 2: Use NORMAL workplace English. Words like "meeting", "schedule", "report", "office", "delivery", "budget", "order" are correct. DO NOT use Part 5/7 vocabulary like "remuneration", "procurement", "notwithstanding", "forthcoming", "necessitate", "contingent upon", "arbitration". Part 2 difficulty comes from INDIRECT RESPONSES, not from exotic words.\nSCENARIO DIVERSITY — CRITICAL: Each question MUST be about a DIFFERENT workplace topic. Choose from: office supplies, meeting schedule, travel plans, lunch, parking, delivery, project deadline, new employee, equipment repair, training session, client visit, holiday schedule, building maintenance, job opening, company event. DO NOT repeat audit/compliance/regulatory themes.\nQUESTION TYPE COMPLIANCE — CRITICAL: The question MUST match the type "{tt}". If type is "yesno_do", use "Do/Does/Did". If "negative_isnt", use "Isn\'t/Aren\'t". If "wh_where_place", use "Where". Do NOT generate a different question type.\nDISTRACTOR VALIDITY — CRITICAL: Wrong answers must NOT be valid responses to the question. Test each: if someone said it in real conversation, would it make sense as a response? If yes, it is TOO GOOD for a wrong answer — change it. Wrong answers fail for: (1) answers a DIFFERENT question, (2) repeats a word but about a different topic, (3) completely unrelated subject. Example: Q="How long to deliver chairs?" GOOD wrong="The conference room is on the third floor." (unrelated) BAD wrong="The warehouse said next Friday." (this ANSWERS the question!)\nCRITICAL FORMAT: EXACTLY 3 choices (A)(B)(C). NEVER include (D). Each response MUST be 3-8 words (short spoken fragments).\nGood: "(A) In the conference room." / Bad: "(A) I believe the meeting was rescheduled to next Tuesday." (too long!)\nDO NOT include an "audio" field — it will be auto-generated.\n{{"spoken":"Natural question or statement 5-15 words","choices":["(A) 3-8 word response.","(B) 3-8 word response.","(C) 3-8 word response."],"correct":0,"explanation_ja":"【出題: {tt}】\\n和訳: (spoken の日本語訳)\\n正解理由と各誤答のトラップタイプを解説","explanation_en":"Short English"{VEX}}}',
-        "part3": lambda: f'{sys}{R3}\nPart 3 (Conversations). SCENARIO: {tt} — {td}. "Man:"/"Woman:" labels. 5-8 turns, 60-100 words MAXIMUM. Keep conversation SHORT and natural. EXACTLY 3 questions. INCLUDE "translation_ja".\nGENDER RULES — STRICT:\n- "Man:" = MALE character (male names, he/him/his). "Woman:" = FEMALE character (female names, she/her).\n- In questions: "the man" = Man speaker, "the woman" = Woman speaker. NEVER swap.\n- translation_ja: Man = 男性, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated from conversation.\n{{"conversation":"Man: first line...\\nWoman: response...\\nMan: reply...\\nWoman: next...\\nMan: final...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the man/woman suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What will the speaker most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
-        "part3_3p": lambda: f'{sys}{R3}\nPart 3 (Conversations) with EXACTLY 3 speakers.\nFORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"\nSCENARIO: {tt} — {td}. 7-10 turns, 80-120 words. All 3 speakers must have substantial lines. EXACTLY 3 questions.\nGENDER RULES — STRICT:\n- "Man 1:"/"Man 2:" = MALE. "Woman:"/"Woman 1:"/"Woman 2:" = FEMALE. NEVER swap.\n- translation_ja: Man 1 = 男性1, Man 2 = 男性2, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated.\n{{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...","translation_ja":"男性1: ...\\n女性: ...\\n男性2: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
-        "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}. Single-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part3": lambda: f'{sys}{R3}\nPart 3 (Conversations). SCENARIO: {tt} — {td}. "Man:"/"Woman:" labels. 5-8 turns, 60-100 words MAXIMUM. Keep conversation SHORT and natural. EXACTLY 3 questions. INCLUDE "translation_ja".{GRULE}\nGENDER RULES — STRICT:\n- "Man:" = MALE character (male names, he/him/his). "Woman:" = FEMALE character (female names, she/her).\n- In questions: "the man" = Man speaker, "the woman" = Woman speaker. NEVER swap.\n- translation_ja: Man = 男性, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated from conversation.\n{{"conversation":"Man: first line...\\nWoman: response...\\nMan: reply...\\nWoman: next...\\nMan: final...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the man/woman suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What will the speaker most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part3_3p": lambda: f'{sys}{R3}\nPart 3 (Conversations) with EXACTLY 3 speakers.\nFORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"\nSCENARIO: {tt} — {td}. 7-10 turns, 80-120 words. All 3 speakers must have at least 2 turns. EXACTLY 3 questions.\n\n3-PERSON CONVERSATION PATTERNS — TOEIC公式準拠. Use ONE of these patterns:\n1. BRIEF THIRD SPEAKER (電話交換手/受付型): A&B are talking → third person briefly appears as operator, receptionist, or assistant with 1-2 short lines. e.g. "One moment, I\'ll transfer you." → "Hello, shipping department, how can I help?"\n2. SAME-ROLE PAIR (同立場ペア型): Two same-gender speakers share the same position/stance and interact with the different-gender speaker. e.g. Two coworkers invite a colleague to lunch, or two team members report to a manager. The pair may say "We both think..." or take turns explaining.\n3. INTRODUCTION/JOINING (紹介・合流型): A&B discuss a topic → one introduces the third. e.g. "Oh, here comes [name] from IT." or "Let me introduce [name] — she handles our accounts." Third person joins with relevant information.\n4. CUSTOMER + TWO STAFF (顧客＋2スタッフ型): Customer talks to Staff A → Staff A cannot fully help → refers to Staff B. e.g. "My colleague handles warranty claims. [Name], could you help?" → Staff B takes over.\n5. SEQUENTIAL CONSULTATION (相談リレー型): A has a problem → asks B → B says "Let\'s check with [name]" → C provides the answer/solution.\n6. THREE-WAY MEETING (3者ミーティング型): Three colleagues in a meeting, each with a distinct role (marketing/finance/operations). Each contributes their department\'s perspective.\n\nDESIGN PRINCIPLE: The third speaker must be introduced naturally so listeners can follow who is speaking. Two same-gender speakers should have clearly distinct roles or viewpoints.\n\nGENDER RULES — STRICT:\n- "Man 1:"/"Man 2:" = MALE. "Woman:"/"Woman 1:"/"Woman 2:" = FEMALE. NEVER swap.\n- translation_ja: Man 1 = 男性1, Man 2 = 男性2, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated.\n{{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...","translation_ja":"男性1: ...\\n女性: ...\\n男性2: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}. Single-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".{GRULE}\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
         "part5": lambda: f'{sys}{BLANK_RULE}{R5}\nPart 5 (Incomplete Sentences). CATEGORY: {tt} — {td}.\n\nRULES:\n1. Write a business sentence (15-25 words) with EXACTLY ONE blank: -------\n2. The ------- replaces the tested word. Without it, the output is INVALID.\n3. All 4 choices (A-D) must be plausible.\n4. "correct" = index of the right answer (0=A, 1=B, 2=C, 3=D).\n5. explanation_ja MUST name the correct letter first: "正解は(X)..." where X matches "correct".\n\nGOOD: "The ------- of the new policy was announced yesterday."\nBAD: "The implementation of the new policy was announced yesterday." (NO BLANK = REJECTED)\n\n{{"sentence":"The manager asked all employees to ------- the updated safety guidelines before Friday.","choices":["(A) review","(B) reviewing","(C) reviewed","(D) reviewer"],"correct":0,"explanation_ja":"正解は(A) review。ask + 人 + to + 動詞原形の形。(B)はing形、(C)は過去形、(D)は名詞なので不可。","explanation_en":"ask someone to + base verb"{VEX}}}',
         "part6": lambda: f'{sys}{BLANK_RULE6}{R6}\nPart 6 (Text Completion). DOC TYPE: {tt} — {td}.\n150-200 words with EXACTLY 4 blanks: (1)------- (2)------- (3)------- (4)-------.\nBlanks 1-3: word/phrase choices. Blank 4: SENTENCE INSERTION (choices are full sentences).\nINCLUDE "translation_ja" (with answers filled in).\n{{"doc_type":"{tt}","header":"To: ...\\nFrom: ...\\nSubject: ...","text":"Full text 150-200 words with (1)------- and (2)------- and (3)------- and (4)-------","translation_ja":"日本語訳（空所に正解が入った状態）","questions":[{{"blank":1,"question":"Context around blank (1)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":2,"question":"Context around blank (2)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":3,"question":"Context around blank (3)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":4,"question":"Which sentence best fits?","choices":["(A) Full sentence A.","(B) Full sentence B.","(C) Full sentence C.","(D) Full sentence D."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
-        "part7s": lambda: f'{sys}{R7s}\nPart 7 Single Passage. DOC TYPE: {tt} — {td}. 150-250 words. Generate 2-4 questions.\nINCLUDE "translation_ja".\n{{"doc_type":"{tt}","header":"document header if applicable","text":"150-250 word passage","translation_ja":"文書全文の日本語訳","questions":[{{"question":"What is the main purpose?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What is indicated/suggested about X?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"According to the document, what...?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part7s": lambda: f'{sys}{R7s}\nPart 7 Single Passage. DOC TYPE: {tt} — {td}. 150-250 words. Generate 2-4 questions.{GRULE}\nINCLUDE "translation_ja".\n{{"doc_type":"{tt}","header":"document header if applicable","text":"150-250 word passage","translation_ja":"文書全文の日本語訳","questions":[{{"question":"What is the main purpose?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What is indicated/suggested about X?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"According to the document, what...?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
         "part7d": lambda: f'{sys}{R7d}\nPart 7 Double Passage. PAIR: {tt} — {td}. Two related documents, 100-180 words each. EXACTLY 5 questions, including at least 1 CROSS-REFERENCE question requiring info from BOTH documents.\nINCLUDE "translation_ja_1","translation_ja_2".\n{{"doc_type_1":"email/notice/memo","header_1":"...","text_1":"100-180 words","translation_ja_1":"日本語訳1","doc_type_2":"reply/schedule","header_2":"...","text_2":"100-180 words","translation_ja_2":"日本語訳2","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on BOTH documents, ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[クロスリファレンス解説]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
-        "part7t": lambda: f'{sys}{R7t}\nPart 7 Triple Passage. SET: {tt} — {td}. Three related documents, 80-150 words each. EXACTLY 5 questions, including at least 2 CROSS-REFERENCE questions requiring info from multiple documents.\nINCLUDE "translation_ja_1","translation_ja_2","translation_ja_3".\n{{"doc_type_1":"...","header_1":"...","text_1":"80-150 words","translation_ja_1":"日本語訳1","doc_type_2":"...","header_2":"...","text_2":"80-150 words","translation_ja_2":"日本語訳2","doc_type_3":"...","header_3":"...","text_3":"80-150 words","translation_ja_3":"日本語訳3","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 1+2 (or 1+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"日本語で解説（クロスリファレンス）","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 2+3 (or 1+2+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"日本語で解説（クロスリファレンス）","explanation_en":"Short English"}}]{VEX}}}',
+        "part7t": lambda: f'{sys}{R7t}\nPart 7 Triple Passage. SET: {tt} — {td}. Three related documents, 80-150 words each. EXACTLY 5 questions, including at least 2 CROSS-REFERENCE questions requiring info from multiple documents.\nINCLUDE "translation_ja_1","translation_ja_2","translation_ja_3".\n{{"doc_type_1":"...","header_1":"...","text_1":"80-150 words","translation_ja_1":"日本語訳1","doc_type_2":"...","header_2":"...","text_2":"80-150 words","translation_ja_2":"日本語訳2","doc_type_3":"...","header_3":"...","text_3":"80-150 words","translation_ja_3":"日本語訳3","questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 1+2 (or 1+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]（クロスリファレンス）","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"Cross-reference: based on docs 2+3 (or 1+2+3), ...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]（クロスリファレンス）","explanation_en":"Short English"}}]{VEX}}}',
     }
     if part == "part7":
         sub = random.choice(["part7s","part7d","part7t"])
         return B[sub](), sub
     if part == "part3":
         # 本番TOEIC: 13会話中3つが3人会話（約23%）
-        sub = "part3_3p" if random.random() < 0.25 else "part3"
+        # ただし「3人+図表」の組み合わせは出題されない
+        if not is_graphic:
+            sub = "part3_3p" if random.random() < 0.25 else "part3"
+        else:
+            sub = "part3"
         return B[sub](), "part3"
     return B.get(part, B["part5"])(), part
 
@@ -399,14 +408,14 @@ def normalize_set(raw, part):
                 "questions":[{"question":sp,"choices":ch,"correct":raw.get("correct",0),
                               "explanation_ja":raw.get("explanation_ja",""),
                               "explanation_en":raw.get("explanation_en","")}]}
-    if part == "part3":
+    if part in ("part3", "part3_3p"):
         # ALWAYS use conversation as audio (avoid LLM placeholder issues)
         conv = raw.get("conversation","")
         llm_audio = raw.get("audio", "")
         if llm_audio and llm_audio.strip() != conv.strip():
             if "[" in llm_audio or len(llm_audio) < len(conv) * 0.5:
                 print(f"[WARN] Part3: LLM audio differs from conversation, using conversation", flush=True)
-        return {"part":part,"conversation":conv,"translation_ja":raw.get("translation_ja"),
+        return {"part":"part3","conversation":conv,"translation_ja":raw.get("translation_ja"),
                 "audio":conv,"speakers":raw.get("speakers",["Man","Woman"]),
                 "graphic":raw.get("graphic"),"vocab":vocab,"questions":raw.get("questions",[])}
     if part == "part4":
@@ -601,7 +610,7 @@ def preprocess_tts_text(text):
 
 def wav_to_opus(wav):
     try:
-        r = subprocess.run(['ffmpeg','-i','pipe:','-c:a','libopus','-b:a','24k','-f','webm','pipe:'],input=wav,capture_output=True,timeout=30)
+        r = subprocess.run(['ffmpeg','-i','pipe:','-c:a','libopus','-b:a','16k','-f','webm','pipe:'],input=wav,capture_output=True,timeout=30)
         return r.stdout if r.returncode==0 else None
     except FileNotFoundError: return None
 
@@ -813,10 +822,10 @@ def edge_tts_conv(audio_text, speakers=None):
             try: os.unlink(f)
             except: pass
 
-def mp3_to_opus(mp3):
+def mp3_to_opus(mp3, bitrate='16k'):
     """Convert MP3 bytes to Opus bytes via ffmpeg."""
     try:
-        r = subprocess.run(['ffmpeg','-i','pipe:','-c:a','libopus','-b:a','24k','-f','webm','pipe:'],
+        r = subprocess.run(['ffmpeg','-i','pipe:','-c:a','libopus','-b:a',bitrate,'-f','webm','pipe:'],
                           input=mp3, capture_output=True, timeout=30)
         return r.stdout if r.returncode == 0 else None
     except FileNotFoundError: return None
@@ -947,17 +956,16 @@ def gemini_tts(text, api_key, max_retries=3):
                 break  # try next model
     raise RuntimeError(f"TTS failed: all models exhausted")
 
-def pcm_to_opus(pcm):
+def pcm_to_opus(pcm, bitrate='16k'):
     try:
-        r = subprocess.run(['ffmpeg','-f','s16le','-ar','24000','-ac','1','-i','pipe:','-c:a','libopus','-b:a','24k','-f','webm','pipe:'],input=pcm,capture_output=True,timeout=30)
+        r = subprocess.run(['ffmpeg','-f','s16le','-ar','24000','-ac','1','-i','pipe:','-c:a','libopus','-b:a',bitrate,'-f','webm','pipe:'],input=pcm,capture_output=True,timeout=30)
         return r.stdout if r.returncode==0 else None
     except FileNotFoundError: return None
 
 # Gemini Image
 def gemini_image(scene, api_key, max_retries=2, size="512"):
     """Generate TOEIC-appropriate photograph.
-    TOEIC Part 1 actual images are ~5cm x 4cm in the test booklet, so 512x512 is plenty.
-    Smaller = faster + cheaper. Use '512' (0.5K), '1K', '2K', or '4K'."""
+    Smartphone display: 320px JPEG is sufficient. Compressed to ~5-8KB."""
     for attempt in range(max_retries + 1):
         try:
             r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key={api_key}",
@@ -968,23 +976,21 @@ def gemini_image(scene, api_key, max_retries=2, size="512"):
                         "imageConfig":{"imageSize":size}
                     }
                 },
-                timeout=90  # smaller images = shorter timeout is fine
+                timeout=90
             )
             r.raise_for_status()
             for part in r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[]):
                 if "inlineData" in part:
                     m, b = part["inlineData"]["mimeType"], part["inlineData"]["data"]
-                    # Try WEBP compression to reduce size (quality 70 is plenty for small images)
                     try:
                         from PIL import Image
                         im = Image.open(BytesIO(base64.b64decode(b)))
-                        # If for some reason the image is still large, resize to max 640px
-                        if im.width > 640 or im.height > 640:
-                            im.thumbnail((640, 640), Image.LANCZOS)
+                        # Smartphone: 320px is plenty for TOEIC photos
+                        im.thumbnail((320, 320), Image.LANCZOS)
                         buf = BytesIO()
-                        im.save(buf, format='WEBP', quality=70, method=4)
-                        print(f"[IMG] Generated {im.width}x{im.height}, {len(buf.getvalue())//1024}KB", flush=True)
-                        return f"data:image/webp;base64,{base64.b64encode(buf.getvalue()).decode()}"
+                        im.save(buf, format='JPEG', quality=60, optimize=True)
+                        print(f"[IMG] Generated {im.width}x{im.height}, {len(buf.getvalue())//1024}KB jpg", flush=True)
+                        return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}"
                     except ImportError:
                         return f"data:{m};base64,{b}"
             raise ValueError("No image in response")
@@ -1003,6 +1009,19 @@ def _generate_listen_audio(qs, real_part):
     letters = ["A","B","C","D"]
     voice = random.choice(EDGE_VF + EDGE_VM)
     ok = 0
+
+    def _edge_retry(text, retries=3):
+        for attempt in range(retries):
+            try:
+                mp3 = edge_tts_sync(text, voice)
+                if mp3: return mp3
+            except Exception as e:
+                if attempt < retries - 1:
+                    time.sleep(1.0 * (attempt + 1))
+                else:
+                    print(f"[LISTEN-TTS] Edge failed after {retries} retries: {str(e)[:60]}", flush=True)
+        return None
+
     for qi, q in enumerate(qs.get("questions",[])):
         choices = q.get("choices",[])
         correct = q.get("correct",0)
@@ -1015,13 +1034,10 @@ def _generate_listen_audio(qs, real_part):
             q_text = q.get("question","")
             ch_text = ". ".join(f"({letters[i]}) {strip_label(c)}" for i,c in enumerate(choices))
             full_q = f"{q_text}. {ch_text}"
-            try:
-                mp3 = edge_tts_sync(full_q, voice)
-                if mp3:
-                    o = mp3_to_opus(mp3)
-                    if o: q["audio_q"] = base64.b64encode(o).decode(); ok += 1
-            except Exception as e:
-                print(f"[LISTEN-TTS] audio_q Q{qi+1}: {e}", flush=True)
+            mp3 = _edge_retry(full_q)
+            if mp3:
+                o = mp3_to_opus(mp3, '12k')
+                if o: q["audio_q"] = base64.b64encode(o).decode(); ok += 1
         
         # Answer + explanation audio (all parts)
         if not q.get("audio_ans"):
@@ -1029,13 +1045,10 @@ def _generate_listen_audio(qs, real_part):
             ans_text = f"The answer is {correct_letter}. {correct_text}"
             if expl_en:
                 ans_text += f". {expl_en}"
-            try:
-                mp3 = edge_tts_sync(ans_text, voice)
-                if mp3:
-                    o = mp3_to_opus(mp3)
-                    if o: q["audio_ans"] = base64.b64encode(o).decode(); ok += 1
-            except Exception as e:
-                print(f"[LISTEN-TTS] audio_ans Q{qi+1}: {e}", flush=True)
+            mp3 = _edge_retry(ans_text)
+            if mp3:
+                o = mp3_to_opus(mp3, '12k')
+                if o: q["audio_ans"] = base64.b64encode(o).decode(); ok += 1
     
     if ok > 0:
         print(f"[LISTEN-TTS] Generated {ok} Q&A audio clips (Edge)", flush=True)
@@ -1070,7 +1083,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
             at = qs["audio"]
             if tts_eng == "edge" and check_edge_tts():
                 print(f"[TTS] Part={real_part}, engine=edge{'_conv' if real_part=='part3' else ''}", flush=True)
-                mp3 = edge_tts_conv(at, qs.get("speakers")) if real_part == "part3" else edge_tts_sync(at, random.choice(EDGE_VF+EDGE_VM))
+                mp3 = edge_tts_conv(at, qs.get("speakers")) if real_part in ("part3","part3_3p") else edge_tts_sync(at, random.choice(EDGE_VF+EDGE_VM))
                 o = mp3_to_opus(mp3)
                 if o:
                     item["audioOpus"] = base64.b64encode(o).decode(); item["audioFormat"] = "opus"
@@ -1081,7 +1094,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
                 az_key = st.session_state.azure_speech_key
                 az_region = st.session_state.get("azure_speech_region", "eastus")
                 print(f"[TTS] Part={real_part}, engine=azure{'_conv' if real_part=='part3' else ''}", flush=True)
-                mp3 = azure_tts_conv(at, az_key, az_region, qs.get("speakers")) if real_part == "part3" else azure_tts(at, az_key, az_region)
+                mp3 = azure_tts_conv(at, az_key, az_region, qs.get("speakers")) if real_part in ("part3","part3_3p") else azure_tts(at, az_key, az_region)
                 o = mp3_to_opus(mp3)
                 if o:
                     item["audioOpus"] = base64.b64encode(o).decode(); item["audioFormat"] = "opus"
@@ -1089,7 +1102,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
                 else:
                     print(f"[TTS] ⚠️ Azure TTS: mp3→opus conversion failed", flush=True)
             elif tts_eng == "gemini" and api_key:
-                if real_part == "part3":
+                if real_part in ("part3","part3_3p"):
                     print(f"[TTS] Part={real_part}, engine=gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
                     p = gemini_tts_conv(at, api_key, qs.get("speakers")); o = pcm_to_opus(p)
                 else:
@@ -1149,19 +1162,19 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
                 if use_edge_for_vocab:
                     mp3w = _try_edge(word)
                     if mp3w:
-                        oo = mp3_to_opus(mp3w)
+                        oo = mp3_to_opus(mp3w, '12k')
                         if oo: vw["audio"] = base64.b64encode(oo).decode(); w_ok += 1
                     if ex:
                         mp3e = _try_edge(ex)
                         if mp3e:
-                            eo = mp3_to_opus(mp3e)
+                            eo = mp3_to_opus(mp3e, '12k')
                             if eo: vw["example_audio"] = base64.b64encode(eo).decode(); e_ok += 1
                 elif tts_eng == "gemini" and api_key:
-                    pp = gemini_tts(word, api_key); oo = pcm_to_opus(pp)
+                    pp = gemini_tts(word, api_key); oo = pcm_to_opus(pp, '12k')
                     if oo: vw["audio"] = base64.b64encode(oo).decode(); w_ok += 1
                     time.sleep(4)
                     if ex:
-                        ep = gemini_tts(ex, api_key); eo = pcm_to_opus(ep)
+                        ep = gemini_tts(ex, api_key); eo = pcm_to_opus(ep, '12k')
                         if eo: vw["example_audio"] = base64.b64encode(eo).decode(); e_ok += 1
                         time.sleep(4)
             except Exception as e:
@@ -1171,7 +1184,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
     if real_part in ("part1","part2","part3","part3_3p","part4") and qs.get("questions") and tts_eng != "off" and check_edge_tts():
         _generate_listen_audio(qs, real_part)
     # Validate: Listening parts REQUIRE audio. If TTS was enabled but audio missing, mark invalid.
-    is_listening_part = real_part in ("part1","part2","part3","part4")
+    is_listening_part = real_part in ("part1","part2","part3","part3_3p","part4")
     if is_listening_part and do_tts and not item.get("audioOpus"):
         item["_invalid"] = "listening_no_audio"
         print(f"[VALIDATE] Part={real_part}: SKIP (no audio generated)", flush=True)
@@ -1179,7 +1192,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
     return item
 
 
-def validate_stock_item(item, require_tts=True, require_image_for_part1=True, require_image_for_graphic=True, require_vocab_audio=False, strict_vocab=False):
+def validate_stock_item(item, require_tts=True, require_image_for_part1=True, require_image_for_graphic=False, require_vocab_audio=False, strict_vocab=False):
     """
     Unified validation before saving to stock.
     Returns (is_valid: bool, reason: str | None).
@@ -1201,7 +1214,7 @@ def validate_stock_item(item, require_tts=True, require_image_for_part1=True, re
     if not qs.get("questions"):
         return False, "no questions"
     # Listening audio
-    is_listening = part in ("part1","part2","part3","part4")
+    is_listening = part in ("part1","part2","part3","part3_3p","part4")
     if is_listening and require_tts and not item.get("audioOpus"):
         return False, "listening without audio"
     # Part 1 image
@@ -1724,19 +1737,22 @@ JSONのみ出力:"""
     st.rerun()
 
 def build_vocab_list(results):
-    """Build merged vocab list from results. Cached to avoid rebuilding on every rerun."""
+    """Build merged vocab list from results. Restores audio from _audio_store."""
     all_vocab = []
     word_map = {}
     for r in results:
         qs = r.get("qSet", {})
         part = r.get("part","?")
         level = r.get("level","?")
-        for v in qs.get("vocab", []):
+        ts = r.get("createdAt", 0)
+        ad = _audio_store.get(ts, {})  # Restore stripped audio
+        for vi, v in enumerate(qs.get("vocab", [])):
             word = v.get("word","").strip()
             ja = v.get("ja","").strip()
             example = v.get("example","").strip()
             pos = v.get("pos","other").strip().lower()
-            audio = v.get("audio","")
+            audio = v.get("audio","") or ad.get(f"v{vi}_a","")
+            ex_audio = v.get("example_audio","") or ad.get(f"v{vi}_e","")
             if not word: continue
             base = lemmatize(word)
             if base in word_map:
@@ -1744,14 +1760,14 @@ def build_vocab_list(results):
                 existing_meanings = all_vocab[idx].get("_meanings",[])
                 has_overlap = any(meanings_match(m["ja"], ja) for m in existing_meanings)
                 if ja and not has_overlap:
-                    existing_meanings.append({"ja":ja,"example":example,"example_audio":v.get("example_audio","")})
+                    existing_meanings.append({"ja":ja,"example":example,"example_audio":ex_audio})
                     all_vocab[idx]["_meanings"] = existing_meanings
                 if audio and not all_vocab[idx].get("_audio"):
                     all_vocab[idx]["_audio"] = audio
             else:
                 entry = {"word":word, "ja":ja, "example":example, "_part":part, "_level":level,
-                         "_pos":pos, "_audio":audio, "_example_audio":v.get("example_audio",""),
-                         "_meanings":[{"ja":ja,"example":example,"example_audio":v.get("example_audio","")}]}
+                         "_pos":pos, "_audio":audio, "_example_audio":ex_audio,
+                         "_meanings":[{"ja":ja,"example":example,"example_audio":ex_audio}]}
                 word_map[base] = len(all_vocab)
                 all_vocab.append(entry)
     return all_vocab
@@ -1816,9 +1832,8 @@ with st.sidebar:
 
     st.divider()
     st.markdown(f"**Results: {len(st.session_state.results)}**")
-    st.caption(f"💾 自動保存先: `{RESULTS_FILE.name}`")
     if st.session_state.results:
-        # Per-part breakdown
+        # Quick summary (no expander needed)
         by_part = {}
         for r in st.session_state.results:
             p = r.get("part","?")
@@ -1827,15 +1842,20 @@ with st.sidebar:
         summary = " / ".join(f"{part_labels.get(p,p)}:{n}" for p,n in sorted(by_part.items()))
         st.caption(summary)
 
-        # Per-part export/delete
-        selected_part = st.selectbox("パート選択", ["全パート"] + sorted(by_part.keys()),
-            format_func=lambda x: f"全パート ({len(st.session_state.results)})" if x=="全パート" else f"{part_labels.get(x,x)} ({by_part.get(x,0)}問)",
-            key="stock_part_filter")
+        # Export/Delete — form prevents selectbox rerun
+        with st.expander("📦 エクスポート / 🗑️ 削除"):
+            with st.form("stock_mgmt", border=False):
+                selected_part = st.selectbox("パート選択", ["全パート"] + sorted(by_part.keys()),
+                    format_func=lambda x: f"全パート ({len(st.session_state.results)})" if x=="全パート" else f"{part_labels.get(x,x)} ({by_part.get(x,0)}問)",
+                    key="stock_part_filter")
 
-        ec1, ec2 = st.columns(2)
-        with ec1:
-            # Export: read from file (has full audio), not session_state (stripped)
-            if st.button(f"📤 Export ({by_part.get(selected_part, len(st.session_state.results))})", use_container_width=True, key="part_export_btn"):
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    do_export = st.form_submit_button("📤 Export", use_container_width=True)
+                with ec2:
+                    do_delete = st.form_submit_button("🗑️ 削除", use_container_width=True)
+
+            if do_export:
                 try:
                     with open(RESULTS_FILE, "r", encoding="utf-8") as f:
                         full_data = json.load(f)
@@ -1849,9 +1869,8 @@ with st.sidebar:
             if st.session_state.get("_export_data"):
                 st.download_button("💾 Download", st.session_state._export_data,
                     st.session_state._export_name, "application/json", key="part_dl")
-        with ec2:
-            label = f"🗑️ 削除 ({by_part.get(selected_part, len(st.session_state.results))})" if selected_part != "全パート" else "🗑️ 全削除"
-            if st.button(label, use_container_width=True, key="part_delete"):
+
+            if do_delete:
                 if selected_part == "全パート":
                     st.session_state.results = []
                     _audio_store.clear()
@@ -1883,12 +1902,27 @@ with st.sidebar:
                 _restore_audio(full)
                 full_mock.append(full)
             all_stocks = full_study + full_mock
-            st.session_state._html_export = json.dumps(all_stocks, ensure_ascii=False, indent=None)
+            raw_json = json.dumps(all_stocks, ensure_ascii=False, indent=None)
+            st.session_state._html_export = raw_json
+            st.session_state._html_export_name = f"toeic-html-{datetime.now():%Y%m%d-%H%M}.json"
+            raw_mb = len(raw_json) / 1024 / 1024
+            # Count audio/image breakdown
+            img_bytes = sum(len(it.get("imgUrl","") or "") for it in all_stocks)
+            audio_bytes = sum(len(it.get("audioOpus","") or "") for it in all_stocks)
+            for it in all_stocks:
+                qs = it.get("qSet",{})
+                for v in qs.get("vocab",[]):
+                    audio_bytes += len(v.get("audio","") or "") + len(v.get("example_audio","") or "")
+                for q in qs.get("questions",[]):
+                    audio_bytes += len(q.get("audio_q","") or "") + len(q.get("audio_ans","") or "")
+            st.session_state._html_export_info = f"{total_all}セット / {raw_mb:.1f}MB (音声{audio_bytes/1024/1024:.1f}MB + 画像{img_bytes/1024/1024:.1f}MB + テキスト{(len(raw_json)-audio_bytes-img_bytes)/1024/1024:.1f}MB)"
             del all_stocks, full_study, full_mock
         if st.session_state.get("_html_export"):
+            if st.session_state.get("_html_export_info"):
+                st.caption(st.session_state._html_export_info)
             st.download_button("💾 HTML用ダウンロード",
                 st.session_state._html_export,
-                f"toeic-html-{datetime.now():%Y%m%d-%H%M}.json",
+                st.session_state._html_export_name,
                 "application/json", use_container_width=True, key="html_export")
 
 
@@ -1933,7 +1967,7 @@ with tab_gen:
                             item,
                             require_tts=True,  # listening MUST have audio
                             require_image_for_part1=True,  # Part 1 MUST have image
-                            require_image_for_graphic=True,  # graphic REQUIRES image
+                            require_image_for_graphic=False,  # graphic uses HTML table, no image needed
                             require_vocab_audio=False  # lenient on vocab for import
                         )
                         if not ok:
@@ -1959,33 +1993,46 @@ with tab_gen:
             except Exception as e:
                 st.error(f"読み込みエラー: {e}")
 
-    c1,c2 = st.columns([3,2])
-    with c1:
-        PO = {"part1":"Part 1 — Photographs","part2":"Part 2 — Q&R","part3":"Part 3 — Conversations","part3_3p":"Part 3 — 3-Person Conv","part4":"Part 4 — Talks","part5":"Part 5 — Incomplete Sentences","part6":"Part 6 — Text Completion","part7":"Part 7 — Reading",
-              "graphic":"🖼️ Graphic Questions (Part 3/4/7)"}
-        st.selectbox("Part", list(PO.keys()), format_func=lambda x:PO[x], key="part")
-    with c2:
-        LO = {"beginner":"🟢 ~600","intermediate":"🟡 600-800","advanced":"🔴 800+"}
-        st.selectbox("Level", list(LO.keys()), format_func=lambda x:LO[x], key="level")
+    # Auto-check Image for Part 1 and Graphic parts
+    _cur_part = st.session_state.get("part", "part5")
+    if _cur_part in ("part1", "part3_g", "part4_g", "part7_g"):
+        st.session_state.enable_image = True
 
-    c3,c4,c5 = st.columns([2,1,1])
-    with c3: st.number_input("Questions",1,500,key="count")
-    is_listening = st.session_state.part in ("part1","part2","part3","part4","graphic")
-    with c4: st.checkbox("🔊 TTS", key="enable_tts", disabled=not is_listening)
-    with c5: st.checkbox("🖼️ Image", key="enable_image", disabled=st.session_state.part not in ("part1","graphic"))
+    with st.form("gen_form", border=False):
+        c1,c2 = st.columns([3,2])
+        with c1:
+            PO = {"part1":"Part 1 — Photographs","part2":"Part 2 — Q&R",
+                  "part3":"Part 3 — Conversations","part3_3p":"Part 3 — 3-Person Conv","part3_g":"Part 3 — 🖼️ Graphic",
+                  "part4":"Part 4 — Talks","part4_g":"Part 4 — 🖼️ Graphic",
+                  "part5":"Part 5 — Incomplete Sentences","part6":"Part 6 — Text Completion",
+                  "part7":"Part 7 — Reading","part7_g":"Part 7 — 🖼️ Graphic"}
+            st.selectbox("Part", list(PO.keys()), format_func=lambda x:PO[x], key="part")
+        with c2:
+            LO = {"beginner":"🟢 ~600","intermediate":"🟡 600-800","advanced":"🔴 800+"}
+            st.selectbox("Level", list(LO.keys()), format_func=lambda x:LO[x], key="level")
 
+        c3,c4,c5 = st.columns([2,1,1])
+        with c3: st.number_input("Questions",1,500,key="count")
+        with c4: pass
+        with c5: st.checkbox("🖼️ Image", key="enable_image")
+
+        gen_submitted = st.form_submit_button("🚀 Generate", type="primary", use_container_width=True)
+
+    # Graphic mapping: part*_g → base part + graphic types
+    GRAPHIC_MAP = {"part3_g":"part3", "part4_g":"part4", "part7_g":"part7s"}
     pk = st.session_state.part
-    if pk == "graphic":
-        # Collect all graphic types
-        GRAPHIC_POOL = [(t,"part3") for t in TYPES.get("part3",[]) if t["type"].startswith("graphic_")] + \
-                       [(t,"part4") for t in TYPES.get("part4",[]) if t["type"].startswith("graphic_")] + \
-                       [(t,"part7s") for t in TYPES.get("part7s",[]) if t["type"].startswith("graphic_")]
-        st.caption(f"📋 {len(GRAPHIC_POOL)} graphic variations (Part 3: {sum(1 for _,p in GRAPHIC_POOL if p=='part3')}, Part 4: {sum(1 for _,p in GRAPHIC_POOL if p=='part4')}, Part 7: {sum(1 for _,p in GRAPHIC_POOL if p=='part7s')})")
+    base_part = GRAPHIC_MAP.get(pk, pk)  # e.g. "part3_g" → "part3"
+    is_graphic_mode = pk in GRAPHIC_MAP
+    is_listening = base_part in ("part1","part2","part3","part3_3p","part4") or pk in ("part3_g","part4_g")
+
+    if is_graphic_mode:
+        gc = len([t for t in TYPES.get(base_part,[]) if t["type"].startswith("graphic_")])
+        st.caption(f"📋 {gc} graphic variations")
     else:
         tc = len(TYPES.get("part7s",[])) + len(TYPES.get("part7d",[])) + len(TYPES.get("part7t",[])) if pk=="part7" else len(TYPES.get(pk,[]))
         st.caption(f"📋 {tc} variations")
 
-    if st.button("🚀 Generate", type="primary", use_container_width=True):
+    if gen_submitted:
         part,level,count = st.session_state.part, st.session_state.level, st.session_state.count
         url,api_key,tts_eng = st.session_state.ollama_url, st.session_state.gemini_key, st.session_state.tts_engine
         is_auto = st.session_state.model_key.startswith("auto")
@@ -1994,30 +2041,27 @@ with tab_gen:
                 mk = PART_DEFAULT_MODEL.get(p, "gemini-2.5-flash (API balanced)")
                 return MODEL_OPTIONS[mk]
             return MODEL_OPTIONS.get(st.session_state.model_key)
-        sel = resolve_model(part if part!="graphic" else "part3")
+        sel = resolve_model(base_part)
         if not sel: st.error("Select model"); st.stop()
         engine,model = sel["engine"],sel["model"]
-        do_tts = st.session_state.enable_tts and tts_eng!="off" and is_listening
-        do_img = st.session_state.enable_image and api_key and part in ("part1","graphic")
-        is_graphic_mode = part == "graphic"
+        do_tts = tts_eng!="off" and is_listening  # TTS auto-on for listening parts
+        do_img = api_key and (part == "part1" or is_graphic_mode or st.session_state.enable_image)
 
         if is_graphic_mode:
-            graphic_pool = [(t,p) for t in TYPES.get("part3",[]) if t["type"].startswith("graphic_") for p in ["part3"]] + \
-                           [(t,p) for t in TYPES.get("part4",[]) if t["type"].startswith("graphic_") for p in ["part4"]] + \
-                           [(t,p) for t in TYPES.get("part7s",[]) if t["type"].startswith("graphic_") for p in ["part7s"]]
+            graphic_pool = [(t, base_part) for t in TYPES.get(base_part,[]) if t["type"].startswith("graphic_")]
             random.shuffle(graphic_pool)
             pool_items = graphic_pool
         else:
-            pool = TYPES.get(part,[])
-            if part=="part7": pool = TYPES["part7s"]+TYPES["part7d"]+TYPES["part7t"]
+            pool = TYPES.get(base_part,[])
+            if base_part=="part7": pool = TYPES["part7s"]+TYPES["part7d"]+TYPES["part7t"]
             random.shuffle(pool)
-            pool_items = [(t, part) for t in pool]
+            pool_items = [(t, base_part) for t in pool]
 
         prog = st.progress(0); stat = st.empty(); log = st.container()
         gen,fail = 0,0
         if engine=="ollama": stat.info(f"⏳ Loading {model}..."); ollama_warmup(url,model)
         mode_str = "auto" if is_auto else f"{engine}:{model}"
-        print(f"\n[START] {'GRAPHIC' if is_graphic_mode else part} {level} x{count} {mode_str} tts={tts_eng}", flush=True)
+        print(f"\n[START] {pk}{'(graphic)' if is_graphic_mode else ''} {level} x{count} {mode_str} tts={tts_eng}", flush=True)
         for i in range(count):
             to, actual_part = pool_items[i % len(pool_items)] if pool_items else ({}, part)
             # For graphic mode, resolve model per actual part
@@ -2052,7 +2096,7 @@ with tab_gen:
                         at = qs["audio"]
                         if tts_eng=="edge" and check_edge_tts():
                             print(f"[TTS] Part={tts_part}, engine=edge{'_conv' if tts_part=='part3' else ''}", flush=True)
-                            mp3 = edge_tts_conv(at,qs.get("speakers")) if tts_part=="part3" else edge_tts_sync(at,random.choice(EDGE_VF+EDGE_VM))
+                            mp3 = edge_tts_conv(at,qs.get("speakers")) if tts_part in ("part3","part3_3p") else edge_tts_sync(at,random.choice(EDGE_VF+EDGE_VM))
                             o = mp3_to_opus(mp3)
                             if o:
                                 item["audioOpus"]=base64.b64encode(o).decode(); item["audioFormat"]="opus"
@@ -2063,7 +2107,7 @@ with tab_gen:
                             az_key = st.session_state.azure_speech_key
                             az_region = st.session_state.get("azure_speech_region","eastus")
                             print(f"[TTS] Part={tts_part}, engine=azure{'_conv' if tts_part=='part3' else ''}", flush=True)
-                            mp3 = azure_tts_conv(at,az_key,az_region,qs.get("speakers")) if tts_part=="part3" else azure_tts(at,az_key,az_region)
+                            mp3 = azure_tts_conv(at,az_key,az_region,qs.get("speakers")) if tts_part in ("part3","part3_3p") else azure_tts(at,az_key,az_region)
                             o = mp3_to_opus(mp3)
                             if o:
                                 item["audioOpus"]=base64.b64encode(o).decode(); item["audioFormat"]="opus"
@@ -2071,7 +2115,7 @@ with tab_gen:
                             else:
                                 print(f"[TTS] ❌ Azure opus encode failed", flush=True)
                         elif tts_eng=="gemini" and api_key:
-                            if tts_part=="part3":
+                            if tts_part in ("part3","part3_3p"):
                                 print(f"[TTS] Part={tts_part}, engine=gemini_conv ({len(qs.get('speakers',[]))} speakers)", flush=True)
                                 p = gemini_tts_conv(at,api_key,qs.get("speakers")); o = pcm_to_opus(p)
                             else:
@@ -2087,8 +2131,8 @@ with tab_gen:
                             print(f"[TTS] ⏭️ Skipped (engine={tts_eng}, key={'set' if api_key else 'none'})", flush=True)
                     except Exception as e: print(f"[TTS] ❌ {e}",flush=True); log.warning(f"⚠️ TTS: {e}")
                 elif not do_tts:
-                    is_lp = real_part in ("part1","part2","part3","part4")
-                    if is_lp: print(f"[TTS] ⏭️ do_tts=False (enable_tts={st.session_state.enable_tts}, tts_eng={tts_eng})", flush=True)
+                    is_lp = real_part in ("part1","part2","part3","part3_3p","part4")
+                    if is_lp: print(f"[TTS] ⏭️ do_tts=False (tts_eng={tts_eng})", flush=True)
                 # Image: Part 1 scene OR graphic mode (both REQUIRED)
                 if do_img and api_key:
                     if qs.get("scene"):  # Part 1
@@ -2127,21 +2171,21 @@ with tab_gen:
                                     return None
                                 mp3w = _edge_with_retry(word)
                                 if mp3w:
-                                    oo = mp3_to_opus(mp3w)
+                                    oo = mp3_to_opus(mp3w, '12k')
                                     if oo: vw["audio"] = base64.b64encode(oo).decode()
                                 if ex:
                                     try:
                                         mp3e = _edge_with_retry(ex)
                                         if mp3e:
-                                            eo = mp3_to_opus(mp3e)
+                                            eo = mp3_to_opus(mp3e, '12k')
                                             if eo: vw["example_audio"] = base64.b64encode(eo).decode()
                                     except: pass
                             elif tts_eng=="gemini" and api_key:
-                                pp = gemini_tts(word, api_key); oo = pcm_to_opus(pp)
+                                pp = gemini_tts(word, api_key); oo = pcm_to_opus(pp, '12k')
                                 if oo: vw["audio"] = base64.b64encode(oo).decode()
                                 time.sleep(4)
                                 if ex:
-                                    ep = gemini_tts(ex, api_key); eo = pcm_to_opus(ep)
+                                    ep = gemini_tts(ex, api_key); eo = pcm_to_opus(ep, '12k')
                                     if eo: vw["example_audio"] = base64.b64encode(eo).decode()
                                     time.sleep(4)
                         except Exception as e:
@@ -2261,22 +2305,20 @@ with tab_gen:
         def resolve_model_for(p):
             mk = PART_DEFAULT_MODEL.get(p, "gemini-2.5-flash (API balanced)")
             return MODEL_OPTIONS[mk]
-        # TTS優先順位: Gemini (高品質) > Edge (無料フォールバック) > off
-        if api_key:
-            tts_eng = "gemini"
-        elif check_edge_tts():
-            tts_eng = "edge"
-        else:
-            tts_eng = "off"
+        # TTS: サイドバーの設定を尊重 (Azure > Edge > Gemini > off)
+        tts_eng = st.session_state.tts_engine
+        if tts_eng == "off" and (api_key or check_edge_tts()):
+            tts_eng = "azure" if st.session_state.get("azure_speech_key") else ("edge" if check_edge_tts() else "off")
         # Image: APIキーがあれば必須ON
         force_image = bool(api_key)
 
         # 設定確認の表示
         config_info = []
         config_info.append(f"🤖 LLM: Auto (Part別最適 / Ollama+Gemini)")
-        if tts_eng == "gemini": config_info.append(f"🔊 TTS: 🌟 Gemini (高品質)")
-        elif tts_eng == "edge": config_info.append(f"🔊 TTS: Edge (Microsoft無料)")
-        else: config_info.append(f"🔊 TTS: ⚠️ なし (Listening音声なし)")
+        if tts_eng == "azure": config_info.append(f"🔊 TTS: ☁️ Azure Speech")
+        elif tts_eng == "gemini": config_info.append(f"🔊 TTS: 🌟 Gemini")
+        elif tts_eng == "edge": config_info.append(f"🔊 TTS: Edge (無料)")
+        else: config_info.append(f"🔊 TTS: ⚠️ なし")
         if force_image: config_info.append(f"🖼️ Image: Gemini Image API (Part1/Graphic)")
         else: config_info.append(f"🖼️ Image: ⚠️ なし (APIキー必要)")
         st.success(" | ".join(config_info))
@@ -2406,7 +2448,7 @@ with tab_gen:
                 tt = to.get("type", "?")
 
                 # TTS for L parts only (Part 1-4)
-                do_tts = (tts_eng != "off") and part_p in ("part1","part2","part3","part4")
+                do_tts = (tts_eng != "off") and part_p in ("part1","part2","part3","part3_3p","part4")
                 # Image: Part 1 (写真) または graphic_系 (図表)
                 do_img = force_image and (part_p == "part1" or tt.startswith("graphic_"))
                 is_g = tt.startswith("graphic_")
@@ -2911,11 +2953,16 @@ with tab_quiz:
         quiz_pool = []
         for r in results:
             qs = r.get("qSet", {})
-            for v in qs.get("vocab", []):
+            ts = r.get("createdAt", 0)
+            ad = _audio_store.get(ts, {})
+            for vi, v in enumerate(qs.get("vocab", [])):
                 w = v.get("word","").strip()
                 j = v.get("ja","").strip()
                 if w and j:
-                    quiz_pool.append({"word":w, "ja":j, "audio":v.get("audio",""), "example":v.get("example",""), "example_audio":v.get("example_audio","")})
+                    quiz_pool.append({"word":w, "ja":j,
+                        "audio": v.get("audio","") or ad.get(f"v{vi}_a",""),
+                        "example": v.get("example",""),
+                        "example_audio": v.get("example_audio","") or ad.get(f"v{vi}_e","")})
         # Deduplicate
         seen_qp = set()
         unique_pool = []
@@ -3204,7 +3251,7 @@ with tab_listen:
                     out_file.close()
                     r = _sp.run(
                         ['ffmpeg','-y','-f','concat','-safe','0','-i',list_file.name,
-                         '-c:a','libopus','-b:a','24k','-vbr','on',out_file.name],
+                         '-c:a','libopus','-b:a','16k','-vbr','on',out_file.name],
                         capture_output=True, timeout=600
                     )
                     if r.returncode == 0:
@@ -3388,7 +3435,7 @@ with tab_mock_test:
 
                     st.progress(idx / total)
 
-                    is_listening = part in ("part1","part2","part3","part4")
+                    is_listening = part in ("part1","part2","part3","part3_3p","part4")
                     section = "🎧 Listening" if is_listening else "📖 Reading"
                     part_label = part.upper()
                     for old, new in [("PART7S","Part 7-Single"),("PART7D","Part 7-Double"),("PART7T","Part 7-Triple")]:
