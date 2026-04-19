@@ -3119,7 +3119,7 @@ async function renderVocab() {
     .concat(posKeys.map(p => `<button class="pos-tab" data-pos="${p}">${POS_LABELS[p]||p} (${groups[p].length})</button>`)).join("");
 
   app.innerHTML=`
-    <div class="header"><h1 style="font-size:20px">📝 単語帳</h1><div class="sub">${words.length}語</div></div>
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center"><div><h1 style="font-size:20px;margin:0">📝 単語帳</h1><div class="sub">${words.length}語</div></div><button class="btn-s" id="vocabBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button></div>
     ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>`:""}
     ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button> <button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24;margin-left:4px">🏷️ レベル判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
     <div style="display:flex;gap:4px;overflow-x:auto;padding:6px 0;flex-wrap:wrap">${filterBtns}</div>
@@ -3127,8 +3127,7 @@ async function renderVocab() {
     <style>.pos-tab,.filter-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
     .pos-tab.active{background:rgba(129,140,248,0.2);color:#7b9cf7;border-color:rgba(129,140,248,0.4)}
     .filter-tab.active{background:rgba(129,140,248,0.2);border-color:rgba(129,140,248,0.4)}</style>
-    <div id="vocabListArea"></div>
-    <button class="btn-s" id="vocabBackBtn" style="margin:16px auto;display:block">← ホームに戻る</button>`;
+    <div id="vocabListArea"></div>`;
 
   // Play audio from base64 Opus (if stored), else fallback to Gemini TTS
   async function playVocabAudio(btn, originalLabel, storedAudio, fallbackText) {
