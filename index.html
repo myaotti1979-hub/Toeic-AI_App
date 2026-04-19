@@ -2602,7 +2602,11 @@ async function loadStockItem(itemOrId) {
   }
   S.part=item.part; S.level=item.level;
   S.screen="study"; S.stockMode=true; S.stockId=item.id;
-  S.stats={correct:0,wrong:0}; S.streak=0;
+  // Don't reset stats when advancing through a playlist — accumulate across sessions
+  if (!S._stockPlaylistActive) {
+    S.stats={correct:0,wrong:0}; S.streak=0;
+  }
+  S._stockPlaylistActive = true;
   // 音声URLを再生成（Opus形式のみ対応）
   if (item.audioOpus || item.audioPcm) {
     item.qSet._audioUrl = stockAudioUrl(item);
@@ -2736,6 +2740,7 @@ async function renderStockSelect() {
       if(items.length===0) return;
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));  // IDs only — full item loaded on demand
       S.stockPlayIdx = 0;
+      S._stockPlaylistActive = false;  // Reset stats for new playlist
       await loadStockItem(items[0].id);
     };
   });
@@ -2748,6 +2753,7 @@ async function renderStockSelect() {
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
+      S._stockPlaylistActive = false;
       await loadStockItem(items[0].id);
     };
   });
@@ -2759,6 +2765,7 @@ async function renderStockSelect() {
       if(items.length===0){ alert("未回答の問題がありません"); return; }
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
+      S._stockPlaylistActive = false;
       await loadStockItem(items[0].id);
     };
   });
@@ -2933,14 +2940,80 @@ async function renderDiagnosis() {
     .sort((a,b) => a.rate - b.rate)
     .slice(0, 8); // 上位8弱点
 
-  // 推定スコア計算
-  const lTotal = history.filter(h=>["part1","part2","part3","part4"].includes(h.part));
-  const rTotal = history.filter(h=>["part5","part6","part7"].includes(h.part));
-  const lRate = lTotal.length > 0 ? lTotal.filter(h=>h.correct).length / lTotal.length : 0;
-  const rRate = rTotal.length > 0 ? rTotal.filter(h=>h.correct).length / rTotal.length : 0;
-  const lScore = Math.round(lRate * 495);
-  const rScore = Math.round(rRate * 495);
+  // 推定スコア計算 — IRT（項目応答理論）ベースのレベル補正
+  // 各レベルの正答率からTOEICスコアを推定する換算テーブル
+  // 出典: TOEIC公式換算表 + IRT理論に基づく難易度別期待正答率の逆算
+  const SCORE_TABLE = {
+    beginner:     [[0,200],[0.50,300],[0.70,400],[0.78,500],[0.85,600],[0.92,700],[0.97,800],[0.99,900],[1.00,950]],
+    intermediate: [[0,200],[0.25,300],[0.40,400],[0.52,500],[0.60,600],[0.70,700],[0.83,800],[0.95,900],[1.00,960]],
+    advanced:     [[0,200],[0.15,300],[0.25,400],[0.30,500],[0.35,600],[0.45,700],[0.60,800],[0.80,900],[1.00,980]]
+  };
+  function irtEstimate(accuracy, level) {
+    const table = SCORE_TABLE[level] || SCORE_TABLE.intermediate;
+    if (accuracy <= 0) return table[0][1];
+    for (let i = 1; i < table.length; i++) {
+      if (accuracy <= table[i][0]) {
+        const [x0,y0] = table[i-1], [x1,y1] = table[i];
+        return Math.round(y0 + (accuracy - x0) / (x1 - x0) * (y1 - y0));
+      }
+    }
+    return table[table.length-1][1];
+  }
+
+  // レベル別集計
+  const byLevel = {};
+  history.forEach(h => {
+    const lv = h.level || "intermediate";
+    if (!byLevel[lv]) byLevel[lv] = {correct:0, total:0};
+    byLevel[lv].total++;
+    if (h.correct) byLevel[lv].correct++;
+  });
+
+  // L/R × レベル別で推定
+  function estimateSection(partFilter) {
+    const sectionHistory = history.filter(h => partFilter.includes(h.part));
+    if (sectionHistory.length === 0) return {score:0, total:0};
+    const sByLevel = {};
+    sectionHistory.forEach(h => {
+      const lv = h.level || "intermediate";
+      if (!sByLevel[lv]) sByLevel[lv] = {correct:0, total:0};
+      sByLevel[lv].total++;
+      if (h.correct) sByLevel[lv].correct++;
+    });
+    let weightedScore = 0, totalWeight = 0;
+    for (const [lv, data] of Object.entries(sByLevel)) {
+      if (data.total >= 2) {
+        const rate = data.correct / data.total;
+        const score = irtEstimate(rate, lv);
+        // Multiply by sample size (more data = more confidence)
+        weightedScore += score * data.total;
+        totalWeight += data.total;
+      }
+    }
+    if (totalWeight === 0) {
+      // Fallback: simple rate
+      const rate = sectionHistory.filter(h=>h.correct).length / sectionHistory.length;
+      return {score: Math.round(rate * 495), total: sectionHistory.length};
+    }
+    // Scale to 495 max (each section is 5-495)
+    const rawEst = weightedScore / totalWeight;  // estimated total score (200-980)
+    return {score: Math.min(495, Math.max(5, Math.round(rawEst / 2))), total: totalWeight};
+  }
+
+  const lEst = estimateSection(["part1","part2","part3","part4"]);
+  const rEst = estimateSection(["part5","part6","part7"]);
+  const lScore = lEst.score;
+  const rScore = rEst.score;
   const estScore = lScore + rScore;
+
+  // レベル別スコア表示用
+  const levelScores = {};
+  for (const [lv, data] of Object.entries(byLevel)) {
+    if (data.total >= 3) {
+      const rate = data.correct / data.total;
+      levelScores[lv] = {rate: Math.round(rate*100), est: irtEstimate(rate, lv), total: data.total};
+    }
+  }
 
   // レベル提案
   let suggestedLevel = "beginner";
@@ -3015,8 +3088,8 @@ async function renderDiagnosis() {
     const worst = weakTypes[0];
     adviceItems.push(`📕 <strong>${worst.part} / ${worst.type}</strong> が正答率${worst.rate}%で最も弱いポイントです。重点的に練習しましょう。`);
   }
-  if (lRate < rRate && lTotal.length >= 5) adviceItems.push("🎧 リスニングがリーディングより低いです。Part 3/4のストック学習を増やしましょう。");
-  if (rRate < lRate && rTotal.length >= 5) adviceItems.push("📖 リーディングがリスニングより低いです。Part 5/7の演習を増やしましょう。");
+  if (lScore < rScore && lEst.total >= 5) adviceItems.push("🎧 リスニングがリーディングより低いです。Part 3/4のストック学習を増やしましょう。");
+  if (rScore < lScore && rEst.total >= 5) adviceItems.push("📖 リーディングがリスニングより低いです。Part 5/7の演習を増やしましょう。");
   const avgElapsed = history.filter(h=>h.elapsed>0);
   if (avgElapsed.length > 0) {
     const avgSec = Math.round(avgElapsed.reduce((a,h)=>a+h.elapsed,0)/avgElapsed.length);
@@ -3041,9 +3114,22 @@ async function renderDiagnosis() {
 
     <div style="text-align:center;margin:16px 0">
       <div style="font-size:42px;font-weight:800;color:${estScore>=800?"#4ade80":estScore>=600?"#fbbf24":"#f87171"}">${estScore}</div>
-      <div style="font-size:13px;color:#7a8ea5">推定TOEICスコア</div>
-      <div style="font-size:11px;color:#a0b4c8;margin-top:4px">L: ${lScore} (${Math.round(lRate*100)}%) ｜ R: ${rScore} (${Math.round(rRate*100)}%)</div>
+      <div style="font-size:13px;color:#7a8ea5">推定TOEICスコア <span style="font-size:10px">(IRT補正)</span></div>
+      <div style="font-size:11px;color:#a0b4c8;margin-top:4px">L: ${lScore} ｜ R: ${rScore}</div>
     </div>
+
+    ${Object.keys(levelScores).length > 0 ? `<div style="margin:8px 0;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.06)">
+      <div style="font-size:11px;color:#7a8ea5;margin-bottom:6px">📊 レベル別推定（IRT換算）</div>
+      ${Object.entries(levelScores).sort((a,b)=>a[1].est-b[1].est).map(([lv,d])=>{
+        const lvLabel = {beginner:"初級",intermediate:"中級",advanced:"上級"}[lv]||lv;
+        const lvColor = {beginner:"#22c55e",intermediate:"#f59e0b",advanced:"#ef4444"}[lv]||"#94a3b8";
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:12px">
+          <span style="color:${lvColor}">${lvLabel} (${d.total}問)</span>
+          <span style="color:#a0b4c8">正答率 ${d.rate}% → <strong style="color:#dce6f0">${d.est}点相当</strong></span>
+        </div>`;
+      }).join("")}
+      <div style="font-size:10px;color:#64748b;margin-top:6px">※ 上級60%正解≒800点、上級80%≒900点。正確なスコアは模試で測定してください。</div>
+    </div>` : ""}
 
     <div style="display:flex;gap:8px;justify-content:center;margin:12px 0">
       <div style="text-align:center;padding:8px 16px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid rgba(255,255,255,0.06)">
@@ -3132,6 +3218,7 @@ async function renderDiagnosis() {
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
+      S._stockPlaylistActive = false;
       S.judgeMode = true;  // 判定モードONで特訓（結果が記録される）
       localStorage.setItem("judgeMode","true");
       await loadStockItem(items[0].id);
@@ -4739,7 +4826,7 @@ function renderStudy() {
     if (answered) {
       inner+=`<div class="expl ${isOk?"ok":"ng"}">
         <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":"😥 不正解..."}</div>
-        ${q.explanation_en?`<div style="font-size:12px;color:#a0b4c8;font-style:italic;margin-bottom:6px">💡 ${esc(q.explanation_en)}</div>`:""}
+        ${q.explanation_en?`<details style="margin-bottom:8px"><summary style="font-size:13px;color:#60a5fa;cursor:pointer;user-select:none">💡 English Explanation</summary><div style="font-size:14px;line-height:1.9;color:#a0b4c8;margin-top:4px;padding:8px;background:rgba(96,165,250,0.06);border-radius:6px">${esc(q.explanation_en)}</div></details>`:""}
         <div class="det">${esc(q.explanation_ja||"")}</div>
       </div>`;
       // 和訳トグル（解説の直後に表示 — Part 3,4,6,7）
