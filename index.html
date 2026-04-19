@@ -1939,34 +1939,38 @@ async function judgeExportAll() {
 }
 
 // Smart import: detect file type and import accordingly
-async function dataImportSmart(file) {
-  const text = await file.text();
-  const parsed = JSON.parse(text);
+// Stock files use streaming parser to avoid OOM on large files
+async function dataImportSmart(file, onProgress) {
+  // Peek at first bytes to detect type without loading entire file
+  const peekSlice = file.slice(0, 512);
+  const peek = await peekSlice.text();
+  const trimmed = peek.trim();
 
-  // Detect type
-  if (parsed.type === "vocab" && Array.isArray(parsed.data)) {
-    // Vocab import
+  // Vocab file: {"type":"vocab",...} — small, parse normally
+  if (trimmed.startsWith('{"type":"vocab"') || trimmed.startsWith('{"type": "vocab"')) {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
     const db = await openVocabDB();
     let added = 0;
-    for (const w of parsed.data) {
+    for (const w of (parsed.data||[])) {
       await new Promise((resolve) => {
         const tx = db.transaction("words","readwrite");
-        const store = tx.objectStore("words");
-        // Remove id to let auto-increment assign new ones
         const entry = {...w}; delete entry.id;
-        store.add(entry);
+        tx.objectStore("words").add(entry);
         tx.oncomplete = () => { added++; resolve(); };
-        tx.onerror = () => resolve(); // skip duplicates
+        tx.onerror = () => resolve();
       });
     }
-    return {type:"vocab", count: added, total: parsed.data.length};
+    return {type:"vocab", count: added, total: (parsed.data||[]).length};
   }
 
-  if (parsed.type === "judge" && Array.isArray(parsed.data)) {
-    // Judge history import
+  // Judge file: {"type":"judge",...} — small, parse normally
+  if (trimmed.startsWith('{"type":"judge"') || trimmed.startsWith('{"type": "judge"')) {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
     const db = await openJudgeDB();
     let added = 0;
-    for (const h of parsed.data) {
+    for (const h of (parsed.data||[])) {
       await new Promise((resolve) => {
         const tx = db.transaction("history","readwrite");
         const entry = {...h}; delete entry.id;
@@ -1975,59 +1979,118 @@ async function dataImportSmart(file) {
         tx.onerror = () => resolve();
       });
     }
-    return {type:"judge", count: added, total: parsed.data.length};
+    return {type:"judge", count: added, total: (parsed.data||[]).length};
   }
 
-  // Default: stock questions (array of items)
-  if (Array.isArray(parsed)) {
-    const r = await stockImport(file);
+  // Stock file: [...] — potentially huge, use streaming parser
+  if (trimmed.startsWith("[")) {
+    const r = await stockImportStream(file, onProgress);
     return {type:"stock", ...r};
   }
 
   throw new Error("不明なファイル形式です");
 }
 
-async function stockImport(file) {
-  const text = await file.text();
-  const items = JSON.parse(text);
-  if (!Array.isArray(items)) throw new Error("無効なファイル形式");
+// Streaming stock import: parse one JSON object at a time from a file stream
+// Never holds entire file in memory — only current object + DB write buffer
+async function stockImportStream(file, onProgress) {
   const db = await openStockDB();
-  // 既存のcreatedAtを取得して重複チェック用セットを作る
+  // Load existing createdAt for duplicate check (just a Set of numbers — tiny)
   const existing = await new Promise((resolve, reject) => {
+    const set = new Set();
     const tx = db.transaction("questions","readonly");
-    const req = tx.objectStore("questions").getAll();
-    req.onsuccess = () => resolve(new Set(req.result.map(r => r.createdAt)));
+    const req = tx.objectStore("questions").openCursor();
+    req.onsuccess = (e) => {
+      const c = e.target.result;
+      if (c) { set.add(c.value.createdAt); c.continue(); }
+      else resolve(set);
+    };
     req.onerror = () => reject(req.error);
   });
-  let count = 0, skipped = 0, vocabAdded = 0, vocabTotal = 0, withVocab = 0;
-  console.log(`[IMPORT] Processing ${items.length} items...`);
-  const vocabBefore = (await vocabGetAll()).length;  // Count once before import
-  for (const item of items) {
-    if (!item.part || !item.qSet) continue;
-    const ts = item.createdAt || Date.now();
-    if (existing.has(ts)) { skipped++; continue; } // 重複スキップ
-    existing.add(ts); // 同一ファイル内の重複も防止
-    const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts};
-    if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
-    else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction("questions","readwrite");
-      tx.objectStore("questions").add(data);
-      tx.oncomplete = () => { count++; resolve(); };
-      tx.onerror = () => reject(tx.error);
-    });
-    // Auto-save vocabulary from imported question
-    const vocab = item.qSet.vocab;
-    if (vocab && Array.isArray(vocab) && vocab.length > 0) {
-      withVocab++;
-      vocabTotal += vocab.length;
-      await vocabAutoSave(vocab, item.part).catch(e=>console.warn("vocab save failed:", e));
+
+  const vocabBefore = (await vocabGetAll()).length;
+  let count = 0, skipped = 0, withVocab = 0, vocabTotal = 0;
+  let bytesRead = 0;
+
+  // Stream reader
+  const reader = file.stream().pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let objStart = -1;
+
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += value;
+    bytesRead += value.length;
+
+    // Scan for complete top-level objects
+    let i = 0;
+    let lastObjEnd = -1;
+    while (i < buffer.length) {
+      const ch = buffer[i];
+      if (escape) { escape = false; i++; continue; }
+      if (ch === "\\") { escape = true; i++; continue; }
+      if (ch === '"') { inString = !inString; i++; continue; }
+      if (inString) { i++; continue; }
+      if (ch === "{") {
+        if (depth === 0) objStart = i;
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0 && objStart >= 0) {
+          // Found a complete object
+          const objStr = buffer.slice(objStart, i + 1);
+          lastObjEnd = i + 1;
+          try {
+            const item = JSON.parse(objStr);
+            if (item.part && item.qSet) {
+              const ts = item.createdAt || Date.now();
+              if (existing.has(ts)) { skipped++; }
+              else {
+                existing.add(ts);
+                const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts};
+                if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
+                else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
+                await new Promise((resolve, reject) => {
+                  const tx = db.transaction("questions","readwrite");
+                  tx.objectStore("questions").add(data);
+                  tx.oncomplete = () => { count++; resolve(); };
+                  tx.onerror = () => reject(tx.error);
+                });
+                // Vocab auto-save
+                const vocab = item.qSet.vocab;
+                if (vocab && Array.isArray(vocab) && vocab.length > 0) {
+                  withVocab++;
+                  vocabTotal += vocab.length;
+                  await vocabAutoSave(vocab, item.part).catch(()=>{});
+                }
+              }
+            }
+          } catch(e) { console.warn("[STREAM IMPORT] parse error:", e); }
+          objStart = -1;
+        }
+      }
+      i++;
     }
+    // Trim processed portion from buffer
+    if (lastObjEnd > 0) {
+      buffer = buffer.slice(lastObjEnd);
+      objStart = objStart >= 0 ? objStart - lastObjEnd : -1;
+    }
+    if (onProgress) onProgress(bytesRead, file.size);
   }
-  const vocabAfter = (await vocabGetAll()).length;  // Count once after import
-  vocabAdded = vocabAfter - vocabBefore;
-  console.log(`[IMPORT] Complete: ${count} items, ${withVocab} with vocab, ${vocabTotal} vocab entries found, ${vocabAdded} new added to dictionary`);
+
+  const vocabAfter = (await vocabGetAll()).length;
+  const vocabAdded = vocabAfter - vocabBefore;
   return {count, skipped, vocabAdded, withVocab, vocabTotal};
+}
+
+// Legacy stockImport (kept for backward compatibility with existing import button)
+async function stockImport(file) {
+  return stockImportStream(file);
 }
 
 async function stockCount() {
@@ -2901,8 +2964,11 @@ async function renderStockSelect() {
     const results = [];
     for (const f of files) {
       try {
-        const r = await dataImportSmart(f);
-        results.push(`${f.name}: ${r.type}${r.count!==undefined?` ${r.count}件`:""}`);
+        const r = await dataImportSmart(f, (bytes, total) => {
+          const pct = total > 0 ? Math.round(bytes/total*100) : 0;
+          mib.textContent = `⏳ ${f.name.slice(0,20)}... ${pct}%`;
+        });
+        results.push(`${f.name}: ${r.type} ${r.count}件追加${r.skipped?` (${r.skipped}件スキップ)`:""}`);
       } catch(err) {
         results.push(`${f.name}: ❌ ${err.message}`);
       }
@@ -5101,6 +5167,17 @@ function renderStudy() {
 
     if (answered) {
       const isLast=qi===numQ-1;
+      const allAnswered = numQ > 1 && S.answers.every(a => a.answered);
+
+      // Review navigation: show when all questions answered and multi-question set
+      if (allAnswered) {
+        body+=`<div style="display:flex;gap:8px;justify-content:center;align-items:center;margin:12px 0;padding:8px;background:rgba(129,140,248,0.06);border-radius:8px">
+          ${qi > 0 ? `<button class="btn-s" id="prevQBtn" style="font-size:12px">◀ Q${qi}</button>` : `<span style="width:60px"></span>`}
+          <span style="font-size:12px;color:#7b9cf7;font-weight:600">Q${qi+1} / ${numQ}</span>
+          ${qi < numQ-1 ? `<button class="btn-s" id="nextQReviewBtn" style="font-size:12px">Q${qi+2} ▶</button>` : `<span style="width:60px"></span>`}
+        </div>`;
+      }
+
       if (isLast) {
         if (S.stockMode || S.sessionNum >= SESSION_SIZE) {
           const isLastStock = S.stockMode && S.stockPlayIdx >= S.stockPlaylist.length-1;
@@ -5204,6 +5281,8 @@ function renderStudy() {
   const rb=$("retryBtn"); if(rb)rb.onclick=()=>loadNewSet();
   const nsb=$("nextSetBtn"); if(nsb)nsb.onclick=()=>{stopSpeak();loadNewSet();};
   const nqb=$("nextQBtn"); if(nqb)nqb.onclick=()=>advanceQuestion();
+  const pqb=$("prevQBtn"); if(pqb)pqb.onclick=()=>{ S.qIdx--; render(); };
+  const nqr=$("nextQReviewBtn"); if(nqr)nqr.onclick=()=>{ S.qIdx++; render(); };
   const bhb=$("backHomeBtn"); if(bhb)bhb.onclick=()=>{
     const wasStock=S.stockMode;
     stopSpeak();S.stockMode=false;S.stockPlaylist=[];
