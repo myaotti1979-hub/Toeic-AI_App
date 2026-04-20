@@ -34,7 +34,7 @@ body { min-height:100vh; background:#1a2332; color:#dce6f0; font-family:'Noto Sa
 .ctx-block { background:rgba(91,124,247,0.07); border:1px solid rgba(91,124,247,0.18); border-radius:12px; padding:16px 18px; margin-bottom:16px; }
 .ctx-lbl { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:#7b9cf7; margin-bottom:8px; font-weight:600; }
 .ctx-txt { font-size:14px; line-height:1.9; color:#b8cce8; white-space:pre-wrap; }
-.doc-hdr { font-family:'JetBrains Mono',monospace; font-size:12px; color:#7a8ea5; border-bottom:1px solid #334766; padding-bottom:10px; margin-bottom:10px; white-space:pre-wrap; }
+.doc-hdr { font-family:'JetBrains Mono',monospace; font-size:13px; color:#e2e8f0; background:rgba(30,45,61,0.8); border:1px solid rgba(129,140,248,0.2); border-radius:8px; padding:10px 14px; margin-bottom:12px; white-space:pre-wrap; line-height:1.7; }
 
 /* ─ Passage text ─ */
 .passage-txt { font-size:14px; line-height:1.9; color:#b8cce8; white-space:pre-wrap; }
@@ -4930,7 +4930,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.19g · IRT score + type repair + data migration + drill + search · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.20a · doc header + translation UI + mock fix + import fix · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
@@ -5168,9 +5168,9 @@ function renderStudy() {
         const trJa = qs.translation_ja || qs.translation_ja_1;
         let trHtml;
         if (qs.translation_ja_1) {
-          trHtml = `<div style="font-size:12px;color:#7b9cf7;margin-top:8px">文書1:</div><div style="white-space:pre-wrap;font-size:13px;color:#a0b4c8">${esc(qs.translation_ja_1)}</div>` + (qs.translation_ja_2?`<div style="font-size:12px;color:#7b9cf7;margin-top:8px">文書2:</div><div style="white-space:pre-wrap;font-size:13px;color:#a0b4c8">${esc(qs.translation_ja_2)}</div>`:"") + (qs.translation_ja_3?`<div style="font-size:12px;color:#7b9cf7;margin-top:8px">文書3:</div><div style="white-space:pre-wrap;font-size:13px;color:#a0b4c8">${esc(qs.translation_ja_3)}</div>`:"");
+          trHtml = `<div style="font-size:13px;color:#7b9cf7;font-weight:600;margin-top:8px">文書1:</div><div style="white-space:pre-wrap;font-size:14px;color:#dce6f0;line-height:1.8;padding:8px;background:rgba(30,45,61,0.5);border-radius:6px;margin-top:4px">${esc(qs.translation_ja_1)}</div>` + (qs.translation_ja_2?`<div style="font-size:13px;color:#7b9cf7;font-weight:600;margin-top:12px">文書2:</div><div style="white-space:pre-wrap;font-size:14px;color:#dce6f0;line-height:1.8;padding:8px;background:rgba(30,45,61,0.5);border-radius:6px;margin-top:4px">${esc(qs.translation_ja_2)}</div>`:"") + (qs.translation_ja_3?`<div style="font-size:13px;color:#7b9cf7;font-weight:600;margin-top:12px">文書3:</div><div style="white-space:pre-wrap;font-size:14px;color:#dce6f0;line-height:1.8;padding:8px;background:rgba(30,45,61,0.5);border-radius:6px;margin-top:4px">${esc(qs.translation_ja_3)}</div>`:"");
         } else if (qs.translation_ja) {
-          trHtml = `<div style="white-space:pre-wrap;font-size:13px;color:#a0b4c8;margin-top:8px">${esc(qs.translation_ja)}</div>`;
+          trHtml = `<div style="white-space:pre-wrap;font-size:14px;color:#dce6f0;line-height:1.8;padding:8px;background:rgba(30,45,61,0.5);border-radius:6px;margin-top:8px">${esc(qs.translation_ja)}</div>`;
         } else {
           trHtml = `<div style="font-size:13px;color:#7a8ea5;margin-top:8px">（この問題には和訳データがありません）</div>`;
         }

@@ -1181,14 +1181,17 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
             except Exception as e:
                 print(f"[VOCAB] {e}", flush=True)
         print(f"[VOCAB] Audio: {w_ok} words, {e_ok} examples ({('Edge' if use_edge_for_vocab else 'Gemini')})", flush=True)
-    # Listen-mode Q&A audio (Edge TTS — only for listening parts)
-    if real_part in ("part1","part2","part3","part3_3p","part4") and qs.get("questions") and tts_eng != "off" and check_edge_tts():
+    # Listen-mode Q&A audio (Edge TTS — Part 2/3/4 only. Part 1 is photo-based, not suited for listening flow)
+    if real_part in ("part2","part3","part3_3p","part4") and qs.get("questions") and tts_eng != "off" and check_edge_tts():
         _generate_listen_audio(qs, real_part)
     # Validate: Listening parts REQUIRE audio. If TTS was enabled but audio missing, mark invalid.
     is_listening_part = real_part in ("part1","part2","part3","part3_3p","part4")
     if is_listening_part and do_tts and not item.get("audioOpus"):
         item["_invalid"] = "listening_no_audio"
         print(f"[VALIDATE] Part={real_part}: SKIP (no audio generated)", flush=True)
+    # Store validation-relevant flags BEFORE stripping
+    item["_hasAudio"] = bool(item.get("audioOpus"))
+    item["_hasImage"] = bool(item.get("imgUrl"))
     _strip_audio(item)  # Move audio to _audio_store for lightweight session_state
     return item
 
@@ -1214,12 +1217,12 @@ def validate_stock_item(item, require_tts=True, require_image_for_part1=True, re
     qs = item.get("qSet", {})
     if not qs.get("questions"):
         return False, "no questions"
-    # Listening audio
+    # Listening audio (check both direct field and flag set before stripping)
     is_listening = part in ("part1","part2","part3","part3_3p","part4")
-    if is_listening and require_tts and not item.get("audioOpus"):
+    if is_listening and require_tts and not item.get("audioOpus") and not item.get("_hasAudio"):
         return False, "listening without audio"
     # Part 1 image
-    if part == "part1" and require_image_for_part1 and not item.get("imgUrl"):
+    if part == "part1" and require_image_for_part1 and not item.get("imgUrl") and not item.get("_hasImage"):
         return False, "part1 without image"
     # Graphic questions: need BOTH image AND table data.
     # Maps, floor plans, charts can't be rendered as text tables — image is mandatory.
@@ -1874,17 +1877,58 @@ with st.sidebar:
                 lv_str = " / ".join(f"{lv}:{n}" for lv,n in sorted(lv_info.items()))
                 st.caption(f"レベル内訳: {lv_str}")
 
-            # 1-click export: download_button directly with data
+            # --- Export: full + differential ---
+            LAST_EXPORT_FILE = "last_html_export.txt"
+            last_export_ts = 0
+            try:
+                with open(LAST_EXPORT_FILE) as f:
+                    last_export_ts = int(f.read().strip())
+            except Exception:
+                pass
+
             try:
                 with open(RESULTS_FILE, "r", encoding="utf-8") as f:
                     _exp_all = json.load(f)
-                _exp_data = _exp_all if selected_part == "全パート" else [r for r in _exp_all if r.get("part") == selected_part]
-                _exp_json = json.dumps(_exp_data, ensure_ascii=False, indent=None)
-                _exp_name = f"toeic-stock-{selected_part}-{datetime.now():%Y%m%d-%H%M}.json"
-                st.download_button(f"📤 エクスポート ({len(_exp_data)}問)", _exp_json, _exp_name, "application/json", key="part_dl")
-                del _exp_all, _exp_data, _exp_json  # Free memory
-            except Exception as e:
-                st.error(f"エクスポート準備エラー: {e}")
+            except Exception:
+                _exp_all = []
+
+            _exp_filtered = _exp_all if selected_part == "全パート" else [r for r in _exp_all if r.get("part") == selected_part]
+            _exp_diff = [r for r in _exp_filtered if last_export_ts > 0 and (r.get("createdAt") or 0) > last_export_ts]
+
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                if _exp_filtered:
+                    _json_full = json.dumps(_exp_filtered, ensure_ascii=False, indent=None)
+                    _mb = len(_json_full) / 1024 / 1024
+                    st.download_button(
+                        f"📤 全問 ({len(_exp_filtered)}問 / {_mb:.0f}MB)",
+                        _json_full,
+                        f"toeic-stock-{selected_part}-full-{datetime.now():%Y%m%d-%H%M}.json",
+                        "application/json", key="exp_full")
+                    del _json_full
+            with ec2:
+                if _exp_diff:
+                    _json_diff = json.dumps(_exp_diff, ensure_ascii=False, indent=None)
+                    _mb_d = len(_json_diff) / 1024 / 1024
+                    from datetime import datetime as _dt
+                    last_dt = _dt.fromtimestamp(last_export_ts/1000).strftime("%m/%d %H:%M")
+                    st.download_button(
+                        f"🆕 差分 ({len(_exp_diff)}問 / {_mb_d:.0f}MB)",
+                        _json_diff,
+                        f"toeic-stock-{selected_part}-diff-{datetime.now():%Y%m%d-%H%M}.json",
+                        "application/json", key="exp_diff", help=f"前回: {last_dt}")
+                    del _json_diff
+                elif last_export_ts > 0:
+                    st.button("🆕 差分なし", disabled=True, key="exp_diff_empty")
+                else:
+                    st.caption("初回は全問で出力")
+            del _exp_all, _exp_filtered, _exp_diff
+
+            if st.button("⏱ エクスポート時刻を記録", key="mark_export", help="次回の差分基準を更新"):
+                with open(LAST_EXPORT_FILE, "w") as f:
+                    f.write(str(int(time.time() * 1000)))
+                st.success("✅ 記録しました")
+                st.rerun()
 
             # Delete operations
             st.divider()
@@ -1921,48 +1965,6 @@ with st.sidebar:
                         st.rerun()
                     else:
                         st.info("該当する問題がありません")
-
-    # HTML export — lazy (don't json.dumps until clicked)
-    total_all = len(st.session_state.results) + len(st.session_state.mock_results)
-    if total_all > 0:
-        st.divider()
-        st.markdown(f"**📱 HTML連携** ({total_all}セット)")
-        if st.button("📱 エクスポート準備", use_container_width=True, key="html_prep"):
-            # Read study from file (has full audio)
-            try:
-                with open(RESULTS_FILE, "r", encoding="utf-8") as f:
-                    full_study = json.load(f)
-            except Exception:
-                full_study = []
-            # Restore mock audio from _audio_store
-            full_mock = []
-            for item in st.session_state.mock_results:
-                full = json.loads(json.dumps(item, ensure_ascii=False))
-                _restore_audio(full)
-                full_mock.append(full)
-            all_stocks = full_study + full_mock
-            raw_json = json.dumps(all_stocks, ensure_ascii=False, indent=None)
-            st.session_state._html_export = raw_json
-            st.session_state._html_export_name = f"toeic-html-{datetime.now():%Y%m%d-%H%M}.json"
-            raw_mb = len(raw_json) / 1024 / 1024
-            # Count audio/image breakdown
-            img_bytes = sum(len(it.get("imgUrl","") or "") for it in all_stocks)
-            audio_bytes = sum(len(it.get("audioOpus","") or "") for it in all_stocks)
-            for it in all_stocks:
-                qs = it.get("qSet",{})
-                for v in qs.get("vocab",[]):
-                    audio_bytes += len(v.get("audio","") or "") + len(v.get("example_audio","") or "")
-                for q in qs.get("questions",[]):
-                    audio_bytes += len(q.get("audio_q","") or "") + len(q.get("audio_ans","") or "")
-            st.session_state._html_export_info = f"{total_all}セット / {raw_mb:.1f}MB (音声{audio_bytes/1024/1024:.1f}MB + 画像{img_bytes/1024/1024:.1f}MB + テキスト{(len(raw_json)-audio_bytes-img_bytes)/1024/1024:.1f}MB)"
-            del all_stocks, full_study, full_mock
-        if st.session_state.get("_html_export"):
-            if st.session_state.get("_html_export_info"):
-                st.caption(st.session_state._html_export_info)
-            st.download_button("💾 HTML用ダウンロード",
-                st.session_state._html_export,
-                st.session_state._html_export_name,
-                "application/json", use_container_width=True, key="html_export")
 
 
 
@@ -2143,7 +2145,7 @@ with st.sidebar:
                         st.session_state.pop("_html_export", None)
 
     st.divider()
-    st.caption("v2026.04.19g · IRT score + type repair + data migration + drill + search · 303 types")
+    st.caption("v2026.04.20a · doc header + translation UI + mock fix + import fix · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2407,8 +2409,8 @@ with tab_gen:
                         except Exception as e:
                             print(f"[VOCAB main] {e}", flush=True)
                     print(f"[VOCAB] Audio: {len([v for v in qs['vocab'] if v.get('audio')])} words, {len([v for v in qs['vocab'] if v.get('example_audio')])} examples ({('Edge' if _use_edge_vocab else 'Gemini')})", flush=True)
-                # Listen-mode Q&A audio (Edge TTS — only for listening parts)
-                if actual_part in ("part1","part2","part3","part3_3p","part4") and qs.get("questions") and tts_eng != "off" and check_edge_tts():
+                # Listen-mode Q&A audio (Edge TTS — Part 2/3/4 only)
+                if actual_part in ("part2","part3","part3_3p","part4") and qs.get("questions") and tts_eng != "off" and check_edge_tts():
                     _generate_listen_audio(qs, actual_part)
                 # STRICT VALIDATION before saving to stock
                 is_listening_q = actual_part in ("part1","part2","part3","part3_3p","part4")
@@ -2691,6 +2693,7 @@ with tab_gen:
                     )
                     if not ok:
                         fail += 1
+                        print(f"[MOCK SKIP] {part_p}/{lv} ({tt}): {reason}", flush=True)
                         log.warning(f"⏭️ {part_p}/{lv} - {reason} (試行{attempts})")
                         continue
                     # All valid - save
