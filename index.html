@@ -1995,7 +1995,6 @@ async function dataImportSmart(file, onProgress) {
 // Never holds entire file in memory — only current object + DB write buffer
 async function stockImportStream(file, onProgress) {
   const db = await openStockDB();
-  // Load existing createdAt for duplicate check (just a Set of numbers — tiny)
   const existing = await new Promise((resolve, reject) => {
     const set = new Set();
     const tx = db.transaction("questions","readonly");
@@ -2019,6 +2018,7 @@ async function stockImportStream(file, onProgress) {
   let inString = false;
   let escape = false;
   let objStart = -1;
+  let scanPos = 0; // Track where we last scanned to — never re-scan leftover
 
   while (true) {
     const {done, value} = await reader.read();
@@ -2026,24 +2026,22 @@ async function stockImportStream(file, onProgress) {
     buffer += value;
     bytesRead += value.length;
 
-    // Scan for complete top-level objects
-    let i = 0;
+    // Scan from where we left off (not from 0 — avoids re-scanning leftover)
     let lastObjEnd = -1;
-    while (i < buffer.length) {
-      const ch = buffer[i];
-      if (escape) { escape = false; i++; continue; }
-      if (ch === "\\") { escape = true; i++; continue; }
-      if (ch === '"') { inString = !inString; i++; continue; }
-      if (inString) { i++; continue; }
+    while (scanPos < buffer.length) {
+      const ch = buffer[scanPos];
+      if (escape) { escape = false; scanPos++; continue; }
+      if (ch === "\\" && inString) { escape = true; scanPos++; continue; }
+      if (ch === '"') { inString = !inString; scanPos++; continue; }
+      if (inString) { scanPos++; continue; }
       if (ch === "{") {
-        if (depth === 0) objStart = i;
+        if (depth === 0) objStart = scanPos;
         depth++;
       } else if (ch === "}") {
         depth--;
         if (depth === 0 && objStart >= 0) {
-          // Found a complete object
-          const objStr = buffer.slice(objStart, i + 1);
-          lastObjEnd = i + 1;
+          const objStr = buffer.slice(objStart, scanPos + 1);
+          lastObjEnd = scanPos + 1;
           try {
             const item = JSON.parse(objStr);
             if (item.part && item.qSet) {
@@ -2060,7 +2058,6 @@ async function stockImportStream(file, onProgress) {
                   tx.oncomplete = () => { count++; resolve(); };
                   tx.onerror = () => reject(tx.error);
                 });
-                // Vocab auto-save
                 const vocab = item.qSet.vocab;
                 if (vocab && Array.isArray(vocab) && vocab.length > 0) {
                   withVocab++;
@@ -2073,11 +2070,12 @@ async function stockImportStream(file, onProgress) {
           objStart = -1;
         }
       }
-      i++;
+      scanPos++;
     }
-    // Trim processed portion from buffer
+    // Trim processed portion from buffer, adjust positions
     if (lastObjEnd > 0) {
       buffer = buffer.slice(lastObjEnd);
+      scanPos -= lastObjEnd;
       objStart = objStart >= 0 ? objStart - lastObjEnd : -1;
     }
     if (onProgress) onProgress(bytesRead, file.size);
