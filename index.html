@@ -2935,13 +2935,13 @@ async function renderStockSelect() {
   }).join("");
 
   app.innerHTML=`
-    <div class="header">
-      <h1 style="font-size:20px">📦 ストックから学習</h1>
-      <div class="sub">合計 ${total}問${totalMastered>0?` (卒業: ${totalMastered})`:""}</div>
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:20px;margin:0">📦 ストックから学習</h1>
+      <div class="sub">合計 ${total}問${totalMastered>0?` (卒業: ${totalMastered})`:""}</div></div>
+      <button class="btn-s" id="stockBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
     </div>
     ${total===0?`<div style="text-align:center;color:#7a8ea5;padding:40px 0">ストックされた問題がありません。<br>問題を解いた後「💾 ストック」ボタンで保存できます。</div>`:""}
     <div style="padding:10px 0">${partSections}</div>
-    <button class="btn-s" id="stockBackBtn" style="margin:10px auto;display:block">← ホームに戻る</button>
     <div style="display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap">
       ${total>0?`<button class="btn-s" id="stockExportBtn" style="font-size:12px">📤 エクスポート</button>`:""}
       <button class="btn-s" id="stockImportBtn" style="font-size:12px">📥 インポート</button>
@@ -3437,9 +3437,10 @@ async function renderDiagnosis() {
     : `<div style="font-size:12px;color:#7a8ea5">データが不足しています</div>`;
 
   app.innerHTML=`
-    <div class="header">
-      <h1 style="font-size:20px">📊 実力診断</h1>
-      <div class="sub">判定データ: ${total}問</div>
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:20px;margin:0">📊 実力診断</h1>
+      <div class="sub">判定データ: ${total}問</div></div>
+      <button class="btn-s" id="diagBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
     </div>
 
     ${total === 0 ? `<div style="text-align:center;color:#7a8ea5;padding:40px 0">
@@ -3525,7 +3526,6 @@ async function renderDiagnosis() {
       ${advice}
     </div>
 
-    <button class="btn-s" id="diagBackBtn" style="margin:20px auto;display:block">← ホームに戻る</button>
     ${total>0?`<div style="margin-top:40px;text-align:center"><button class="btn-s" id="judgeClearBtn" style="color:#f87171;font-size:11px;opacity:0.6">🗑️ 判定データをリセット</button></div>`:""}`;
 
   // Handlers
@@ -4084,7 +4084,10 @@ function renderListenSetup() {
   };
 
   app.innerHTML = `
-    <div class="header"><h1 style="font-size:20px">🎧 流し聞き設定</h1></div>
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <h1 style="font-size:20px;margin:0">🎧 流し聞き設定</h1>
+      <button class="btn-s" id="listenCancelBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
     <div style="margin:16px 0"><div style="font-size:12px;color:#a0b4c8;margin-bottom:6px">パート選択</div>
       <div style="display:flex;gap:6px">${partBtn("all","All")}${partBtn("part2","Part 2")}${partBtn("part3","Part 3")}${partBtn("part4","Part 4")}</div>
     </div>
@@ -4099,8 +4102,7 @@ function renderListenSetup() {
         ${[5,10,20,30,50,100].map(n=>`<button class="btn-s" data-lcount="${n}" style="flex:1;min-width:50px;background:${sel.count===n?"rgba(129,140,248,0.25)":"rgba(255,255,255,0.03)"};color:${sel.count===n?"#818cf8":"#94a3b8"}">${n}問</button>`).join("")}
       </div>
     </div>
-    <button class="btn-p" id="listenStartBtn" style="margin-top:20px">🎧 再生開始</button>
-    <button class="btn-s" id="listenCancelBtn" style="margin:12px auto;display:block">← ホームに戻る</button>`;
+    <button class="btn-p" id="listenStartBtn" style="margin-top:20px">🎧 再生開始</button>`;
 
   S.listenSetup = sel;
 
@@ -4133,7 +4135,7 @@ async function renderListenPlay() {
   const playlist = S.listenPlaylist || [];
   const idx = S.listenIdx || 0;
   if (idx >= playlist.length) {
-    app.innerHTML = `<div style="text-align:center;padding:40px"><h2>🎧 流し聞き完了</h2><p style="color:#a0b4c8">${playlist.length}問を再生しました</p><button class="btn-s" id="listenBackBtn" style="margin-top:16px">← ホームに戻る</button></div>`;
+    app.innerHTML = `<div style="text-align:center;padding:40px"><h2>🎧 流し聞き完了</h2><p style="color:#a0b4c8">${playlist.length}問を再生しました</p></div><div style="text-align:right;padding:0 16px"><button class="btn-s" id="listenBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button></div>`;
     $("listenBackBtn").onclick=()=>{S.listenMode=false;S.screen="home";render();};
     return;
   }
@@ -4360,8 +4362,11 @@ function scoreFromRaw(raw, isListening) {
 
 function renderMockSetup() {
   app.innerHTML = `
-    <div class="header"><h1 style="font-size:20px">🎯 実力テスト（模試）</h1>
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:20px;margin:0">🎯 実力テスト（模試）</h1>
       <div class="sub">本番形式の模試で実力を測定</div></div>
+      <button class="btn-s" id="mockBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
     <div style="margin:16px 0;padding:12px;background:rgba(251,191,36,0.05);border:1px solid rgba(251,191,36,0.15);border-radius:10px;font-size:12px;color:#fbbf24">
       📊 ジェネレーターで作成した模試データを使用します。<br>
       まずジェネレーターの「🎯 模試一括生成」で問題を作成し、JSONをここにインポートしてください。
@@ -4395,7 +4400,6 @@ function renderMockSetup() {
     <div style="display:flex;gap:6px;margin-top:12px">
       <button class="btn-s" id="mockPurgeBtn" style="flex:1;font-size:11px;color:#fbbf24">🧹 壊れた問題を浄化</button>
       <button class="btn-s" id="mockClearBtn" style="flex:1;font-size:11px;color:#f87171">🗑️ 模試データをクリア</button>
-      <button class="btn-s" id="mockBackBtn" style="flex:1">← ホームに戻る</button>
     </div>`;
 
   // Show mock data summary (uses mockStockGetAll)
@@ -4872,8 +4876,11 @@ function renderMockResult() {
   }
 
   app.innerHTML = `
-    <div class="header"><h1 style="font-size:22px">🎯 模試結果</h1>
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:22px;margin:0">🎯 模試結果</h1>
       <div class="sub">${S.mockMode === "full" ? "本番フォーマット (200問)" : "ハーフ模試 (100問)"} | ⏱️ ${mm}分</div></div>
+      <button class="btn-s" id="mockHomeBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
 
     <div style="text-align:center;margin:24px 0;padding:24px;background:linear-gradient(135deg,rgba(129,140,248,0.15),rgba(244,114,182,0.15));border-radius:16px;border:1px solid rgba(129,140,248,0.3)">
       <div style="font-size:11px;color:#a0b4c8;letter-spacing:2px">YOUR ESTIMATED SCORE</div>
@@ -4893,8 +4900,7 @@ function renderMockResult() {
       💡 これは公式問題集5の換算表に基づく目安です。実際の本番では±50点程度の誤差があります。
     </div>
 
-    <button class="btn-p" id="mockRetryBtn" style="margin-top:16px">🔄 もう一度</button>
-    <button class="btn-s" id="mockHomeBtn" style="margin:12px auto;display:block">← ホームに戻る</button>`;
+    <button class="btn-p" id="mockRetryBtn" style="margin-top:16px">🔄 もう一度</button>`;
 
   $("mockRetryBtn").onclick = () => { S.screen = "mockSetup"; render(); };
   $("mockHomeBtn").onclick = () => { S.screen = "home"; render(); };
@@ -4930,7 +4936,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.20a · doc header + translation UI + mock fix + import fix · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.20b · UI overhaul + home import/export · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
@@ -4955,9 +4961,14 @@ function renderHome() {
     </div>
     <div id="stockInfo" style="text-align:center;font-size:11px;color:#7a8ea5;margin-top:4px"></div>
     <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
-      <button class="btn-s" id="diagnosisBtn">📊 実力診断</button>
-      <button class="btn-s" id="vocabBtn">📝 単語帳</button>
+      <button class="btn-s" id="diagnosisBtn" style="flex:1;padding:14px 0;font-size:15px;font-weight:700;background:rgba(74,222,128,0.08);border-color:rgba(74,222,128,0.25);color:#4ade80">📊 実力診断</button>
+      <button class="btn-s" id="vocabBtn" style="flex:1;padding:14px 0;font-size:15px;font-weight:700;background:rgba(129,140,248,0.08);border-color:rgba(129,140,248,0.25);color:#7b9cf7">📝 単語帳</button>
     </div>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:10px">
+      <button class="btn-s" id="homeExportBtn" style="font-size:12px;color:#60a5fa">📤 エクスポート</button>
+      <button class="btn-s" id="homeImportBtn" style="font-size:12px;color:#4ade80">📥 インポート</button>
+    </div>
+    <input type="file" id="homeFileInput" accept=".json" multiple style="display:none">
     <div style="text-align:center;margin-top:14px">
       <button class="btn-s" id="changeKey">🔑 APIキー変更</button>
     </div>`;
@@ -5000,6 +5011,30 @@ function renderHome() {
     loadNewSet();
   };
   $("diagnosisBtn").onclick=()=>{ S.screen="diagnosis"; render(); };
+  // Home export: go to stock select (where full export UI is)
+  const heb=$("homeExportBtn"); if(heb) heb.onclick=async()=>{
+    S.screen="stockSelect"; render();
+  };
+  // Home import
+  const hib=$("homeImportBtn"); if(hib) hib.onclick=()=>$("homeFileInput").click();
+  const hfi=$("homeFileInput"); if(hfi) hfi.onchange=async(e)=>{
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    hib.textContent=`⏳ ${files.length}ファイル...`;
+    const results = [];
+    for (const f of files) {
+      try {
+        const r = await dataImportSmart(f);
+        results.push(`${f.name}: ${r.type} ${r.count}件追加${r.skipped?` (${r.skipped}件スキップ)`:""}`);
+      } catch(err) {
+        results.push(`${f.name}: ❌ ${err.message}`);
+      }
+    }
+    alert(`インポート結果:\n${results.join("\n")}`);
+    hib.textContent="📥 インポート";
+    hfi.value="";
+    render();
+  };
   const gsb=$("graphicStockBtn"); if(gsb)gsb.onclick=()=>{
     if(!S.level)return;
     // Collect graphic types across Part 3, 4, 7
