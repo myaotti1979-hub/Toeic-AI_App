@@ -1982,9 +1982,9 @@ async function dataImportSmart(file, onProgress) {
     return {type:"judge", count: added, total: (parsed.data||[]).length};
   }
 
-  // Stock file: [...] — potentially huge, use streaming parser
+  // Stock file: [...] — try streaming, fall back to classic
   if (trimmed.startsWith("[")) {
-    const r = await stockImportStream(file, onProgress);
+    const r = await stockImport(file);
     return {type:"stock", ...r};
   }
 
@@ -2088,7 +2088,61 @@ async function stockImportStream(file, onProgress) {
 
 // Legacy stockImport (kept for backward compatibility with existing import button)
 async function stockImport(file) {
-  return stockImportStream(file);
+  // Try streaming first, fall back to classic parse
+  try {
+    const r = await stockImportStream(file);
+    if (r.count > 0 || r.skipped > 0) return r;
+    // Streaming returned 0 — might be a parser issue, try classic
+    console.warn("[IMPORT] Streaming returned 0, trying classic parse...");
+  } catch(e) {
+    console.warn("[IMPORT] Streaming failed, falling back:", e);
+  }
+  return stockImportClassic(file);
+}
+
+// Classic import: loads entire file into memory (works on all browsers)
+async function stockImportClassic(file) {
+  const text = await file.text();
+  const items = JSON.parse(text);
+  if (!Array.isArray(items)) throw new Error("無効なファイル形式");
+  const db = await openStockDB();
+  const existing = await new Promise((resolve, reject) => {
+    const set = new Set();
+    const tx = db.transaction("questions","readonly");
+    const req = tx.objectStore("questions").openCursor();
+    req.onsuccess = (e) => {
+      const c = e.target.result;
+      if (c) { set.add(c.value.createdAt); c.continue(); }
+      else resolve(set);
+    };
+    req.onerror = () => reject(req.error);
+  });
+  let count = 0, skipped = 0, vocabAdded = 0, vocabTotal = 0, withVocab = 0;
+  const vocabBefore = (await vocabGetAll()).length;
+  for (const item of items) {
+    if (!item.part || !item.qSet) continue;
+    const ts = item.createdAt || Date.now();
+    if (existing.has(ts)) { skipped++; continue; }
+    existing.add(ts);
+    const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts};
+    if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
+    else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("questions","readwrite");
+      tx.objectStore("questions").add(data);
+      tx.oncomplete = () => { count++; resolve(); };
+      tx.onerror = () => reject(tx.error);
+    });
+    const vocab = item.qSet.vocab;
+    if (vocab && Array.isArray(vocab) && vocab.length > 0) {
+      withVocab++;
+      vocabTotal += vocab.length;
+      await vocabAutoSave(vocab, item.part).catch(()=>{});
+    }
+  }
+  const vocabAfter = (await vocabGetAll()).length;
+  vocabAdded = vocabAfter - vocabBefore;
+  return {count, skipped, vocabAdded, withVocab, vocabTotal};
 }
 
 async function stockCount() {
