@@ -1982,9 +1982,9 @@ async function dataImportSmart(file, onProgress) {
     return {type:"judge", count: added, total: (parsed.data||[]).length};
   }
 
-  // Stock file: [...] — try streaming, fall back to classic
+  // Stock file: [...] — use classic parser
   if (trimmed.startsWith("[")) {
-    const r = await stockImport(file);
+    const r = await stockImportClassic(file);
     return {type:"stock", ...r};
   }
 
@@ -2086,17 +2086,9 @@ async function stockImportStream(file, onProgress) {
   return {count, skipped, vocabAdded, withVocab, vocabTotal};
 }
 
-// Legacy stockImport (kept for backward compatibility with existing import button)
+// Legacy stockImport — use classic (reliable) parser
+// Streaming parser is disabled until fully debugged
 async function stockImport(file) {
-  // Try streaming first, fall back to classic parse
-  try {
-    const r = await stockImportStream(file);
-    if (r.count > 0 || r.skipped > 0) return r;
-    // Streaming returned 0 — might be a parser issue, try classic
-    console.warn("[IMPORT] Streaming returned 0, trying classic parse...");
-  } catch(e) {
-    console.warn("[IMPORT] Streaming failed, falling back:", e);
-  }
   return stockImportClassic(file);
 }
 
