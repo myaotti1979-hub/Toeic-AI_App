@@ -1854,12 +1854,18 @@ async function updateStockStreak(id, correct) {
 function downloadFile(data, filename) {
   const file = new File([data], filename, {type:"application/json"});
   if (navigator.canShare && navigator.canShare({files:[file]})) {
-    navigator.share({files:[file], title:filename}).catch(()=>{});
+    navigator.share({files:[file], title:filename}).catch((e)=>{
+      if (e.name === "AbortError") return;
+      console.warn("[DOWNLOAD] Share failed, using download:", e);
+      const url = URL.createObjectURL(file);
+      const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    });
     return;
   }
   const url = URL.createObjectURL(file);
   const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(()=>URL.revokeObjectURL(url), 5000);
 }
 
 async function stockExport() {
@@ -1913,11 +1919,18 @@ async function stockExportPart(partId, onProgress) {
 
   if (navigator.canShare && navigator.canShare({files:[file]})) {
     try { await navigator.share({files:[file], title:filename}); }
-    catch(e) { if (e.name !== "AbortError") throw e; }
+    catch(e) {
+      if (e.name === "AbortError") return {count: ids.length, sizeMB: (totalSize / 1024 / 1024).toFixed(1)};
+      // Share failed (file too large?) — fallback to download
+      console.warn("[EXPORT] Share failed, falling back to download:", e);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    }
   } else {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
   }
   return {count: ids.length, sizeMB: (totalSize / 1024 / 1024).toFixed(1)};
 }
@@ -2984,7 +2997,7 @@ async function renderStockSelect() {
           el.textContent = `⏳ ${Math.round(done/total*100)}%...`;
         });
         if (r) el.textContent = `✅ ${r.count}問 (${r.sizeMB}MB)`;
-      } catch(e) { el.textContent="❌ 失敗"; console.error(e); }
+      } catch(e) { el.textContent="❌ 失敗"; console.error("[EXPORT]", partId, e.message || e); alert(`エクスポート失敗: ${e.message || e}`); }
     };
   });
   // 単語帳エクスポート
@@ -4936,7 +4949,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.20c · mock audio export fix + UI overhaul · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22a · export share fallback + mock gap-fill · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>

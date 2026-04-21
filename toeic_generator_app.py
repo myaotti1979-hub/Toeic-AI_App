@@ -2145,7 +2145,7 @@ with st.sidebar:
                         st.session_state.pop("_html_export", None)
 
     st.divider()
-    st.caption("v2026.04.20c · mock audio export fix + UI overhaul · 303 types")
+    st.caption("v2026.04.20c · mock audio fix + gap-fill + UI overhaul · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2735,6 +2735,76 @@ with tab_gen:
         prog.progress(1.0)
         stock_after = len(st.session_state.mock_results)
         added = stock_after - stock_before
+
+        # ── Gap-fill: validate batch and generate missing parts ──
+        MAX_FILL_ROUNDS = 3
+        for fill_round in range(MAX_FILL_ROUNDS):
+            # Count what we actually have in this batch
+            batch_items = [r for r in st.session_state.mock_results if r.get("batchId") == batch_id]
+            got_per_part = {}
+            for r in batch_items:
+                p = r.get("part","")
+                nq = len(r.get("qSet",{}).get("questions",[]))
+                got_per_part[p] = got_per_part.get(p, 0) + nq
+            # Compare to targets
+            target_dist = {p: max(1, round(q * scale)) for p, q in MOCK_FULL_DIST.items()}
+            gaps = {}
+            for p, target_q in target_dist.items():
+                actual_q = got_per_part.get(p, 0)
+                if actual_q < target_q:
+                    gaps[p] = target_q - actual_q
+            if not gaps:
+                break  # All parts complete
+            gap_info = ", ".join(f"{p}: {q}問不足" for p, q in sorted(gaps.items()))
+            stat.info(f"🔄 補充ラウンド {fill_round+1}/{MAX_FILL_ROUNDS}: {gap_info}")
+            print(f"\n[MOCK FILL {fill_round+1}] Gaps: {gaps}", flush=True)
+
+            for gap_part, gap_q in gaps.items():
+                gap_sets = max(1, -(-gap_q // QS_PER_SET[gap_part]))
+                sel = resolve_model_for(gap_part)
+                if not sel: continue
+                engine, model = sel["engine"], sel["model"]
+                # Pick level: intermediate
+                lv = "intermediate"
+                actual_part = gap_part
+                pool = TYPES.get(gap_part, [])
+                n_pool = [t for t in pool if not t.get("type","").startswith("graphic_")]
+                if not n_pool: n_pool = pool
+                type_q = list(n_pool); random.shuffle(type_q)
+
+                for si in range(gap_sets):
+                    if not type_q:
+                        type_q = list(n_pool); random.shuffle(type_q)
+                    to = type_q.pop(0)
+                    tt = to.get("type","?")
+                    actual_part = gap_part
+                    if gap_part == "part3_3p": actual_part = "part3_3p"
+                    elif gap_part in ("part7s","part7d","part7t"): actual_part = gap_part
+
+                    do_tts = tts_eng != "off"
+                    is_g = tt.startswith("graphic_")
+                    do_img = force_image and (gap_part == "part1" or is_g)
+                    idx_global += 1
+                    stat.info(f"🔄 補充: {gap_part}/{lv} ({tt})")
+                    print(f"[MOCK FILL] {gap_part}/{lv} ({tt})", flush=True)
+                    try:
+                        item = generate_one_question(lv, actual_part, to, engine, model, url, api_key, do_tts, do_img, tts_eng, is_g, idx_seed=idx_global)
+                        is_listening_q = actual_part in ("part1","part2","part3","part3_3p","part4")
+                        ok, reason = validate_stock_item(item, require_tts=(is_listening_q and do_tts), require_image_for_part1=(actual_part=="part1" and do_img), require_image_for_graphic=(is_g and do_img), require_vocab_audio=False, strict_vocab=False)
+                        if not ok:
+                            print(f"[MOCK FILL SKIP] {gap_part}: {reason}", flush=True)
+                            continue
+                        item["mock"] = True; item["batchId"] = batch_id; item["batchLabel"] = batch_label
+                        st.session_state.mock_results.append(item)
+                        save_mock_batch(batch_id, st.session_state.mock_results)
+                        gen += 1
+                        log.success(f"✅ 補充 {gap_part}/{lv} ({tt})")
+                    except Exception as e:
+                        print(f"[MOCK FILL ERR] {gap_part}: {e}", flush=True)
+
+        # Final summary
+        stock_after = len(st.session_state.mock_results)
+        added = stock_after - stock_before
         # Graphic summary
         g_summary = ", ".join(f"{p}: {graphic_got.get(p,0)}/{graphic_target.get(p,0)}" for p in sorted(graphic_target.keys()) if graphic_target[p] > 0)
         if added == remaining_total:
@@ -2743,6 +2813,25 @@ with tab_gen:
             stat.warning(f"⚠️ 模試生成: {added}/{remaining_total}セット追加 (合計{stock_after}セット), {fail}回のリトライ")
         if g_summary:
             log.info(f"📊 Graphic問題: {g_summary}")
+        # Final per-part validation
+        batch_items = [r for r in st.session_state.mock_results if r.get("batchId") == batch_id]
+        got_per_part = {}
+        for r in batch_items:
+            p = r.get("part","")
+            nq = len(r.get("qSet",{}).get("questions",[]))
+            got_per_part[p] = got_per_part.get(p, 0) + nq
+        target_dist = {p: max(1, round(q * scale)) for p, q in MOCK_FULL_DIST.items()}
+        summary_lines = []
+        all_ok = True
+        for p in ["part1","part2","part3","part3_3p","part4","part5","part6","part7s","part7d","part7t"]:
+            t = target_dist.get(p, 0)
+            g = got_per_part.get(p, 0)
+            status = "✅" if g >= t else "❌"
+            if g < t: all_ok = False
+            summary_lines.append(f"{status} {p}: {g}/{t}問")
+        total_got = sum(got_per_part.values())
+        total_target = sum(target_dist.values())
+        log.info(f"📋 パート別充足状況 ({total_got}/{total_target}問):\n" + "\n".join(summary_lines))
 
     # Mock results summary
     if st.session_state.get("mock_results"):
