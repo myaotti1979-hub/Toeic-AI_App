@@ -2145,7 +2145,7 @@ with st.sidebar:
                         st.session_state.pop("_html_export", None)
 
     st.divider()
-    st.caption("v2026.04.20a · doc header + translation UI + mock fix + import fix · 303 types")
+    st.caption("v2026.04.20c · mock audio export fix + UI overhaul · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2772,7 +2772,15 @@ with tab_gen:
                 st.caption(part_str)
                 bc1, bc2, bc3 = st.columns(3)
                 with bc1:
-                    batch_json = json.dumps(items, ensure_ascii=False, indent=None)
+                    # Restore audio before export
+                    full_items = []
+                    for r in items:
+                        full = json.loads(json.dumps(r, ensure_ascii=False))
+                        _restore_audio(full)
+                        full.pop("_hasAudio", None)
+                        full.pop("_hasImage", None)
+                        full_items.append(full)
+                    batch_json = json.dumps(full_items, ensure_ascii=False, indent=None)
                     st.download_button(
                         "📥 エクスポート",
                         data=batch_json,
@@ -2781,6 +2789,7 @@ with tab_gen:
                         use_container_width=True,
                         key=f"exp_{bid}"
                     )
+                    del full_items, batch_json
                 with bc2:
                     if st.button(f"🗑️ この模試を削除", key=f"del_{bid}", use_container_width=True):
                         st.session_state.mock_results = [r for r in mock if r.get("batchId","legacy") != bid]
@@ -2791,7 +2800,15 @@ with tab_gen:
         st.divider()
         gc1, gc2 = st.columns(2)
         with gc1:
-            all_json = json.dumps(mock, ensure_ascii=False, indent=None)
+            # Restore audio for all mock items before export
+            all_full = []
+            for r in mock:
+                full = json.loads(json.dumps(r, ensure_ascii=False))
+                _restore_audio(full)
+                full.pop("_hasAudio", None)
+                full.pop("_hasImage", None)
+                all_full.append(full)
+            all_json = json.dumps(all_full, ensure_ascii=False, indent=None)
             st.download_button(
                 "📥 全模試エクスポート",
                 data=all_json,
@@ -2799,6 +2816,7 @@ with tab_gen:
                 mime="application/json",
                 use_container_width=True
             )
+            del all_full, all_json
         with gc2:
             if st.button("🗑️ 全模試ストックをクリア", use_container_width=True):
                 st.session_state.mock_results = []

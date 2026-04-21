@@ -4599,7 +4599,7 @@ async function mockStockImport(items) {
   for (const item of items) {
     if (!item.part || !item.qSet) { rejected++; continue; }
     // Reject listening items without audio
-    const isListening = ["part1","part2","part3","part4"].includes(item.part);
+    const isListening = ["part1","part2","part3","part3_3p","part4"].includes(item.part);
     if (isListening && !item.audioOpus && !item.audioPcm) {
       console.warn("[MOCK IMPORT] Rejecting listening item without audio:", item.part);
       rejected++; continue;
@@ -4936,7 +4936,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.20b · UI overhaul + home import/export · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.20c · mock audio export fix + UI overhaul · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
