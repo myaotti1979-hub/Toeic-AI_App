@@ -3790,16 +3790,20 @@ async function renderDiagnosis() {
       <button class="btn-s" id="applyLevelBtn" style="font-size:12px;color:#fbbf24">💡 レベルを「${suggestedLabel}」に変更する</button>
     </div>` : ""}
 
-    <div style="margin-top:16px">
-      <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">パート別正答率</div>
+    <details open style="margin-top:16px">
+      <summary style="font-size:13px;font-weight:700;color:#dce6f0;cursor:pointer;margin-bottom:8px">📊 パート別分析</summary>
       ${partBars}
-      ${vocabSection}
-    </div>
+      <div style="margin-top:12px">
+        <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">📕 弱点タイプ（正答率の低い順）</div>
+        ${weakList}
+      </div>
+    </details>
 
-    <div style="margin-top:16px">
-      <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">📕 弱点タイプ（正答率の低い順）</div>
-      ${weakList}
-    </div>
+    <details open style="margin-top:16px">
+      <summary style="font-size:13px;font-weight:700;color:#7b9cf7;cursor:pointer;margin-bottom:8px">📝 単語分析</summary>
+      ${vocabSection}
+      ${vocabDbSection}
+    </details>
 
     `}
 
