@@ -4425,7 +4425,7 @@ function renderMockSetup() {
       counts[np] = (counts[np]||0) + 1;
     });
 
-    // ── Batch selector ──
+    // ── Batch selector + per-batch management ──
     const batches = {};
     all.forEach(s => {
       const bid = s.batchId || "legacy";
@@ -4434,20 +4434,28 @@ function renderMockSetup() {
     });
     const batchIds = Object.keys(batches);
     let batchHtml = "";
-    if (batchIds.length > 1) {
-      batchHtml += "<div style='font-size:13px;color:#a0b4c8;margin-bottom:6px'>📋 模試バッチを選択</div>";
-      batchHtml += "<select id='mockBatchSel' style='width:100%;padding:10px;background:#243040;color:#dce6f0;border:1px solid #3a4d63;border-radius:8px;font-size:13px'>";
-      batchHtml += `<option value="__all__">全データ (${all.length}セット)</option>`;
+    if (batchIds.length >= 1 && all.length > 0) {
+      batchHtml += "<div style='font-size:13px;color:#a0b4c8;margin-bottom:6px'>📋 模試バッチ</div>";
+      // Batch selector for test start
+      if (batchIds.length > 1) {
+        batchHtml += "<select id='mockBatchSel' style='width:100%;padding:10px;background:#243040;color:#dce6f0;border:1px solid #3a4d63;border-radius:8px;font-size:13px;margin-bottom:8px'>";
+        batchHtml += `<option value="__all__">全データ (${all.length}セット)</option>`;
+        for (const bid of batchIds) {
+          const b = batches[bid];
+          const nq = b.items.reduce((s,r) => s + (r.qSet?.questions?.length||0), 0);
+          batchHtml += `<option value="${bid}">${b.label} — ${nq}問 (${b.items.length}セット)</option>`;
+        }
+        batchHtml += "</select>";
+      }
+      // Per-batch list with delete buttons
       for (const bid of batchIds) {
         const b = batches[bid];
         const nq = b.items.reduce((s,r) => s + (r.qSet?.questions?.length||0), 0);
-        batchHtml += `<option value="${bid}">${b.label} — ${nq}問 (${b.items.length}セット)</option>`;
+        batchHtml += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:4px;font-size:12px">
+          <span style="color:#dce6f0">${esc(b.label)} — ${nq}問 (${b.items.length}セット)</span>
+          <button class="btn-s" data-del-mock-batch="${bid}" style="font-size:10px;padding:3px 8px;color:#f87171">🗑️ 削除</button>
+        </div>`;
       }
-      batchHtml += "</select>";
-    } else if (batchIds.length === 1 && batchIds[0] !== "legacy") {
-      const b = batches[batchIds[0]];
-      const nq = b.items.reduce((s,r) => s + (r.qSet?.questions?.length||0), 0);
-      batchHtml += `<div style='font-size:12px;color:#a0b4c8;padding:8px;background:#243040;border-radius:8px'>📋 ${b.label} — ${nq}問</div>`;
     }
     $("mockBatchSelect").innerHTML = batchHtml;
 
@@ -4577,6 +4585,16 @@ function renderMockSetup() {
     await mockStockClear();
     render();
   };
+  // Per-batch delete
+  document.querySelectorAll("[data-del-mock-batch]").forEach(btn => {
+    btn.onclick = async () => {
+      const bid = btn.dataset.delMockBatch;
+      const label = btn.parentElement.querySelector("span").textContent;
+      if (!confirm(`「${label}」を削除しますか？`)) return;
+      await mockStockDeleteBatch(bid);
+      render();
+    };
+  });
   $("mockBackBtn").onclick = () => { S.screen = "home"; render(); };
 }
 
@@ -4654,6 +4672,23 @@ async function mockStockClear() {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+async function mockStockDeleteBatch(batchId) {
+  const db = await openMockDB();
+  const all = await mockStockGetAll();
+  let deleted = 0;
+  for (const item of all) {
+    if ((item.batchId || "legacy") === batchId) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("mock","readwrite");
+        tx.objectStore("mock").delete(item.id);
+        tx.oncomplete = () => { deleted++; resolve(); };
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+  }
+  console.log(`[MOCK] Deleted batch ${batchId}: ${deleted} items`);
+  return deleted;
 }
 
 function renderMockTest() {
@@ -4949,7 +4984,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22a · export share fallback + mock gap-fill · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22b · scenario diversity + batch delete + export fix · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
