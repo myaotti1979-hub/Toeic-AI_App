@@ -2244,7 +2244,7 @@ with st.sidebar:
                         st.session_state.pop("_html_export", None)
 
     st.divider()
-    st.caption("v2026.04.22b · scenario diversity (P3/5/6/7) + mock gap-fill · 303 types")
+    st.caption("v2026.04.22e · mock gap-fill fix + scenario diversity + vocab judge · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2843,7 +2843,16 @@ with tab_gen:
             got_per_part = {}
             for r in batch_items:
                 p = r.get("part","")
-                nq = len(r.get("qSet",{}).get("questions",[]))
+                qs_r = r.get("qSet", {})
+                # Resolve Part 7 sub-type from qSet flags (normalize_set sets part="part7")
+                if p == "part7":
+                    if qs_r.get("isTriple"): p = "part7t"
+                    elif qs_r.get("isDouble"): p = "part7d"
+                    else: p = "part7s"
+                # Resolve Part 3 3-person (normalize_set may set part="part3")
+                if p == "part3" and len(qs_r.get("speakers",[])) >= 3:
+                    p = "part3_3p"
+                nq = len(qs_r.get("questions",[]))
                 got_per_part[p] = got_per_part.get(p, 0) + nq
             # Compare to targets
             target_dist = {p: max(1, round(q * scale)) for p, q in MOCK_FULL_DIST.items()}
@@ -2857,6 +2866,7 @@ with tab_gen:
             gap_info = ", ".join(f"{p}: {q}問不足" for p, q in sorted(gaps.items()))
             stat.info(f"🔄 補充ラウンド {fill_round+1}/{MAX_FILL_ROUNDS}: {gap_info}")
             print(f"\n[MOCK FILL {fill_round+1}] Gaps: {gaps}", flush=True)
+            print(f"[MOCK FILL {fill_round+1}] got_per_part: {dict(got_per_part)}", flush=True)
 
             for gap_part, gap_q in gaps.items():
                 gap_sets = max(1, -(-gap_q // QS_PER_SET[gap_part]))
@@ -2880,7 +2890,7 @@ with tab_gen:
                     if gap_part == "part3_3p": actual_part = "part3_3p"
                     elif gap_part in ("part7s","part7d","part7t"): actual_part = gap_part
 
-                    do_tts = tts_eng != "off"
+                    do_tts = tts_eng != "off" and gap_part in ("part1","part2","part3","part3_3p","part4")
                     is_g = tt.startswith("graphic_")
                     do_img = force_image and (gap_part == "part1" or is_g)
                     idx_global += 1
@@ -2917,7 +2927,14 @@ with tab_gen:
         got_per_part = {}
         for r in batch_items:
             p = r.get("part","")
-            nq = len(r.get("qSet",{}).get("questions",[]))
+            qs_r = r.get("qSet", {})
+            if p == "part7":
+                if qs_r.get("isTriple"): p = "part7t"
+                elif qs_r.get("isDouble"): p = "part7d"
+                else: p = "part7s"
+            if p == "part3" and len(qs_r.get("speakers",[])) >= 3:
+                p = "part3_3p"
+            nq = len(qs_r.get("questions",[]))
             got_per_part[p] = got_per_part.get(p, 0) + nq
         target_dist = {p: max(1, round(q * scale)) for p, q in MOCK_FULL_DIST.items()}
         summary_lines = []
