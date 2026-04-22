@@ -4408,11 +4408,6 @@ function renderMockSetup() {
         <input type="checkbox" id="mockTimerToggle" ${S.mockTimerEnabled?"checked":""} style="accent-color:#818cf8"> ⏱️ 制限時間モード
       </label>
       <span style="font-size:11px;color:#7a8ea5">(本番と同じ時間配分)</span>
-    </div>
-
-    <div style="display:flex;gap:6px;margin-top:12px">
-      <button class="btn-s" id="mockPurgeBtn" style="flex:1;font-size:11px;color:#fbbf24">🧹 壊れた問題を浄化</button>
-      <button class="btn-s" id="mockClearBtn" style="flex:1;font-size:11px;color:#f87171">🗑️ 模試データをクリア</button>
     </div>`;
 
   // Show mock data summary (uses mockStockGetAll)
@@ -4435,9 +4430,9 @@ function renderMockSetup() {
     const batchIds = Object.keys(batches);
     let batchHtml = "";
     if (batchIds.length >= 1 && all.length > 0) {
-      batchHtml += "<div style='font-size:13px;color:#a0b4c8;margin-bottom:6px'>📋 模試バッチ</div>";
       // Batch selector for test start
       if (batchIds.length > 1) {
+        batchHtml += "<div style='font-size:13px;color:#a0b4c8;margin-bottom:6px'>📋 テストに使うバッチ</div>";
         batchHtml += "<select id='mockBatchSel' style='width:100%;padding:10px;background:#243040;color:#dce6f0;border:1px solid #3a4d63;border-radius:8px;font-size:13px;margin-bottom:8px'>";
         batchHtml += `<option value="__all__">全データ (${all.length}セット)</option>`;
         for (const bid of batchIds) {
@@ -4447,15 +4442,20 @@ function renderMockSetup() {
         }
         batchHtml += "</select>";
       }
-      // Per-batch list with delete buttons
+      // Per-batch list with delete — inside collapsible
+      batchHtml += `<details style="margin-top:8px"><summary style="font-size:12px;color:#f87171;cursor:pointer">🗑️ バッチ管理・削除</summary><div style="margin-top:6px">`;
       for (const bid of batchIds) {
         const b = batches[bid];
         const nq = b.items.reduce((s,r) => s + (r.qSet?.questions?.length||0), 0);
         batchHtml += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:4px;font-size:12px">
           <span style="color:#dce6f0">${esc(b.label)} — ${nq}問 (${b.items.length}セット)</span>
-          <button class="btn-s" data-del-mock-batch="${bid}" style="font-size:10px;padding:3px 8px;color:#f87171">🗑️ 削除</button>
+          <button class="btn-s" data-del-mock-batch="${bid}" style="font-size:10px;padding:3px 8px;color:#f87171">🗑️</button>
         </div>`;
       }
+      batchHtml += `<div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn-s" id="mockPurgeBtn" style="flex:1;font-size:11px;color:#fbbf24">🧹 壊れた問題を浄化</button>
+        <button class="btn-s" id="mockClearBtn" style="flex:1;font-size:11px;color:#f87171">🗑️ 全データクリア</button>
+      </div></div></details>`;
     }
     $("mockBatchSelect").innerHTML = batchHtml;
 
@@ -4484,6 +4484,45 @@ function renderMockSetup() {
       html += "<div style='font-size:10px;color:#7a8ea5;margin-top:6px'>緑=フル可 / 黄=ハーフ可 / 赤=不足</div>";
     }
     $("mockStockSummary").innerHTML = html;
+
+    // Bind batch management handlers (elements now in DOM)
+    document.querySelectorAll("[data-del-mock-batch]").forEach(btn => {
+      btn.onclick = async () => {
+        const bid = btn.dataset.delMockBatch;
+        const label = btn.parentElement.querySelector("span").textContent;
+        if (!confirm(`「${label}」を削除しますか？`)) return;
+        await mockStockDeleteBatch(bid);
+        render();
+      };
+    });
+    const _purgeBtn = $("mockPurgeBtn");
+    if (_purgeBtn) _purgeBtn.onclick = async () => {
+      if (!confirm("音声や画像が欠損した模試問題を削除します。よろしいですか？")) return;
+      try {
+        const _all = await mockStockGetAll();
+        const _db = await openMockDB();
+        let purged = 0;
+        for (const item of _all) {
+          const v = validateStockItem(item);
+          if (!v.ok) {
+            await new Promise((resolve, reject) => {
+              const tx = _db.transaction("mock","readwrite");
+              tx.objectStore("mock").delete(item.id);
+              tx.oncomplete = () => { purged++; resolve(); };
+              tx.onerror = () => reject(tx.error);
+            });
+          }
+        }
+        alert(purged > 0 ? `🧹 ${purged}件削除` : "✅ 壊れた問題なし");
+        render();
+      } catch(err) { alert("浄化失敗: "+err.message); }
+    };
+    const _clearBtn = $("mockClearBtn");
+    if (_clearBtn) _clearBtn.onclick = async () => {
+      if (!confirm("模試データを全て削除しますか？")) return;
+      await mockStockClear();
+      render();
+    };
   })();
 
   // File import
@@ -4557,44 +4596,6 @@ function renderMockSetup() {
     };
   });
 
-  $("mockPurgeBtn").onclick = async () => {
-    if (!confirm("音声や画像が欠損した模試問題を削除します。よろしいですか？")) return;
-    try {
-      const all = await mockStockGetAll();
-      const db = await openMockDB();
-      let purged = 0;
-      for (const item of all) {
-        const v = validateStockItem(item);
-        if (!v.ok) {
-          console.warn(`[MOCK PURGE] id=${item.id} (${item.part}): ${v.reason}`);
-          await new Promise((resolve, reject) => {
-            const tx = db.transaction("mock","readwrite");
-            tx.objectStore("mock").delete(item.id);
-            tx.oncomplete = () => { purged++; resolve(); };
-            tx.onerror = () => reject(tx.error);
-          });
-        }
-      }
-      if (purged > 0) alert(`🧹 ${purged}件の壊れた模試問題を削除しました`);
-      else alert("✅ 壊れた問題はありませんでした");
-      render();
-    } catch(err) { alert("浄化失敗: "+err.message); }
-  };
-  $("mockClearBtn").onclick = async () => {
-    if (!confirm("模試データを全て削除しますか？")) return;
-    await mockStockClear();
-    render();
-  };
-  // Per-batch delete
-  document.querySelectorAll("[data-del-mock-batch]").forEach(btn => {
-    btn.onclick = async () => {
-      const bid = btn.dataset.delMockBatch;
-      const label = btn.parentElement.querySelector("span").textContent;
-      if (!confirm(`「${label}」を削除しますか？`)) return;
-      await mockStockDeleteBatch(bid);
-      render();
-    };
-  });
   $("mockBackBtn").onclick = () => { S.screen = "home"; render(); };
 }
 
