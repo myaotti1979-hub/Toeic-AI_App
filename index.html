@@ -3392,6 +3392,8 @@ async function renderDiagnosis() {
     const vCorrect = vocabHistory.filter(h=>h.correct).length;
     const vRate = Math.round(vCorrect/vocabHistory.length*100);
     const vColor = vRate >= 80 ? "#4ade80" : vRate >= 60 ? "#fbbf24" : "#f87171";
+
+    // By mode
     const byMode = {};
     vocabHistory.forEach(h => {
       const m = h.type || "en_ja";
@@ -3399,23 +3401,285 @@ async function renderDiagnosis() {
       byMode[m].total++;
       if (h.correct) byMode[m].correct++;
     });
-    const modeLabels = {"en_ja":"英→日","ja_en":"日→英","pos_quiz":"品詞あて"};
-    const modeStats = Object.entries(byMode).map(([m,d]) => {
+    const modeLabels = {"en_ja":"🇬🇧→🇯🇵 英→日","ja_en":"🇯🇵→🇬🇧 日→英","pos_quiz":"📝 品詞あて"};
+    let modeBars = "";
+    for (const [m, d] of Object.entries(byMode)) {
       const r = Math.round(d.correct/d.total*100);
       const c = r >= 80 ? "#4ade80" : r >= 60 ? "#fbbf24" : "#f87171";
-      return `<span style="font-size:11px;color:${c}">${modeLabels[m]||m} ${r}%(${d.total})</span>`;
-    }).join(" / ");
-    vocabSection = `<div style="margin-top:8px;padding:8px 12px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.15);border-radius:8px">
-      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-        <span style="color:#7b9cf7;font-weight:600">📝 単語クイズ</span>
-        <span style="color:${vColor};font-weight:600">${vRate}% (${vCorrect}/${vocabHistory.length})</span>
+      modeBars += `<div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+          <span style="color:#cbd5e1">${modeLabels[m]||m}</span>
+          <span style="color:${c};font-weight:600">${r}% (${d.correct}/${d.total})</span>
+        </div>
+        <div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${r}%;background:${c}"></div>
+        </div>
+      </div>`;
+    }
+
+    // By level
+    const byLvl = {};
+    vocabHistory.forEach(h => {
+      const lv = h.level || "intermediate";
+      if (!byLvl[lv]) byLvl[lv] = {correct:0, total:0};
+      byLvl[lv].total++;
+      if (h.correct) byLvl[lv].correct++;
+    });
+    const lvLabels = {"beginner":"🟢 A基礎","intermediate":"🟡 B中級","advanced":"🔴 C上級"};
+    let lvBars = "";
+    for (const lv of ["beginner","intermediate","advanced"]) {
+      const d = byLvl[lv];
+      if (!d) continue;
+      const r = Math.round(d.correct/d.total*100);
+      const c = r >= 80 ? "#4ade80" : r >= 60 ? "#fbbf24" : "#f87171";
+      lvBars += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="font-size:11px;color:#a0b4c8;min-width:70px">${lvLabels[lv]||lv}</span>
+        <div style="flex:1;height:4px;background:#1e293b;border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${r}%;background:${c}"></div>
+        </div>
+        <span style="font-size:11px;color:${c};min-width:55px;text-align:right">${r}%(${d.total})</span>
+      </div>`;
+    }
+
+    // 7-day daily chart
+    const now = Date.now(), oneDay = 24*60*60*1000;
+    let dayChartHtml = "";
+    const dayData = [];
+    for (let d = 6; d >= 0; d--) {
+      const dayStart = now - (d+1)*oneDay, dayEnd = now - d*oneDay;
+      const dayItems = vocabHistory.filter(h => h.timestamp >= dayStart && h.timestamp < dayEnd);
+      const dayCorrect = dayItems.filter(h => h.correct).length;
+      const dayRate = dayItems.length > 0 ? Math.round(dayCorrect/dayItems.length*100) : -1;
+      const label = d === 0 ? "今日" : d === 1 ? "昨日" : `${d}日前`;
+      dayData.push({label, rate: dayRate, total: dayItems.length});
+    }
+    const maxTotal = Math.max(...dayData.map(d=>d.total), 1);
+    let chartBars = dayData.map(d => {
+      if (d.rate < 0) return `<div style="text-align:center;flex:1"><div style="height:60px;display:flex;align-items:flex-end;justify-content:center"><div style="width:16px;height:2px;background:#334155;border-radius:1px"></div></div><div style="font-size:9px;color:#475569;margin-top:2px">${d.label}</div></div>`;
+      const h = Math.max(4, Math.round(d.total/maxTotal*55));
+      const c = d.rate >= 80 ? "#4ade80" : d.rate >= 60 ? "#fbbf24" : "#f87171";
+      return `<div style="text-align:center;flex:1"><div style="height:60px;display:flex;align-items:flex-end;justify-content:center"><div style="width:16px;height:${h}px;background:${c};border-radius:2px 2px 0 0;position:relative" title="${d.rate}% (${d.total}問)"><span style="position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:9px;color:${c};white-space:nowrap">${d.rate}%</span></div></div><div style="font-size:9px;color:#7a8ea5;margin-top:2px">${d.label}</div><div style="font-size:8px;color:#475569">${d.total}問</div></div>`;
+    }).join("");
+    dayChartHtml = `<div style="display:flex;gap:2px;align-items:flex-end;padding:16px 4px 0">${chartBars}</div>`;
+
+    // Missed words (from judgeDB - words answered wrong)
+    const wrongWords = vocabHistory.filter(h => !h.correct && h.questionText);
+    const wordFreq = {};
+    wrongWords.forEach(h => {
+      const w = h.questionText;
+      if (!wordFreq[w]) wordFreq[w] = {word:w, count:0, level:h.level};
+      wordFreq[w].count++;
+    });
+    const topWrong = Object.values(wordFreq).sort((a,b) => b.count - a.count).slice(0, 8);
+    let wrongListHtml = "";
+    if (topWrong.length > 0) {
+      wrongListHtml = topWrong.map(w => {
+        const lvBdg = {"beginner":"A","intermediate":"B","advanced":"C"}[w.level]||"";
+        const lvCol = {"beginner":"#22c55e","intermediate":"#f59e0b","advanced":"#ef4444"}[w.level]||"#7a8ea5";
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.03)">
+          <span style="font-size:12px;color:#dce6f0">${esc(w.word)} <span style="font-size:9px;color:${lvCol}">${lvBdg}</span></span>
+          <span style="font-size:11px;color:#f87171;font-weight:600">×${w.count}</span>
+        </div>`;
+      }).join("");
+    }
+
+    // Mode × Level cross analysis
+    const crossData = {};
+    vocabHistory.forEach(h => {
+      const m = h.type || "en_ja";
+      const lv = h.level || "intermediate";
+      const key = `${m}|${lv}`;
+      if (!crossData[key]) crossData[key] = {mode:m, level:lv, correct:0, total:0};
+      crossData[key].total++;
+      if (h.correct) crossData[key].correct++;
+    });
+    const crossWeak = Object.values(crossData)
+      .filter(d => d.total >= 3)
+      .map(d => ({...d, rate: Math.round(d.correct/d.total*100)}))
+      .sort((a,b) => a.rate - b.rate)
+      .slice(0, 3);
+    let crossHtml = "";
+    if (crossWeak.length > 0 && crossWeak[0].rate < 70) {
+      const lvShort = {"beginner":"A","intermediate":"B","advanced":"C"};
+      crossHtml = `<div style="font-size:11px;color:#f87171;margin-top:8px;padding:6px 8px;background:rgba(248,113,113,0.06);border-radius:6px">⚠️ 弱点: ${crossWeak.map(d => `${(modeLabels[d.mode]||d.mode).replace(/[🇬🇧🇯🇵📝]/g,'')}×${lvShort[d.level]||d.level} ${d.rate}%`).join(", ")}</div>`;
+    }
+
+    // Learning pace
+    const firstTs = Math.min(...vocabHistory.map(h=>h.timestamp));
+    const daysActive = Math.max(1, Math.round((now - firstTs) / oneDay));
+    const avgPerDay = Math.round(vocabHistory.length / daysActive * 10) / 10;
+    const todayCount = vocabHistory.filter(h => h.timestamp > now - oneDay).length;
+
+    // Trend (7 day vs before)
+    const recent = vocabHistory.filter(h => h.timestamp > now - 7*oneDay);
+    const older = vocabHistory.filter(h => h.timestamp <= now - 7*oneDay);
+    let trendHtml = "";
+    if (recent.length >= 5 && older.length >= 5) {
+      const recentRate = Math.round(recent.filter(h=>h.correct).length/recent.length*100);
+      const olderRate = Math.round(older.filter(h=>h.correct).length/older.length*100);
+      const diff = recentRate - olderRate;
+      const trendIcon = diff > 5 ? "📈" : diff < -5 ? "📉" : "➡️";
+      const trendColor = diff > 5 ? "#4ade80" : diff < -5 ? "#f87171" : "#a0b4c8";
+      trendHtml = `<div style="display:flex;justify-content:space-between;font-size:11px;padding:6px 8px;background:rgba(255,255,255,0.02);border-radius:6px">
+        <span style="color:#7a8ea5">7日間トレンド</span>
+        <span style="color:${trendColor}">${trendIcon} ${recentRate}% → ${olderRate}% (${diff>0?"+":""}${diff}%)</span>
+      </div>`;
+    }
+
+    vocabSection = `<div style="margin-top:16px;padding:14px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.15);border-radius:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:15px;font-weight:700;color:#7b9cf7">📝 単語クイズ分析</span>
+        <span style="font-size:22px;font-weight:800;color:${vColor}">${vRate}%</span>
       </div>
-      <div style="height:4px;background:#243040;border-radius:2px;overflow:hidden;margin-bottom:4px">
+      <div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;margin-bottom:6px">
         <div style="height:100%;width:${vRate}%;background:${vColor}"></div>
       </div>
-      <div>${modeStats}</div>
+      <div style="display:flex;justify-content:center;gap:16px;font-size:11px;color:#7a8ea5;margin-bottom:12px">
+        <span>${vCorrect}正解 / ${vocabHistory.length}問</span>
+        <span>今日${todayCount}問</span>
+        <span>平均${avgPerDay}問/日</span>
+      </div>
+
+      <div style="font-size:12px;font-weight:600;color:#dce6f0;margin-bottom:4px">📊 7日間推移</div>
+      ${dayChartHtml}
+
+      <div style="font-size:12px;font-weight:600;color:#dce6f0;margin:14px 0 6px">モード別</div>
+      ${modeBars}
+
+      <div style="font-size:12px;font-weight:600;color:#dce6f0;margin:10px 0 6px">レベル別</div>
+      ${lvBars}
+      ${crossHtml}
+      ${trendHtml ? `<div style="margin-top:8px">${trendHtml}</div>` : ""}
+
+      ${wrongListHtml ? `<div style="font-size:12px;font-weight:600;color:#f87171;margin:14px 0 6px">🔥 苦手単語TOP${topWrong.length}</div>${wrongListHtml}` : ""}
     </div>`;
   }
+
+  // Vocab DB summary (mastery stats from vocabDB - always available)
+  let vocabDbSection = "";
+  try {
+    const allWords = await vocabGetAll();
+    if (allWords.length > 0) {
+      const mastered = allWords.filter(w => (w.correctCount||0) >= 3 && (w.correctCount||0) > (w.wrongCount||0)*2);
+      const weak = allWords.filter(w => (w.wrongCount||0) > 0);
+      const unseen = allWords.filter(w => !(w.correctCount||0) && !(w.wrongCount||0));
+      const tested = allWords.filter(w => (w.correctCount||0) || (w.wrongCount||0));
+      const totalCorrect = allWords.reduce((s,w) => s + (w.correctCount||0), 0);
+      const totalWrong = allWords.reduce((s,w) => s + (w.wrongCount||0), 0);
+      const totalAttempts = totalCorrect + totalWrong;
+
+      // Level breakdown
+      const byLv = {};
+      allWords.forEach(w => {
+        const lv = w.level || "?";
+        if (!byLv[lv]) byLv[lv] = {total:0, mastered:0, weak:0, unseen:0};
+        byLv[lv].total++;
+        if ((w.correctCount||0) >= 3 && (w.correctCount||0) > (w.wrongCount||0)*2) byLv[lv].mastered++;
+        else if ((w.wrongCount||0) > 0) byLv[lv].weak++;
+        else if (!(w.correctCount||0) && !(w.wrongCount||0)) byLv[lv].unseen++;
+      });
+      let lvRows = "";
+      for (const lv of ["A","B","C"]) {
+        const d = byLv[lv];
+        if (!d) continue;
+        const mPct = d.total > 0 ? Math.round(d.mastered/d.total*100) : 0;
+        const wPct = d.total > 0 ? Math.round(d.weak/d.total*100) : 0;
+        const lvCol = {A:"#22c55e",B:"#f59e0b",C:"#ef4444"}[lv];
+        lvRows += `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+            <span style="color:${lvCol};font-weight:600">${lv}レベル (${d.total}語)</span>
+            <span style="color:#a0b4c8">習得${d.mastered} / 苦手${d.weak} / 未学習${d.unseen}</span>
+          </div>
+          <div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden;display:flex">
+            <div style="width:${mPct}%;background:#4ade80"></div>
+            <div style="width:${wPct}%;background:#f87171"></div>
+          </div>
+        </div>`;
+      }
+
+      // Top weak words from vocabDB (for users who haven't used judgeDB yet)
+      const weakWordList = allWords
+        .filter(w => (w.wrongCount||0) > 0)
+        .map(w => ({word:w.word, wrong:w.wrongCount||0, correct:w.correctCount||0, level:w.level||"?",
+          rate: Math.round((w.correctCount||0)/((w.correctCount||0)+(w.wrongCount||0))*100)}))
+        .sort((a,b) => a.rate - b.rate)
+        .slice(0, 8);
+      let weakWordsHtml = "";
+      if (weakWordList.length > 0) {
+        weakWordsHtml = `<div style="font-size:12px;font-weight:600;color:#f87171;margin:10px 0 6px">🔥 苦手単語TOP${weakWordList.length}</div>`;
+        weakWordList.forEach(w => {
+          const c = w.rate >= 60 ? "#fbbf24" : "#f87171";
+          const lvCol = {A:"#22c55e",B:"#f59e0b",C:"#ef4444"}[w.level]||"#7a8ea5";
+          weakWordsHtml += `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px">
+            <span style="color:#dce6f0">${esc(w.word)} <span style="font-size:9px;color:${lvCol}">${w.level}</span></span>
+            <span style="color:${c};font-weight:600">${w.rate}% <span style="font-size:10px;color:#7a8ea5">(✓${w.correct} ✗${w.wrong})</span></span>
+          </div>`;
+        });
+      }
+
+      // Top mastered words
+      const masteredList = allWords
+        .filter(w => (w.correctCount||0) >= 3 && (w.correctCount||0) > (w.wrongCount||0)*2)
+        .sort((a,b) => (b.correctCount||0) - (a.correctCount||0))
+        .slice(0, 5);
+      let masteredHtml = "";
+      if (masteredList.length > 0) {
+        masteredHtml = `<details style="margin-top:8px"><summary style="font-size:12px;color:#4ade80;cursor:pointer">✅ 習得済みTOP${masteredList.length}</summary><div style="margin-top:4px">`;
+        masteredList.forEach(w => {
+          masteredHtml += `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:11px;border-bottom:1px solid rgba(255,255,255,0.02)">
+            <span style="color:#a0b4c8">${esc(w.word)}</span>
+            <span style="color:#4ade80">✓${w.correctCount||0}</span>
+          </div>`;
+        });
+        masteredHtml += "</div></details>";
+      }
+
+      // Overall mastery rate
+      const mPct = Math.round(mastered.length/allWords.length*100);
+      const overallVocabRate = totalAttempts > 0 ? Math.round(totalCorrect/totalAttempts*100) : 0;
+      const ovrColor = overallVocabRate >= 80 ? "#4ade80" : overallVocabRate >= 60 ? "#fbbf24" : "#f87171";
+
+      // Estimated vocab level
+      const aM = byLv.A ? byLv.A.mastered/(byLv.A.total||1) : 0;
+      const bM = byLv.B ? byLv.B.mastered/(byLv.B.total||1) : 0;
+      const cM = byLv.C ? byLv.C.mastered/(byLv.C.total||1) : 0;
+      const vocabLv = cM >= 0.5 ? "🔴 C上級マスター" : bM >= 0.5 ? "🟡 B中級安定" : aM >= 0.5 ? "🟢 A基礎固め" : "📖 学習開始";
+      const progressDesc = `${allWords.length}語中${mastered.length}語習得 (${mPct}%)`;
+
+      vocabDbSection = `<div style="margin-top:12px;padding:14px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.12);border-radius:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:15px;font-weight:700;color:#34d399">📚 単語帳</span>
+          ${totalAttempts > 0 ? `<span style="font-size:18px;font-weight:800;color:${ovrColor}">${overallVocabRate}%</span>` : ""}
+        </div>
+        ${totalAttempts > 0 ? `<div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden;margin-bottom:6px">
+          <div style="height:100%;width:${overallVocabRate}%;background:${ovrColor}"></div>
+        </div>` : ""}
+        <div style="text-align:center;padding:6px;background:rgba(255,255,255,0.03);border-radius:8px;margin-bottom:10px">
+          <div style="font-size:10px;color:#7a8ea5">推定語彙レベル</div>
+          <div style="font-size:15px;font-weight:700;color:#dce6f0">${vocabLv}</div>
+          <div style="font-size:10px;color:#7a8ea5">${progressDesc}${totalAttempts > 0 ? ` / 累計${totalAttempts}回答` : ""}</div>
+        </div>
+        <div style="display:flex;gap:8px;text-align:center;margin-bottom:10px">
+          <div style="flex:1;padding:6px;background:rgba(74,222,128,0.08);border-radius:6px">
+            <div style="font-size:18px;font-weight:800;color:#4ade80">${mastered.length}</div>
+            <div style="font-size:9px;color:#7a8ea5">✅ 習得</div>
+          </div>
+          <div style="flex:1;padding:6px;background:rgba(248,113,113,0.08);border-radius:6px">
+            <div style="font-size:18px;font-weight:800;color:#f87171">${weak.length}</div>
+            <div style="font-size:9px;color:#7a8ea5">❌ 苦手</div>
+          </div>
+          <div style="flex:1;padding:6px;background:rgba(122,142,165,0.08);border-radius:6px">
+            <div style="font-size:18px;font-weight:800;color:#7a8ea5">${unseen.length}</div>
+            <div style="font-size:9px;color:#7a8ea5">🆕 未学習</div>
+          </div>
+        </div>
+        <div style="font-size:12px;font-weight:600;color:#dce6f0;margin-bottom:6px">レベル別習得率</div>
+        ${lvRows}
+        ${weakWordsHtml}
+        ${masteredHtml}
+      </div>`;
+    }
+  } catch(e) {}
 
   // 弱点リスト
   const weakList = weakTypes.length > 0
@@ -5080,7 +5344,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22e · vocab judge + quarter mock + score history + mock fix · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22f · vocab diagnosis overhaul + mock fix · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
