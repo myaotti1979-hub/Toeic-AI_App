@@ -3385,6 +3385,38 @@ async function renderDiagnosis() {
     </div>`;
   }).join("");
 
+  // Vocab quiz stats (separate from TOEIC score)
+  const vocabHistory = history.filter(h => h.part === "vocab");
+  let vocabSection = "";
+  if (vocabHistory.length > 0) {
+    const vCorrect = vocabHistory.filter(h=>h.correct).length;
+    const vRate = Math.round(vCorrect/vocabHistory.length*100);
+    const vColor = vRate >= 80 ? "#4ade80" : vRate >= 60 ? "#fbbf24" : "#f87171";
+    const byMode = {};
+    vocabHistory.forEach(h => {
+      const m = h.type || "en_ja";
+      if (!byMode[m]) byMode[m] = {correct:0, total:0};
+      byMode[m].total++;
+      if (h.correct) byMode[m].correct++;
+    });
+    const modeLabels = {"en_ja":"英→日","ja_en":"日→英","pos_quiz":"品詞あて"};
+    const modeStats = Object.entries(byMode).map(([m,d]) => {
+      const r = Math.round(d.correct/d.total*100);
+      const c = r >= 80 ? "#4ade80" : r >= 60 ? "#fbbf24" : "#f87171";
+      return `<span style="font-size:11px;color:${c}">${modeLabels[m]||m} ${r}%(${d.total})</span>`;
+    }).join(" / ");
+    vocabSection = `<div style="margin-top:8px;padding:8px 12px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.15);border-radius:8px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+        <span style="color:#7b9cf7;font-weight:600">📝 単語クイズ</span>
+        <span style="color:${vColor};font-weight:600">${vRate}% (${vCorrect}/${vocabHistory.length})</span>
+      </div>
+      <div style="height:4px;background:#243040;border-radius:2px;overflow:hidden;margin-bottom:4px">
+        <div style="height:100%;width:${vRate}%;background:${vColor}"></div>
+      </div>
+      <div>${modeStats}</div>
+    </div>`;
+  }
+
   // 弱点リスト
   const weakList = weakTypes.length > 0
     ? weakTypes.map(t => {
@@ -3497,6 +3529,7 @@ async function renderDiagnosis() {
     <div style="margin-top:16px">
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">パート別正答率</div>
       ${partBars}
+      ${vocabSection}
     </div>
 
     <div style="margin-top:16px">
@@ -4018,6 +4051,9 @@ async function renderVocabQuiz() {
           : {wrongCount: (q.target.wrongCount||0)+1}
         ).catch(e=>console.warn("vocab SRS update failed:", e));
       }
+      // Save to judgeDB for weakness analysis
+      const vocabLevel = {"A":"beginner","B":"intermediate","C":"advanced"}[q.target.level||""]||"intermediate";
+      judgeSave("vocab", vocabLevel, mode, 0, isCorrect, q.target.word||"", 0).catch(()=>{});
       render();
     };
   });
@@ -4572,8 +4608,20 @@ function renderMockSetup() {
         const setsNeeded = calcSetsNeeded(p, qNeeded);
         const pool = (byPart[p] || []).slice();
         if (pool.length < setsNeeded) missing.push(`${p}: ${pool.length}/${setsNeeded}セット`);
-        pool.sort(()=>Math.random()-0.5);
-        testItems.push(...pool.slice(0, setsNeeded).map(s => ({...s, _mockTargetQ: qNeeded})));
+        if (p === "part7") {
+          // TOEIC order: Single → Double → Triple
+          const singles = pool.filter(s => s.part === "part7s" || s.part === "part7");
+          const doubles = pool.filter(s => s.part === "part7d");
+          const triples = pool.filter(s => s.part === "part7t");
+          singles.sort(()=>Math.random()-0.5);
+          doubles.sort(()=>Math.random()-0.5);
+          triples.sort(()=>Math.random()-0.5);
+          const ordered = [...singles, ...doubles, ...triples];
+          testItems.push(...ordered.slice(0, setsNeeded).map(s => ({...s, _mockTargetQ: qNeeded})));
+        } else {
+          pool.sort(()=>Math.random()-0.5);
+          testItems.push(...pool.slice(0, setsNeeded).map(s => ({...s, _mockTargetQ: qNeeded})));
+        }
       }
       if (missing.length > 0) {
         if (!confirm(`以下のパートが不足しています:\n${missing.join('\n')}\n\n不足分はそのまま進めますか？`)) return;
@@ -5032,7 +5080,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22c · quarter mock + judge integration + score history · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22d · vocab judge + quarter mock + score history + P7 order · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
