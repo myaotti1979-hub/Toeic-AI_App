@@ -4403,6 +4403,10 @@ function renderMockSetup() {
       <div style="font-weight:700;font-size:15px;color:#dce6f0">⚡ ハーフ模試 (100問)</div>
       <div style="font-size:11px;color:#a0b4c8;margin-top:2px">L:50問 + R:50問 / 約1時間</div>
     </button>
+    <button class="btn-s" data-mock-mode="quarter" style="width:100%;margin:4px 0;padding:14px;text-align:left;background:rgba(52,211,153,0.08)">
+      <div style="font-weight:700;font-size:15px;color:#dce6f0">🚀 クォーター模試 (50問)</div>
+      <div style="font-size:11px;color:#a0b4c8;margin-top:2px">L:25問 + R:25問 / 約30分</div>
+    </button>
     <div style="margin:10px 0;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;display:flex;align-items:center;gap:10px">
       <label style="font-size:12px;color:#a0b4c8;display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="mockTimerToggle" ${S.mockTimerEnabled?"checked":""} style="accent-color:#818cf8"> ⏱️ 制限時間モード
@@ -4560,7 +4564,9 @@ function renderMockSetup() {
       const byPart = {};
       all.forEach(s => { const np = normPart(s.part); if(!byPart[np]) byPart[np]=[]; byPart[np].push(s); });
       const testItems = [];
-      const dist = mode === "full" ? MOCK_FULL_DIST : Object.fromEntries(Object.entries(MOCK_FULL_DIST).map(([k,v])=>[k,Math.ceil(v/2)]));
+      const dist = mode === "full" ? MOCK_FULL_DIST
+        : mode === "half" ? Object.fromEntries(Object.entries(MOCK_FULL_DIST).map(([k,v])=>[k,Math.ceil(v/2)]))
+        : Object.fromEntries(Object.entries(MOCK_FULL_DIST).map(([k,v])=>[k,Math.ceil(v/4)]));  // quarter
       const missing = [];
       for (const [p, qNeeded] of Object.entries(dist)) {
         const setsNeeded = calcSetsNeeded(p, qNeeded);
@@ -4576,7 +4582,7 @@ function renderMockSetup() {
       S.mockMode = mode;
       // Flatten to count total questions, trim to exactly 200 (or 100 for half)
       let totalQ = testItems.reduce((s,it) => s + (it.qSet?.questions?.length || 0), 0);
-      const targetQ = mode === "full" ? 200 : 100;
+      const targetQ = mode === "full" ? 200 : mode === "half" ? 100 : 50;
       // If over target, remove questions from the last set
       while (totalQ > targetQ && testItems.length > 0) {
         const lastItem = testItems[testItems.length - 1];
@@ -4590,7 +4596,7 @@ function renderMockSetup() {
       // Timer limit: Full=120min, Half=60min
       const timerToggle = $("mockTimerToggle");
       S.mockTimerEnabled = timerToggle && timerToggle.checked;
-      S.mockTimeLimit = S.mockTimerEnabled ? (mode === "full" ? 7200 : 3600) : 0;
+      S.mockTimeLimit = S.mockTimerEnabled ? (mode === "full" ? 7200 : mode === "half" ? 3600 : 1800) : 0;
       S.screen = "mockTest";
       render();
     };
@@ -4842,7 +4848,14 @@ function renderMockTest() {
       const sel = parseInt(btn.dataset.ci);
       const isCorrect = sel === q.correct;
       const normPart = p => p && p.startsWith("part7") ? "part7" : p;
-      S.mockAnswers.push({part: item.part, normPart: normPart(item.part), correct: isCorrect});
+      S.mockAnswers.push({part: item.part, normPart: normPart(item.part), correct: isCorrect,
+        level: item.level||"intermediate", type: qs._questionType||qs.talk_type||qs.doc_type||"unknown"});
+      // Save to judgeDB for weakness analysis
+      const qText = q.question || qs.sentence || qs.spoken || "";
+      const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
+      judgeSave(item.part, item.level||"intermediate",
+        qs._questionType||qs.talk_type||qs.doc_type||"unknown",
+        S.mockQIdx, isCorrect, qText, elapsed).catch(()=>{});
       // Advance
       S.mockQIdx++;
       if (S.mockQIdx >= questions.length) {
@@ -4908,6 +4921,22 @@ function renderMockResult() {
   const rScore = scoreFromRaw(rScaled, false);
   const totalScore = lScore + rScore;
 
+  // Save to mock history (localStorage)
+  const modeLabel = S.mockMode === "full" ? "200問" : S.mockMode === "half" ? "100問" : "50問";
+  const historyEntry = {
+    date: Date.now(), mode: S.mockMode, modeLabel,
+    score: totalScore, lScore, rScore,
+    lCorrect, lTotal, rCorrect, rTotal,
+    elapsed, partStats
+  };
+  try {
+    const hist = JSON.parse(localStorage.getItem("mockHistory")||"[]");
+    hist.push(historyEntry);
+    // Keep last 50 entries
+    if (hist.length > 50) hist.splice(0, hist.length - 50);
+    localStorage.setItem("mockHistory", JSON.stringify(hist));
+  } catch(e) { console.warn("[MOCK HISTORY] Save failed:", e); }
+
   // Stylish score display
   const lLevel = lScore >= 400 ? "🥇" : lScore >= 300 ? "🥈" : lScore >= 200 ? "🥉" : "📚";
   const rLevel = rScore >= 400 ? "🥇" : rScore >= 300 ? "🥈" : rScore >= 200 ? "🥉" : "📚";
@@ -4927,7 +4956,7 @@ function renderMockResult() {
   app.innerHTML = `
     <div class="header" style="display:flex;justify-content:space-between;align-items:center">
       <div><h1 style="font-size:22px;margin:0">🎯 模試結果</h1>
-      <div class="sub">${S.mockMode === "full" ? "本番フォーマット (200問)" : "ハーフ模試 (100問)"} | ⏱️ ${mm}分</div></div>
+      <div class="sub">${modeLabel} | ⏱️ ${mm}分</div></div>
       <button class="btn-s" id="mockHomeBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
     </div>
 
@@ -4949,7 +4978,25 @@ function renderMockResult() {
       💡 これは公式問題集5の換算表に基づく目安です。実際の本番では±50点程度の誤差があります。
     </div>
 
-    <button class="btn-p" id="mockRetryBtn" style="margin-top:16px">🔄 もう一度</button>`;
+    <button class="btn-p" id="mockRetryBtn" style="margin-top:16px">🔄 もう一度</button>
+    <div style="margin-top:8px;text-align:center;font-size:11px;color:#4ade80">✅ 判定データに記録済み（実力診断に反映されます）</div>
+    ${(()=>{
+      try {
+        const hist = JSON.parse(localStorage.getItem("mockHistory")||"[]");
+        if (hist.length <= 1) return "";
+        const recent = hist.slice(-10).reverse();
+        let rows = recent.map(h => {
+          const d = new Date(h.date);
+          const dt = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+          const col = h.score >= 800 ? "#4ade80" : h.score >= 600 ? "#fbbf24" : "#f87171";
+          return `<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:12px">
+            <span style="color:#a0b4c8">${dt} (${h.modeLabel||h.mode})</span>
+            <span style="color:${col};font-weight:600">${h.score} <span style="color:#7a8ea5;font-weight:400">L${h.lScore} R${h.rScore}</span></span>
+          </div>`;
+        }).join("");
+        return `<div style="margin-top:20px"><div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:6px">📈 模試スコア履歴</div><div style="background:#243040;border-radius:10px;padding:4px 0">${rows}</div></div>`;
+      } catch(e) { return ""; }
+    })()}`;
 
   $("mockRetryBtn").onclick = () => { S.screen = "mockSetup"; render(); };
   $("mockHomeBtn").onclick = () => { S.screen = "home"; render(); };
@@ -4985,7 +5032,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22b · scenario diversity + batch delete + export fix · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22c · quarter mock + judge integration + score history · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
