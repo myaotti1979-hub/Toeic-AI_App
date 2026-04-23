@@ -4199,8 +4199,31 @@ async function renderVocab() {
     const area = $("vocabListArea");
     if (area) {
       const isFiltered = activeFilter!=="all" || activePos!=="all" || searchText;
-      const countLabel = isFiltered ? `<div style="font-size:11px;color:#7a8ea5;padding:6px 0">${filtered.length}語 表示中</div>` : "";
-      area.innerHTML = countLabel + renderWordList(filtered);
+      if (isFiltered) {
+        // Filtered: show flat list
+        const countLabel = `<div style="font-size:11px;color:#7a8ea5;padding:6px 0">${filtered.length}語 表示中</div>`;
+        area.innerHTML = countLabel + renderWordList(filtered);
+      } else {
+        // Unfiltered: group by POS in collapsed details
+        const posGroups = {};
+        filtered.forEach(w => { const p=w.pos||"other"; if(!posGroups[p])posGroups[p]=[]; posGroups[p].push(w); });
+        const posOrder = ["noun","verb","adjective","adverb","phrase","other"];
+        let html = `<div style="font-size:11px;color:#7a8ea5;padding:6px 0">${filtered.length}語 — カテゴリをタップで展開</div>`;
+        for (const pk of posOrder) {
+          const list = posGroups[pk];
+          if (!list || !list.length) continue;
+          const label = POS_LABELS[pk]||pk;
+          const color = POS_COLORS[pk]||"#94a3b8";
+          html += `<details style="margin-bottom:4px;border:1px solid rgba(255,255,255,0.06);border-radius:8px;overflow:hidden">
+            <summary style="padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.02)">
+              <span style="font-size:13px;font-weight:600;color:${color}">${label}</span>
+              <span style="font-size:11px;color:#7a8ea5">${list.length}語</span>
+            </summary>
+            <div style="padding:0 12px">${renderWordList(list)}</div>
+          </details>`;
+        }
+        area.innerHTML = html;
+      }
       bindVocabButtons(words);
     }
   }
