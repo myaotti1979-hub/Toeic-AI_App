@@ -3015,9 +3015,33 @@ async function renderStockSelect() {
 
   app.innerHTML=`
     <div class="header" style="display:flex;justify-content:space-between;align-items:center">
-      <div><h1 style="font-size:20px;margin:0">📦 ストックから学習</h1>
+      <div><h1 style="font-size:20px;margin:0">📦+ 問題生成・管理</h1>
       <div class="sub">合計 ${total}問${totalMastered>0?` (卒業: ${totalMastered})`:""}</div></div>
       <button class="btn-s" id="stockBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
+
+    <div style="padding:12px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.15);border-radius:10px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:#7b9cf7;margin-bottom:8px">🤖 AI問題生成</div>
+      <div class="sec-lbl" style="margin:0 0 4px">レベル</div>
+      <div class="lv-row" style="margin-bottom:8px">${LEVELS.map(l=>{
+        const sel=S.level===l.id;
+        return `<div class="lv-btn" data-lv="${l.id}" style="border-color:${sel?l.color+"60":"rgba(255,255,255,0.06)"};background:${sel?l.color+"18":"rgba(255,255,255,0.03)"}">
+          <div style="font-size:14px;font-weight:700;color:${sel?l.color:"#94a3b8"}">${l.label}</div>
+          <div style="font-size:10px;color:#7a8ea5">${l.score}</div>
+        </div>`;
+      }).join("")}</div>
+      <div class="sec-lbl" style="margin:0 0 4px">パート</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${PARTS.map(p=>{
+        const sel=S.part===p.id;
+        return `<button class="btn-s" data-pt="${p.id}" style="font-size:11px;padding:4px 8px;${sel?"background:rgba(129,140,248,0.2);border-color:rgba(129,140,248,0.4);color:#818cf8":""}">${p.label}</button>`;
+      }).join("")}</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn-s" id="stockCreateBtn" ${!S.level||!S.part?"disabled":""} style="flex:1;font-size:13px;padding:10px;background:rgba(129,140,248,0.15);color:#818cf8;font-weight:700">📦+ ストック作成</button>
+        <select id="stockCreateNum" style="background:#243040;color:#a0b4c8;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 6px;font-size:12px">
+          ${[5,10,15,20,25,30].map(n=>`<option value="${n}" ${S.stockCreateTarget===n?"selected":""}>${n}問</option>`).join("")}
+        </select>
+      </div>
+      <button class="btn-s" id="graphicStockBtn" style="font-size:11px;color:#f472b6;margin-top:6px;width:100%" ${!S.level?"disabled":""}>🖼️ Graphic問題 作成</button>
     </div>
     ${total===0?`<div style="text-align:center;color:#7a8ea5;padding:40px 0">ストックされた問題がありません。<br>問題を解いた後「💾 ストック」ボタンで保存できます。</div>`:""}
     <div style="padding:10px 0">${partSections}</div>
@@ -3188,6 +3212,38 @@ async function renderStockSelect() {
     } catch(err) { alert("インポート失敗: "+err.message); }
   };
   const bb=$("stockBackBtn"); if(bb)bb.onclick=()=>{S.screen="home";render();};
+
+  // Level/Part selection for generation
+  document.querySelectorAll("[data-lv]").forEach(el=>{ el.onclick=()=>{S.level=el.dataset.lv;render();}; });
+  document.querySelectorAll("[data-pt]").forEach(el=>{ el.onclick=()=>{S.part=el.dataset.pt;render();}; });
+  const scNum=$("stockCreateNum"); if(scNum) scNum.onchange=()=>{ S.stockCreateTarget=parseInt(scNum.value); };
+  const scBtn=$("stockCreateBtn"); if(scBtn) scBtn.onclick=()=>{
+    if(!S.level||!S.part)return;
+    S.stockCreateTarget=parseInt($("stockCreateNum")?.value||"10");
+    S.screen="stockCreate"; S.stockCreateMode=true; S.stockCreateCount=0; S.stockCreatePaused=false;
+    S.stats={correct:0,wrong:0}; S.streak=0; S.sessionNum=0;
+    _nextQ=null; _prefetching=false;
+    shuffleSessionTypes();
+    loadNewSet();
+  };
+  const gsb=$("graphicStockBtn"); if(gsb)gsb.onclick=()=>{
+    if(!S.level)return;
+    const gTypes = [];
+    ["part3","part4","part7s"].forEach(p=>{
+      (TYPES[p]||[]).forEach(t=>{ if(t.type.startsWith("graphic_")) gTypes.push({...t, _gPart:p==="part7s"?"part7":p}); });
+    });
+    if(!gTypes.length){alert("Graphic types not found");return;}
+    S.graphicPool = gTypes;
+    S.graphicMode = true;
+    S.stockCreateTarget = parseInt($("stockCreateNum")?.value||"10");
+    S.screen="stockCreate"; S.stockCreateMode=true; S.stockCreateCount=0; S.stockCreatePaused=false;
+    S.stats={correct:0,wrong:0}; S.streak=0; S.sessionNum=0;
+    _nextQ=null; _prefetching=false;
+    const gt = gTypes[Math.floor(Math.random()*gTypes.length)];
+    S.part = gt._gPart;
+    shuffleSessionTypes();
+    loadNewSet();
+  };
   const pb=$("stockPurgeBtn"); if(pb)pb.onclick=async()=>{
     if(!confirm("音声や画像が欠損した問題を削除します。よろしいですか？")) return;
     try {
@@ -3372,7 +3428,7 @@ async function renderDiagnosis() {
     if (h.correct) byType[key].correct++;
   });
   const weakTypes = Object.values(byType)
-    .filter(t => t.total >= 2) // 最低2問以上
+    .filter(t => t.total >= 2 && t.part !== "vocab") // 最低2問以上、単語クイズは除外
     .map(t => ({...t, rate: Math.round(t.correct/t.total*100)}))
     .sort((a,b) => a.rate - b.rate)
     .slice(0, 8); // 上位8弱点
@@ -3786,7 +3842,8 @@ async function renderDiagnosis() {
     : `<div style="font-size:12px;color:#7a8ea5">判定データが不足しています</div>`;
 
   // 全体正答率
-  const overallRate = total > 0 ? Math.round(history.filter(h=>h.correct).length/total*100) : 0;
+  const toeicHistory = history.filter(h => h.part !== "vocab");
+  const overallRate = toeicHistory.length > 0 ? Math.round(toeicHistory.filter(h=>h.correct).length/toeicHistory.length*100) : 0;
 
   // 週次比較
   const now=Date.now(), oneWeek=7*24*60*60*1000;
@@ -3880,7 +3937,7 @@ async function renderDiagnosis() {
       <button class="btn-s" id="applyLevelBtn" style="font-size:12px;color:#fbbf24">💡 レベルを「${suggestedLabel}」に変更する</button>
     </div>` : ""}
 
-    <details open style="margin-top:16px">
+    <details style="margin-top:16px">
       <summary style="font-size:13px;font-weight:700;color:#dce6f0;cursor:pointer;margin-bottom:8px">📊 パート別分析</summary>
       ${partBars}
       <div style="margin-top:12px">
@@ -3889,7 +3946,7 @@ async function renderDiagnosis() {
       </div>
     </details>
 
-    <details open style="margin-top:16px">
+    <details style="margin-top:16px">
       <summary style="font-size:13px;font-weight:700;color:#7b9cf7;cursor:pointer;margin-bottom:8px">📝 単語分析</summary>
       ${vocabSection}
       ${vocabDbSection}
@@ -5409,25 +5466,20 @@ function renderMockResult() {
 }
 
 function renderHome() {
-  const lvBtns=LEVELS.map(l=>{
-    const sel=S.level===l.id;
-    return `<div class="lv-btn" data-lv="${l.id}" style="border-color:${sel?l.color+"60":"rgba(255,255,255,0.06)"};background:${sel?l.color+"18":"rgba(255,255,255,0.03)"}">
-      <div style="font-size:15px;font-weight:700;color:${sel?l.color:"#94a3b8"}">${l.label}</div>
-      <div style="font-size:11px;color:#7a8ea5">${l.score}</div>
-    </div>`;
-  }).join("");
-
+  // Build part rows with inline stock play buttons
   const groups=["L","R"].map(sec=>{
     const label=sec==="L"?"Listening":"Reading";
     const color=sec==="L"?"#38bdf8":"#a78bfa";
     const btns=PARTS.filter(p=>p.sec===sec).map(p=>{
-      const sel=S.part===p.id;
-      const qStr=p.qCount>1?`<span class="p-tag">${p.qCount}問/セット</span>`:p.qTag?`<span class="p-tag">${p.qTag}</span>`:"";
-      return `<div class="p-btn${sel?" sel":""}" data-pt="${p.id}" style="${sel?"border-color:rgba(129,140,248,0.4);background:rgba(129,140,248,0.1)":""}">
-        <span style="font-size:11px;font-family:monospace;font-weight:700;min-width:44px;color:${sel?"#818cf8":"#64748b"}">${p.label}</span>
-        <span style="font-size:14px;flex:1;color:${sel?"#c7d2fe":"#94a3b8"}">${p.desc}</span>
-        ${qStr}
-        ${p.id==="part1"?'<span class="p-tag">+画像</span>':""}
+      return `<div class="p-btn" style="display:flex;align-items:center;gap:6px;padding:8px 10px">
+        <span style="font-size:11px;font-family:monospace;font-weight:700;min-width:44px;color:#64748b">${p.label}</span>
+        <span style="font-size:13px;flex:1;color:#94a3b8">${p.desc}</span>
+        <span id="sc_${p.id}" style="font-size:10px;color:#7a8ea5;min-width:32px;text-align:right">…</span>
+        <div style="display:flex;gap:3px;margin-left:4px">
+          <button class="btn-s" data-home-seq="${p.id}" style="font-size:10px;padding:3px 6px" title="順番に">📋</button>
+          <button class="btn-s" data-home-rnd="${p.id}" style="font-size:10px;padding:3px 6px" title="ランダム">🔀</button>
+          <button class="btn-s" data-home-weak="${p.id}" style="font-size:10px;padding:3px 6px;color:#f87171" title="苦手特訓">🔥</button>
+        </div>
       </div>`;
     }).join("");
     return `<div class="p-grp"><div class="p-grp-ttl" style="color:${color}">${label}</div>${btns}</div>`;
@@ -5437,31 +5489,25 @@ function renderHome() {
     <div class="header">
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
-      <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22g · lazy stock load + vocab diagnosis + mock fix · 303 types</div>
+      <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.23a · stock-first home + scenario diversity · 303 types</div>
     </div>
-    <div class="sec-lbl">レベルを選択</div>
-    <div class="lv-row">${lvBtns}</div>
+    <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
+      <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
+      <div style="font-size:13px;color:#7a8ea5;margin-top:2px">読込中...</div>
+    </div>
     ${groups}
-    <button class="btn-p" id="startBtn" ${!S.level||!S.part?"disabled":""} style="margin-top:8px">学習スタート →</button>
-    <div id="judgeHomeToggle" style="text-align:center;margin-top:8px;cursor:pointer">
+    <div style="text-align:center;font-size:10px;color:#7a8ea5;margin-top:4px">📋順番 🔀ランダム 🔥苦手特訓</div>
+    <div id="judgeHomeToggle" style="text-align:center;margin-top:10px;cursor:pointer">
       <span style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:13px;font-weight:600;background:${S.judgeMode?"rgba(74,222,128,0.12)":"rgba(100,116,139,0.08)"};color:${S.judgeMode?"#4ade80":"#64748b"};border:1px solid ${S.judgeMode?"rgba(74,222,128,0.3)":"rgba(100,116,139,0.15)"}">
         ${S.judgeMode?"📊 判定モード ON — 回答を記録中":"📊 判定モード OFF — タップでON"}
       </span>
     </div>
-    <div style="display:flex;gap:8px;justify-content:center;margin-top:10px">
-      <button class="btn-s" id="stockStudyBtn">📦 ストック学習</button>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:12px">
+      <button class="btn-s" id="stockManageBtn" style="color:#60a5fa">📦+ 問題生成・管理</button>
       <button class="btn-s" id="listenModeBtn" style="color:#7b9cf7">🎧 流し聞き</button>
-      <button class="btn-s" id="stockCreateBtn" ${!S.level||!S.part?"disabled":""}>📦+ ストック作成</button>
-      <select id="stockCreateNum" style="background:#243040;color:#a0b4c8;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 6px;font-size:12px">
-        ${[5,10,15,20,25,30].map(n=>`<option value="${n}" ${S.stockCreateTarget===n?"selected":""}>${n}問</option>`).join("")}
-      </select>
+      <button class="btn-s" id="mockTestBtn" style="color:#fbbf24">🎯 模試</button>
     </div>
-    <div style="text-align:center;margin-top:6px;display:flex;gap:8px;justify-content:center">
-      <button class="btn-s" id="graphicStockBtn" style="font-size:11px;color:#f472b6" ${!S.level?"disabled":""}>🖼️ Graphic問題 作成</button>
-      <button class="btn-s" id="mockTestBtn" style="font-size:11px;color:#fbbf24">🎯 模試（実力テスト）</button>
-    </div>
-    <div id="stockInfo" style="text-align:center;font-size:11px;color:#7a8ea5;margin-top:4px"></div>
     <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
       <button class="btn-s" id="diagnosisBtn" style="flex:1;padding:14px 0;font-size:15px;font-weight:700;background:rgba(74,222,128,0.08);border-color:rgba(74,222,128,0.25);color:#4ade80">📊 実力診断</button>
       <button class="btn-s" id="vocabBtn" style="flex:1;padding:14px 0;font-size:15px;font-weight:700;background:rgba(129,140,248,0.08);border-color:rgba(129,140,248,0.25);color:#7b9cf7">📝 単語帳</button>
@@ -5475,49 +5521,126 @@ function renderHome() {
       <button class="btn-s" id="changeKey">🔑 APIキー変更</button>
     </div>`;
 
-  document.querySelectorAll("[data-lv]").forEach(el=>{ el.onclick=()=>{S.level=el.dataset.lv;render();}; });
-  document.querySelectorAll("[data-pt]").forEach(el=>{ el.onclick=()=>{S.part=el.dataset.pt;render();}; });
-  $("startBtn").onclick=()=>{
-    if(!S.level||!S.part)return;
-    S.screen="study"; S.stats={correct:0,wrong:0}; S.streak=0; S.sessionNum=0;
-    _nextQ=null; _prefetching=false;
-    shuffleSessionTypes();
-    loadNewSet();
-  };
-  // ストック数表示
+  // Async: load stock counts and IRT level
   stockCountByPart().then(counts => {
-    const total = Object.values(counts).reduce((a,b)=>a+b, 0);
-    const si=$("stockInfo");
-    if(si) si.textContent = total>0 ? `ストック: ${total}問（${Object.entries(counts).map(([k,v])=>`${k}:${v}`).join(", ")}）` : "ストック: 0問";
+    for (const p of PARTS) {
+      const el = document.getElementById(`sc_${p.id}`);
+      if (el) el.textContent = counts[p.id] ? `${counts[p.id]}問` : "0";
+    }
   });
-  $("stockStudyBtn").onclick=()=>{ S.screen="stockSelect"; render(); };
+  judgeGetAll().then(history => {
+    const toeicH = history.filter(h => h.part !== "vocab");
+    const el = $("homeLevel");
+    if (!el) return;
+    if (toeicH.length < 5) {
+      el.innerHTML = `<div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
+        <div style="font-size:15px;font-weight:700;color:#94a3b8;margin-top:2px">データ不足（${toeicH.length}/5問）</div>
+        <div style="font-size:10px;color:#7a8ea5">学習を進めると実力レベルが表示されます</div>`;
+      return;
+    }
+    const rate = toeicH.filter(h=>h.correct).length / toeicH.length;
+    const estLevel = rate >= 0.75 ? "advanced" : rate >= 0.5 ? "intermediate" : "beginner";
+    const lvInfo = LEVELS.find(l=>l.id===estLevel);
+    // Simple IRT score
+    const SCORE_TABLE = {
+      beginner:[[0,200],[0.50,300],[0.70,400],[0.85,600],[1.00,950]],
+      intermediate:[[0,200],[0.40,400],[0.60,600],[0.83,800],[1.00,960]],
+      advanced:[[0,200],[0.30,500],[0.45,700],[0.60,800],[0.80,900],[1.00,980]]
+    };
+    function irt(acc, lv) {
+      const t = SCORE_TABLE[lv]||SCORE_TABLE.intermediate;
+      for (let i=1;i<t.length;i++) { if (acc<=t[i][0]) { const [x0,y0]=t[i-1],[x1,y1]=t[i]; return Math.round(y0+(acc-x0)/(x1-x0)*(y1-y0)); } }
+      return t[t.length-1][1];
+    }
+    const byLv = {};
+    toeicH.forEach(h => {
+      const lv = h.level||"intermediate";
+      if (!byLv[lv]) byLv[lv]={c:0,t:0};
+      byLv[lv].t++; if (h.correct) byLv[lv].c++;
+    });
+    let ws=0, wt=0;
+    for (const [lv,d] of Object.entries(byLv)) {
+      if (d.t>=2) { const s=irt(d.c/d.t,lv); ws+=s*d.t; wt+=d.t; }
+    }
+    const estScore = wt>0 ? Math.round(ws/wt) : 0;
+    S.level = estLevel; // Set level for generation compatibility
+    el.innerHTML = `<div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
+      <div style="display:flex;justify-content:center;align-items:baseline;gap:8px;margin-top:4px">
+        <span style="font-size:22px;font-weight:800;color:${lvInfo?.color||'#94a3b8'}">${lvInfo?.label||'—'}</span>
+        <span style="font-size:14px;color:#a0b4c8">推定 ${estScore}点</span>
+      </div>
+      <div style="font-size:10px;color:#7a8ea5">${toeicH.length}問の学習データに基づく</div>`;
+  }).catch(()=>{});
+
+  // Stock play handlers
+  document.querySelectorAll("[data-home-seq]").forEach(el=>{
+    el.onclick=async()=>{
+      el.textContent="⏳";
+      const items = await stockGetAllLight(el.dataset.homeSeq);
+      if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="📋";return;}
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+      S.stockPlayIdx = 0; S._stockPlaylistActive = false;
+      await loadStockItem(items[0].id);
+    };
+  });
+  document.querySelectorAll("[data-home-rnd]").forEach(el=>{
+    el.onclick=async()=>{
+      el.textContent="⏳";
+      const items = await stockGetAllLight(el.dataset.homeRnd);
+      if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="🔀";return;}
+      for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+      S.stockPlayIdx = 0; S._stockPlaylistActive = false;
+      await loadStockItem(items[0].id);
+    };
+  });
+  document.querySelectorAll("[data-home-weak]").forEach(el=>{
+    el.onclick=async()=>{
+      el.textContent="⏳";
+      const partId = el.dataset.homeWeak;
+      try {
+        const history = await judgeGetAll();
+        const partH = history.filter(h => h.part === partId);
+        if (partH.length < 3) { alert("このパートの判定データが不足しています。\nまず通常学習か模試で問題を解いてください。"); el.textContent="🔥"; return; }
+        // Find weak types (accuracy < 70%)
+        const byType = {};
+        partH.forEach(h => {
+          const t = h.type||"unknown";
+          if (!byType[t]) byType[t] = {c:0,t:0};
+          byType[t].t++; if (h.correct) byType[t].c++;
+        });
+        const weakTypes = Object.entries(byType)
+          .filter(([t,d]) => d.t >= 2 && d.c/d.t < 0.7)
+          .map(([t,d]) => t);
+        if (!weakTypes.length) { alert("苦手タイプが見つかりません（全タイプ70%以上）。\nもっと学習データを蓄積してください。"); el.textContent="🔥"; return; }
+        // Load stock items and filter by weak types
+        const items = await stockGetAllLight(partId);
+        const weakItems = items.filter(it => weakTypes.includes(it.qSet?._questionType));
+        if (!weakItems.length) { alert(`苦手タイプ（${weakTypes.join(", ")}）のストック問題がありません。\n問題を生成してストックしてください。`); el.textContent="🔥"; return; }
+        for(let i=weakItems.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[weakItems[i],weakItems[j]]=[weakItems[j],weakItems[i]];}
+        S.stockPlaylist = weakItems.map(it=>({id:it.id, part:it.part}));
+        S.stockPlayIdx = 0; S._stockPlaylistActive = false;
+        await loadStockItem(weakItems[0].id);
+      } catch(e) { alert("苦手分析に失敗: "+e.message); el.textContent="🔥"; }
+    };
+  });
+
+  // Navigation handlers
+  $("stockManageBtn").onclick=()=>{ S.screen="stockSelect"; render(); };
   $("listenModeBtn").onclick=async()=>{
-    // Load listening stocks (Part 2/3/4 only) — LIGHT version for setup UI
     const [p2, p3, p4] = await Promise.all([
       stockGetAllLight("part2"), stockGetAllLight("part3"), stockGetAllLight("part4")
     ]);
     const listenStocks = [...p2, ...p3, ...p4];
-    if(listenStocks.length===0){alert("Listening問題のストックがありません。Part 2/3/4のストックを作成してください。");return;}
+    if(listenStocks.length===0){alert("Listening問題のストックがありません。");return;}
     S.screen = "listenSetup";
     S.listenAllStocks = listenStocks;
     render();
   };
-  const scNum=$("stockCreateNum"); if(scNum) scNum.onchange=()=>{ S.stockCreateTarget=parseInt(scNum.value); };
-  $("stockCreateBtn").onclick=()=>{
-    if(!S.level||!S.part)return;
-    S.stockCreateTarget=parseInt($("stockCreateNum")?.value||"10");
-    S.screen="stockCreate"; S.stockCreateMode=true; S.stockCreateCount=0; S.stockCreatePaused=false;
-    S.stats={correct:0,wrong:0}; S.streak=0; S.sessionNum=0;
-    _nextQ=null; _prefetching=false;
-    shuffleSessionTypes();
-    loadNewSet();
-  };
   $("diagnosisBtn").onclick=()=>{ S.screen="diagnosis"; render(); };
-  // Home export: go to stock select (where full export UI is)
-  const heb=$("homeExportBtn"); if(heb) heb.onclick=async()=>{
-    S.screen="stockSelect"; render();
-  };
-  // Home import
+  $("vocabBtn").onclick=()=>{ S.screen="vocab"; render(); };
+  $("mockTestBtn").onclick=()=>{ S.screen="mockSetup"; render(); };
+  const heb=$("homeExportBtn"); if(heb) heb.onclick=()=>{ S.screen="stockSelect"; render(); };
   const hib=$("homeImportBtn"); if(hib) hib.onclick=()=>$("homeFileInput").click();
   const hfi=$("homeFileInput"); if(hfi) hfi.onchange=async(e)=>{
     const files = Array.from(e.target.files);
@@ -5528,37 +5651,11 @@ function renderHome() {
       try {
         const r = await dataImportSmart(f);
         results.push(`${f.name}: ${r.type} ${r.count}件追加${r.skipped?` (${r.skipped}件スキップ)`:""}`);
-      } catch(err) {
-        results.push(`${f.name}: ❌ ${err.message}`);
-      }
+      } catch(err) { results.push(`${f.name}: ❌ ${err.message}`); }
     }
     alert(`インポート結果:\n${results.join("\n")}`);
-    hib.textContent="📥 インポート";
-    hfi.value="";
-    render();
+    hib.textContent="📥 インポート"; hfi.value=""; render();
   };
-  const gsb=$("graphicStockBtn"); if(gsb)gsb.onclick=()=>{
-    if(!S.level)return;
-    // Collect graphic types across Part 3, 4, 7
-    const gTypes = [];
-    ["part3","part4","part7s"].forEach(p=>{
-      (TYPES[p]||[]).forEach(t=>{ if(t.type.startsWith("graphic_")) gTypes.push({...t, _gPart:p==="part7s"?"part7":p}); });
-    });
-    if(!gTypes.length){alert("Graphic types not found");return;}
-    S.graphicPool = gTypes;
-    S.graphicMode = true;
-    S.stockCreateTarget = parseInt($("stockCreateNum")?.value||"10");
-    S.screen="stockCreate"; S.stockCreateMode=true; S.stockCreateCount=0; S.stockCreatePaused=false;
-    S.stats={correct:0,wrong:0}; S.streak=0; S.sessionNum=0;
-    _nextQ=null; _prefetching=false;
-    // Override part to graphic types
-    const gt = gTypes[Math.floor(Math.random()*gTypes.length)];
-    S.part = gt._gPart;
-    shuffleSessionTypes();
-    loadNewSet();
-  };
-  $("vocabBtn").onclick=()=>{ S.screen="vocab"; render(); };
-  $("mockTestBtn").onclick=()=>{ S.screen="mockSetup"; render(); };
   $("judgeHomeToggle").onclick=()=>{
     S.judgeMode=!S.judgeMode;
     localStorage.setItem("judgeMode",JSON.stringify(S.judgeMode));
