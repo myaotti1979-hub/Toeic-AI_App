@@ -2174,6 +2174,53 @@ async function stockCountByPart() {
   return counts;
 }
 
+// Efficient per-part stats (counts only, no data loaded)
+async function stockStatsPerPart() {
+  const db = await openStockDB();
+  const stats = {};
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("questions","readonly");
+    const store = tx.objectStore("questions");
+    const req = store.openCursor();
+    req.onsuccess = (e) => {
+      const c = e.target.result;
+      if (c) {
+        const v = c.value;
+        const p = v.part || "?";
+        if (!stats[p]) stats[p] = {total:0, mastered:0, unplayed:0};
+        stats[p].total++;
+        if (v.mastered) stats[p].mastered++;
+        if (!v.lastPracticed) stats[p].unplayed++;
+        c.continue();
+      } else resolve(stats);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Get preview items (first N unmastered) for a part — light, no audio
+async function stockPreview(part, n=3) {
+  const db = await openStockDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("questions","readonly");
+    const req = tx.objectStore("questions").index("part").openCursor(part);
+    const items = [];
+    req.onsuccess = (e) => {
+      const c = e.target.result;
+      if (c && items.length < n) {
+        const v = c.value;
+        if (!v.mastered) {
+          const txt = v.qSet?.sentence || v.qSet?.spoken || v.qSet?.talk?.slice(0,50)
+            || v.qSet?.conversation?.slice(0,50) || v.qSet?.text?.slice(0,50) || "問題";
+          items.push(String(txt).slice(0,60));
+        }
+        c.continue();
+      } else resolve(items);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
 function pickVoice(gender="any") {
   const pool = gender==="female" ? TTS_FEMALE : gender==="male" ? TTS_MALE : [...TTS_FEMALE,...TTS_MALE];
   return pool[Math.floor(Math.random()*pool.length)];
@@ -2914,36 +2961,42 @@ async function loadNextStockItem() {
 
 /* ── ストック選択画面 ── */
 async function renderStockSelect() {
-  const all = await stockGetAllLight();  // Light: no audio/image in memory (~5MB vs ~245MB)
-  const byPart = {};
-  all.forEach(q => { if(!byPart[q.part]) byPart[q.part]=[]; byPart[q.part].push(q); });
-  const total = all.length;
-  const totalMastered = all.filter(q=>q.mastered).length;
+  // Fast: single cursor pass for counts, no data loaded
+  const stats = await stockStatsPerPart();
+  let total = 0, totalMastered = 0;
+  for (const s of Object.values(stats)) { total += s.total; totalMastered += s.mastered; }
 
-  // パート別ボタン（Part 1含む全パート）
+  // Load preview (3 items per part) in parallel — lightweight
+  const previewPromises = {};
+  for (const p of PARTS) {
+    if (stats[p.id]?.total > 0) previewPromises[p.id] = stockPreview(p.id, 3);
+  }
+  const previews = {};
+  for (const [pid, prom] of Object.entries(previewPromises)) {
+    try { previews[pid] = await prom; } catch(e) { previews[pid] = []; }
+  }
+
+  // パート別ボタン
   const partSections = PARTS.map(p => {
-    const items = byPart[p.id] || [];
-    if (items.length === 0) return "";
-    const masteredCount = items.filter(item=>item.mastered).length;
-    const unmasteredCount = items.length - masteredCount;
-    const unplayedCount = items.filter(item=>!item.lastPracticed).length;
-    const preview = items.filter(item=>!item.mastered).slice(0,3).map((item,i) => {
-      const txt = item.qSet.sentence || item.qSet.spoken || item.qSet.talk?.slice(0,40) || item.qSet.conversation?.slice(0,40) || item.qSet.text?.slice(0,40) || "問題";
-      return `<div style="font-size:11px;color:#a0b4c8;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${esc(String(txt).slice(0,50))}</div>`;
-    }).join("");
+    const s = stats[p.id];
+    if (!s || s.total === 0) return "";
+    const unmasteredCount = s.total - s.mastered;
+    const preview = (previews[p.id]||[]).map((txt,i) =>
+      `<div style="font-size:11px;color:#a0b4c8;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${esc(txt)}</div>`
+    ).join("");
     return `<div style="margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <span style="font-size:13px;font-weight:700;color:#7b9cf7;font-family:monospace">${p.icon} ${p.label}</span>
-        <span class="p-tag">${unmasteredCount}問${masteredCount>0?` <span style="color:#4ade80">✓${masteredCount}</span>`:""}</span>
+        <span class="p-tag">${unmasteredCount}問${s.mastered>0?` <span style="color:#4ade80">✓${s.mastered}</span>`:""}</span>
       </div>
       ${preview}
-      ${items.length>3?`<div style="font-size:11px;color:#7a8ea5">…他${items.length-3}問</div>`:""}
+      ${s.total>3?`<div style="font-size:11px;color:#7a8ea5">…他${s.total-3}問</div>`:""}
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn-s" data-stock-seq="${p.id}" style="flex:1;font-size:12px">📋 順番に再生</button>
         <button class="btn-s" data-stock-rnd="${p.id}" style="flex:1;font-size:12px">🔀 ランダム再生</button>
       </div>
-      ${unplayedCount>0?`<button class="btn-s" data-stock-new="${p.id}" style="font-size:11px;color:#60a5fa;margin-top:4px">🆕 未回答のみ (${unplayedCount}問)</button>`:""}
-      ${masteredCount>0?`<button class="btn-s" data-del-mastered="${p.id}" style="font-size:11px;color:#f87171;margin-top:6px;opacity:0.7">🗑️ 卒業済${masteredCount}問を削除</button>`:""}
+      ${s.unplayed>0?`<button class="btn-s" data-stock-new="${p.id}" style="font-size:11px;color:#60a5fa;margin-top:4px">🆕 未回答のみ (${s.unplayed}問)</button>`:""}
+      ${s.mastered>0?`<button class="btn-s" data-del-mastered="${p.id}" style="font-size:11px;color:#f87171;margin-top:6px;opacity:0.7">🗑️ 卒業済${s.mastered}問を削除</button>`:""}
     </div>`;
   }).join("");
 
@@ -2970,9 +3023,9 @@ async function renderStockSelect() {
       <div style="font-size:12px;font-weight:600;color:#a0b4c8;margin-bottom:6px">エクスポート</div>
       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
         ${PARTS.map(p=>{
-          const items = byPart[p.id]||[];
-          if (!items.length) return "";
-          return `<button class="btn-s" data-export-part="${p.id}" style="font-size:10px;padding:3px 8px">${p.icon} ${p.label} (${items.length})</button>`;
+          const s = stats[p.id];
+          if (!s || !s.total) return "";
+          return `<button class="btn-s" data-export-part="${p.id}" style="font-size:10px;padding:3px 8px">${p.icon} ${p.label} (${s.total})</button>`;
         }).join("")}
       </div>
       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">
@@ -3036,21 +3089,25 @@ async function renderStockSelect() {
   document.querySelectorAll("[data-del-mastered]").forEach(el=>{
     el.onclick=async()=>{
       const partId = el.dataset.delMastered;
-      const items = (byPart[partId]||[]).filter(it=>it.mastered);
-      if(!items.length) return;
-      if(!confirm(`${partId.toUpperCase()} の卒業済${items.length}問を削除しますか？\n\n※ 3回連続正解した問題のみ削除されます。`)) return;
+      el.textContent="⏳ 読込中...";
+      const items = await stockGetAllLight(partId);
+      const mastered = items.filter(it=>it.mastered);
+      if(!mastered.length) { el.textContent="なし"; return; }
+      if(!confirm(`${partId.toUpperCase()} の卒業済${mastered.length}問を削除しますか？\n\n※ 3回連続正解した問題のみ削除されます。`)) { el.textContent=`🗑️ 卒業済${mastered.length}問を削除`; return; }
       el.textContent="⏳ 削除中...";
-      for (const item of items) { await stockDelete(item.id); }
-      alert(`✅ ${items.length}問を削除しました`);
+      for (const item of mastered) { await stockDelete(item.id); }
+      alert(`✅ ${mastered.length}問を削除しました`);
       render();
     };
   });
 
   // 卒業済一括削除（全パート）
   const dam=$("stockDelAllMastered"); if(dam)dam.onclick=async()=>{
-    const mastered = all.filter(q=>q.mastered);
-    if(!mastered.length) return;
-    if(!confirm(`全パートの卒業済${mastered.length}問を削除しますか？\n\n※ 3回連続正解した問題のみ削除されます。学習中の問題は残ります。`)) return;
+    dam.textContent="⏳ 読込中...";
+    const _all = await stockGetAllLight();
+    const mastered = _all.filter(q=>q.mastered);
+    if(!mastered.length) { dam.textContent="なし"; return; }
+    if(!confirm(`全パートの卒業済${mastered.length}問を削除しますか？\n\n※ 3回連続正解した問題のみ削除されます。学習中の問題は残ります。`)) { render(); return; }
     dam.textContent="⏳ 削除中...";
     for (const item of mastered) { await stockDelete(item.id); }
     alert(`✅ ${mastered.length}問を削除しました`);
@@ -3059,9 +3116,11 @@ async function renderStockSelect() {
 
   // 卒業フラグリセット（バグで誤って卒業になった問題を復活）
   const rmb=$("stockResetMastered"); if(rmb)rmb.onclick=async()=>{
-    const mastered = all.filter(q=>q.mastered);
-    if(!mastered.length) return;
-    if(!confirm(`卒業フラグを${mastered.length}問リセットしますか？\n\n問題は削除されません。卒業状態がリセットされ、再度学習対象になります。`)) return;
+    rmb.textContent="⏳ 読込中...";
+    const _all = await stockGetAllLight();
+    const mastered = _all.filter(q=>q.mastered);
+    if(!mastered.length) { rmb.textContent="なし"; return; }
+    if(!confirm(`卒業フラグを${mastered.length}問リセットしますか？\n\n問題は削除されません。卒業状態がリセットされ、再度学習対象になります。`)) { render(); return; }
     rmb.textContent="⏳ リセット中...";
     const db = await openStockDB();
     for (const item of mastered) {
@@ -3080,23 +3139,25 @@ async function renderStockSelect() {
     render();
   };
 
-  // 順番に再生ボタン
+  // 順番に再生ボタン（on-demand loading）
   document.querySelectorAll("[data-stock-seq]").forEach(el=>{
     el.onclick=async()=>{
-      const items = byPart[el.dataset.stockSeq] || [];
-      if(items.length===0) return;
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));  // IDs only — full item loaded on demand
+      el.textContent="⏳ 読込中...";
+      const items = await stockGetAllLight(el.dataset.stockSeq);
+      if(items.length===0) { el.textContent="📋 順番に再生"; return; }
+      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
-      S._stockPlaylistActive = false;  // Reset stats for new playlist
+      S._stockPlaylistActive = false;
       await loadStockItem(items[0].id);
     };
   });
 
-  // ランダム再生ボタン
+  // ランダム再生ボタン（on-demand loading）
   document.querySelectorAll("[data-stock-rnd]").forEach(el=>{
     el.onclick=async()=>{
-      const items = [...(byPart[el.dataset.stockRnd] || [])];
-      if(items.length===0) return;
+      el.textContent="⏳ 読込中...";
+      const items = await stockGetAllLight(el.dataset.stockRnd);
+      if(items.length===0) { el.textContent="🔀 ランダム再生"; return; }
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
@@ -3105,11 +3166,13 @@ async function renderStockSelect() {
     };
   });
 
-  // 未回答のみ再生ボタン
+  // 未回答のみ再生ボタン（on-demand loading）
   document.querySelectorAll("[data-stock-new]").forEach(el=>{
     el.onclick=async()=>{
-      const items = (byPart[el.dataset.stockNew] || []).filter(it=>!it.lastPracticed);
-      if(items.length===0){ alert("未回答の問題がありません"); return; }
+      el.textContent="⏳ 読込中...";
+      const allItems = await stockGetAllLight(el.dataset.stockNew);
+      const items = allItems.filter(it=>!it.lastPracticed);
+      if(items.length===0){ alert("未回答の問題がありません"); el.textContent="🆕 未回答のみ"; return; }
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
       S._stockPlaylistActive = false;
@@ -5348,7 +5411,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ 1セッション${SESSION_SIZE}問 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22f · vocab diagnosis overhaul + mock fix · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.22g · lazy stock load + vocab diagnosis + mock fix · 303 types</div>
     </div>
     <div class="sec-lbl">レベルを選択</div>
     <div class="lv-row">${lvBtns}</div>
