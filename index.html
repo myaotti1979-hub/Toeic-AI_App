@@ -5480,8 +5480,8 @@ function renderHome() {
         <span style="font-size:13px;flex:1;color:#94a3b8">${p.desc}</span>
         <span id="sc_${p.id}" style="font-size:10px;color:#7a8ea5;min-width:32px;text-align:right">…</span>
         <div style="display:flex;gap:3px;margin-left:4px">
-          <button class="btn-s" data-home-seq="${p.id}" style="font-size:10px;padding:3px 6px" title="順番に">📋</button>
-          <button class="btn-s" data-home-rnd="${p.id}" style="font-size:10px;padding:3px 6px" title="ランダム">🔀</button>
+          <button class="btn-s" data-home-rnd="${p.id}" style="font-size:10px;padding:3px 6px" title="通常出題">▶</button>
+          <button class="btn-s" data-home-new="${p.id}" style="font-size:10px;padding:3px 6px;color:#60a5fa" title="未回答">🆕</button>
           <button class="btn-s" data-home-weak="${p.id}" style="font-size:10px;padding:3px 6px;color:#f87171" title="苦手特訓">🔥</button>
         </div>
       </div>`;
@@ -5501,7 +5501,7 @@ function renderHome() {
       <div style="font-size:13px;color:#7a8ea5;margin-top:2px">読込中...</div>
     </div>
     ${groups}
-    <div style="text-align:center;font-size:10px;color:#7a8ea5;margin-top:4px">📋順番 🔀ランダム 🔥苦手特訓</div>
+    <div style="text-align:center;font-size:10px;color:#7a8ea5;margin-top:4px">▶通常 🆕未回答 🔥苦手特訓</div>
     <div id="judgeHomeToggle" style="text-align:center;margin-top:10px;cursor:pointer">
       <span style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:13px;font-weight:600;background:${S.judgeMode?"rgba(74,222,128,0.12)":"rgba(100,116,139,0.08)"};color:${S.judgeMode?"#4ade80":"#64748b"};border:1px solid ${S.judgeMode?"rgba(74,222,128,0.3)":"rgba(100,116,139,0.15)"}">
         ${S.judgeMode?"📊 判定モード ON — 回答を記録中":"📊 判定モード OFF — タップでON"}
@@ -5577,17 +5577,6 @@ function renderHome() {
   }).catch(()=>{});
 
   // Stock play handlers
-  document.querySelectorAll("[data-home-seq]").forEach(el=>{
-    el.onclick=async()=>{
-      el.textContent="⏳";
-      const items = await stockGetAllLight(el.dataset.homeSeq);
-      if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="📋";return;}
-      S._stockReturnScreen = "home";
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
-      S.stockPlayIdx = 0; S._stockPlaylistActive = false;
-      await loadStockItem(items[0].id);
-    };
-  });
   document.querySelectorAll("[data-home-rnd]").forEach(el=>{
     el.onclick=async()=>{
       el.textContent="⏳";
@@ -5598,6 +5587,20 @@ function renderHome() {
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
       await loadStockItem(items[0].id);
+    };
+  });
+  document.querySelectorAll("[data-home-new]").forEach(el=>{
+    el.onclick=async()=>{
+      el.textContent="⏳";
+      const items = await stockGetAllLight(el.dataset.homeNew);
+      if(!items.length){alert("このパートのストックがありません。");el.textContent="🆕";return;}
+      const unplayed = items.filter(it=>!it.lastPracticed);
+      if(!unplayed.length){alert("未回答の問題がありません。全問回答済みです。");el.textContent="🆕";return;}
+      for(let i=unplayed.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[unplayed[i],unplayed[j]]=[unplayed[j],unplayed[i]];}
+      S._stockReturnScreen = "home";
+      S.stockPlaylist = unplayed.map(it=>({id:it.id, part:it.part}));
+      S.stockPlayIdx = 0; S._stockPlaylistActive = false;
+      await loadStockItem(unplayed[0].id);
     };
   });
   document.querySelectorAll("[data-home-weak]").forEach(el=>{
