@@ -2174,27 +2174,40 @@ async function stockCountByPart() {
   return counts;
 }
 
-// Efficient per-part stats (counts only, no data loaded)
+// Efficient per-part stats — uses index.count() which is O(1), no cursor needed
 async function stockStatsPerPart() {
   const db = await openStockDB();
+  const parts = ["part1","part2","part3","part3_3p","part4","part5","part6","part7"];
   const stats = {};
-  return new Promise((resolve, reject) => {
+  const tx = db.transaction("questions","readonly");
+  const partIdx = tx.objectStore("questions").index("part");
+  await Promise.all(parts.map(p => new Promise((resolve) => {
+    const req = partIdx.count(p);
+    req.onsuccess = () => {
+      if (req.result > 0) stats[p] = {total: req.result, mastered: 0, unplayed: 0};
+      resolve();
+    };
+    req.onerror = () => resolve();
+  })));
+  return stats;
+}
+
+// Lazy mastered count — runs after UI is rendered, updates DOM
+async function stockMasteredCount(partId) {
+  const db = await openStockDB();
+  return new Promise((resolve) => {
+    let mastered = 0, unplayed = 0;
     const tx = db.transaction("questions","readonly");
-    const store = tx.objectStore("questions");
-    const req = store.openCursor();
+    const req = tx.objectStore("questions").index("part").openCursor(partId);
     req.onsuccess = (e) => {
       const c = e.target.result;
       if (c) {
-        const v = c.value;
-        const p = v.part || "?";
-        if (!stats[p]) stats[p] = {total:0, mastered:0, unplayed:0};
-        stats[p].total++;
-        if (v.mastered) stats[p].mastered++;
-        if (!v.lastPracticed) stats[p].unplayed++;
+        if (c.value.mastered) mastered++;
+        if (!c.value.lastPracticed) unplayed++;
         c.continue();
-      } else resolve(stats);
+      } else resolve({mastered, unplayed});
     };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => resolve({mastered: 0, unplayed: 0});
   });
 }
 
@@ -2205,9 +2218,11 @@ async function stockPreview(part, n=3) {
     const tx = db.transaction("questions","readonly");
     const req = tx.objectStore("questions").index("part").openCursor(part);
     const items = [];
+    let checked = 0;
     req.onsuccess = (e) => {
       const c = e.target.result;
-      if (c && items.length < n) {
+      if (c && items.length < n && checked < 50) {
+        checked++;
         const v = c.value;
         if (!v.mastered) {
           const txt = v.qSet?.sentence || v.qSet?.spoken || v.qSet?.talk?.slice(0,50)
@@ -2980,14 +2995,13 @@ async function renderStockSelect() {
   const partSections = PARTS.map(p => {
     const s = stats[p.id];
     if (!s || s.total === 0) return "";
-    const unmasteredCount = s.total - s.mastered;
     const preview = (previews[p.id]||[]).map((txt,i) =>
       `<div style="font-size:11px;color:#a0b4c8;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${esc(txt)}</div>`
     ).join("");
     return `<div style="margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <span style="font-size:13px;font-weight:700;color:#7b9cf7;font-family:monospace">${p.icon} ${p.label}</span>
-        <span class="p-tag">${unmasteredCount}問${s.mastered>0?` <span style="color:#4ade80">✓${s.mastered}</span>`:""}</span>
+        <span class="p-tag"><span id="stockCount_${p.id}">${s.total}問</span></span>
       </div>
       ${preview}
       ${s.total>3?`<div style="font-size:11px;color:#7a8ea5">…他${s.total-3}問</div>`:""}
@@ -2995,8 +3009,7 @@ async function renderStockSelect() {
         <button class="btn-s" data-stock-seq="${p.id}" style="flex:1;font-size:12px">📋 順番に再生</button>
         <button class="btn-s" data-stock-rnd="${p.id}" style="flex:1;font-size:12px">🔀 ランダム再生</button>
       </div>
-      ${s.unplayed>0?`<button class="btn-s" data-stock-new="${p.id}" style="font-size:11px;color:#60a5fa;margin-top:4px">🆕 未回答のみ (${s.unplayed}問)</button>`:""}
-      ${s.mastered>0?`<button class="btn-s" data-del-mastered="${p.id}" style="font-size:11px;color:#f87171;margin-top:6px;opacity:0.7">🗑️ 卒業済${s.mastered}問を削除</button>`:""}
+      <div id="stockExtra_${p.id}"></div>
     </div>`;
   }).join("");
 
@@ -3086,21 +3099,6 @@ async function renderStockSelect() {
     alert(`インポート結果:\n${results.join("\n")}`);
     render();
   };  // 卒業済削除（パート別）
-  document.querySelectorAll("[data-del-mastered]").forEach(el=>{
-    el.onclick=async()=>{
-      const partId = el.dataset.delMastered;
-      el.textContent="⏳ 読込中...";
-      const items = await stockGetAllLight(partId);
-      const mastered = items.filter(it=>it.mastered);
-      if(!mastered.length) { el.textContent="なし"; return; }
-      if(!confirm(`${partId.toUpperCase()} の卒業済${mastered.length}問を削除しますか？\n\n※ 3回連続正解した問題のみ削除されます。`)) { el.textContent=`🗑️ 卒業済${mastered.length}問を削除`; return; }
-      el.textContent="⏳ 削除中...";
-      for (const item of mastered) { await stockDelete(item.id); }
-      alert(`✅ ${mastered.length}問を削除しました`);
-      render();
-    };
-  });
-
   // 卒業済一括削除（全パート）
   const dam=$("stockDelAllMastered"); if(dam)dam.onclick=async()=>{
     dam.textContent="⏳ 読込中...";
@@ -3166,20 +3164,6 @@ async function renderStockSelect() {
     };
   });
 
-  // 未回答のみ再生ボタン（on-demand loading）
-  document.querySelectorAll("[data-stock-new]").forEach(el=>{
-    el.onclick=async()=>{
-      el.textContent="⏳ 読込中...";
-      const allItems = await stockGetAllLight(el.dataset.stockNew);
-      const items = allItems.filter(it=>!it.lastPracticed);
-      if(items.length===0){ alert("未回答の問題がありません"); el.textContent="🆕 未回答のみ"; return; }
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
-      S.stockPlayIdx = 0;
-      S._stockPlaylistActive = false;
-      await loadStockItem(items[0].id);
-    };
-  });
-
   const eb=$("stockExportBtn"); if(eb)eb.onclick=async()=>{
     await stockExport(); eb.textContent="✅ 保存しました";
   };
@@ -3220,6 +3204,49 @@ async function renderStockSelect() {
     tx.objectStore("questions").clear();
     tx.oncomplete=()=>render();
   };
+
+  // Lazy load mastered/unplayed counts per part (runs after UI is visible)
+  for (const p of PARTS) {
+    if (!stats[p.id]) continue;
+    stockMasteredCount(p.id).then(({mastered, unplayed}) => {
+      const el = document.getElementById(`stockCount_${p.id}`);
+      if (el) {
+        const unmastered = stats[p.id].total - mastered;
+        el.innerHTML = `${unmastered}問${mastered>0?` <span style="color:#4ade80">✓${mastered}</span>`:""}`;
+      }
+      const extra = document.getElementById(`stockExtra_${p.id}`);
+      if (extra) {
+        let h = "";
+        if (unplayed > 0) h += `<button class="btn-s" data-stock-new="${p.id}" style="font-size:11px;color:#60a5fa;margin-top:4px">🆕 未回答のみ (${unplayed}問)</button>`;
+        if (mastered > 0) h += `<button class="btn-s" data-del-mastered="${p.id}" style="font-size:11px;color:#f87171;margin-top:6px;opacity:0.7">🗑️ 卒業済${mastered}問を削除</button>`;
+        extra.innerHTML = h;
+        // Bind handlers for newly added buttons
+        extra.querySelectorAll("[data-stock-new]").forEach(btn => {
+          btn.onclick = async () => {
+            btn.textContent="⏳ 読込中...";
+            const allItems = await stockGetAllLight(btn.dataset.stockNew);
+            const items = allItems.filter(it=>!it.lastPracticed);
+            if(items.length===0){ alert("未回答の問題がありません"); btn.textContent="🆕 未回答のみ"; return; }
+            S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+            S.stockPlayIdx = 0; S._stockPlaylistActive = false;
+            await loadStockItem(items[0].id);
+          };
+        });
+        extra.querySelectorAll("[data-del-mastered]").forEach(btn => {
+          btn.onclick = async () => {
+            btn.textContent="⏳ 読込中...";
+            const items = await stockGetAllLight(btn.dataset.delMastered);
+            const mst = items.filter(it=>it.mastered);
+            if(!mst.length) { btn.textContent="なし"; return; }
+            if(!confirm(`${btn.dataset.delMastered.toUpperCase()} の卒業済${mst.length}問を削除しますか？`)) { render(); return; }
+            btn.textContent="⏳ 削除中...";
+            for (const item of mst) { await stockDelete(item.id); }
+            alert(`✅ ${mst.length}問を削除しました`); render();
+          };
+        });
+      }
+    });
+  }
 }
 
 
