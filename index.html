@@ -2969,7 +2969,7 @@ async function loadNextStockItem() {
   S.stockPlayIdx++;
   if (S.stockPlayIdx >= S.stockPlaylist.length) {
     // プレイリスト終了
-    S.screen="stockSelect"; S.stockMode=false; render(); return;
+    S.screen=S._stockReturnScreen||"home"; S.stockMode=false; render(); return;
   }
   await loadStockItem(S.stockPlaylist[S.stockPlayIdx]);
 }
@@ -3167,6 +3167,7 @@ async function renderStockSelect() {
       el.textContent="⏳ 読込中...";
       const items = await stockGetAllLight(el.dataset.stockSeq);
       if(items.length===0) { el.textContent="📋 順番に再生"; return; }
+      S._stockReturnScreen = "stockSelect";
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
       S._stockPlaylistActive = false;
@@ -3181,6 +3182,7 @@ async function renderStockSelect() {
       const items = await stockGetAllLight(el.dataset.stockRnd);
       if(items.length===0) { el.textContent="🔀 ランダム再生"; return; }
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+      S._stockReturnScreen = "stockSelect";
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
       S._stockPlaylistActive = false;
@@ -3283,6 +3285,7 @@ async function renderStockSelect() {
             const allItems = await stockGetAllLight(btn.dataset.stockNew);
             const items = allItems.filter(it=>!it.lastPracticed);
             if(items.length===0){ alert("未回答の問題がありません"); btn.textContent="🆕 未回答のみ"; return; }
+            S._stockReturnScreen = "stockSelect";
             S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
             S.stockPlayIdx = 0; S._stockPlaylistActive = false;
             await loadStockItem(items[0].id);
@@ -4011,6 +4014,7 @@ async function renderDiagnosis() {
       }
       // Shuffle and start playlist
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+      S._stockReturnScreen = "diagnosis";
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
       S._stockPlaylistActive = false;
@@ -5578,6 +5582,7 @@ function renderHome() {
       el.textContent="⏳";
       const items = await stockGetAllLight(el.dataset.homeSeq);
       if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="📋";return;}
+      S._stockReturnScreen = "home";
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
       await loadStockItem(items[0].id);
@@ -5589,6 +5594,7 @@ function renderHome() {
       const items = await stockGetAllLight(el.dataset.homeRnd);
       if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="🔀";return;}
       for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+      S._stockReturnScreen = "home";
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
       await loadStockItem(items[0].id);
@@ -5618,6 +5624,7 @@ function renderHome() {
         const weakItems = items.filter(it => weakTypes.includes(it.qSet?._questionType));
         if (!weakItems.length) { alert(`苦手タイプ（${weakTypes.join(", ")}）のストック問題がありません。\n問題を生成してストックしてください。`); el.textContent="🔥"; return; }
         for(let i=weakItems.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[weakItems[i],weakItems[j]]=[weakItems[j],weakItems[i]];}
+        S._stockReturnScreen = "home";
         S.stockPlaylist = weakItems.map(it=>({id:it.id, part:it.part}));
         S.stockPlayIdx = 0; S._stockPlaylistActive = false;
         await loadStockItem(weakItems[0].id);
@@ -5950,7 +5957,7 @@ function renderStudy() {
     }
   }
   $("backBtn").onclick=()=>{
-    if(S.stockMode) { stopSpeak();S.stockMode=false;S.screen="stockSelect";render(); return; }
+    if(S.stockMode) { stopSpeak();S.stockMode=false;S.screen=S._stockReturnScreen||"home";render(); return; }
     if(S.sessionNum>0 && S.sessionNum<SESSION_SIZE) {
       if(!confirm(`セッション進行中です（${S.sessionNum}/${SESSION_SIZE}問完了）。\nホームに戻りますか？`)) return;
     }
