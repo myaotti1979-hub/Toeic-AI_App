@@ -2490,7 +2490,7 @@ async function stockPreview(part, n=3) {
         if (!v.mastered) {
           const txt = v.qSet?.sentence || v.qSet?.spoken || v.qSet?.talk?.slice(0,50)
             || v.qSet?.conversation?.slice(0,50) || v.qSet?.text?.slice(0,50) || "問題";
-          items.push(String(txt).slice(0,60));
+          items.push({text: String(txt).slice(0,60), difficulty: v.difficulty||0});
         }
         c.continue();
       } else resolve(items);
@@ -3263,9 +3263,11 @@ async function renderStockSelect() {
   const partSections = PARTS.map(p => {
     const s = stats[p.id];
     if (!s || s.total === 0) return "";
-    const preview = (previews[p.id]||[]).map((txt,i) =>
-      `<div style="font-size:11px;color:#a0b4c8;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${esc(txt)}</div>`
-    ).join("");
+    const preview = (previews[p.id]||[]).map((item,i) => {
+      const d = item.difficulty;
+      const dBadge = d ? `<span style="font-size:9px;color:${d>=800?"#ef4444":d>=600?"#f59e0b":"#22c55e"};margin-left:4px">${d}点</span>` : "";
+      return `<div style="font-size:11px;color:#a0b4c8;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${esc(item.text)}${dBadge}</div>`;
+    }).join("");
     return `<div style="margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <span style="font-size:13px;font-weight:700;color:#7b9cf7;font-family:monospace">${p.icon} ${p.label}</span>
