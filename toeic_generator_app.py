@@ -133,7 +133,7 @@ BLANK_RULE = '\nCRITICAL BLANK RULE — The sentence MUST contain EXACTLY ONE bl
 BLANK_RULE6 = '\nCRITICAL: The text MUST contain exactly 4 blanks written as (1)------- (2)------- (3)------- (4)-------. Without these blanks the output is INVALID.'
 ANSWER_POSITION = '\nANSWER POSITION RULE — CRITICAL: The correct answer MUST be RANDOMLY distributed across positions. Do NOT always put the correct answer at (A)/index 0. Vary the "correct" field: use 0, 1, 2, 3 with roughly equal frequency. If generating multiple questions, NEVER make them all the same position.'
 CHOICE_RULE = '\nCHOICE COUNT RULE — STRICT: Every question MUST have EXACTLY 4 choices labeled (A), (B), (C), (D). NEVER include (E) or more. Part 2 MUST have EXACTLY 3 choices (A), (B), (C). This is a hard TOEIC format requirement — violating it makes the output INVALID.'
-VOCAB_RULE = '\nVOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence), "level" (word difficulty: "A" = basic ~600 level words like delay/confirm/available, "B" = intermediate 600-800 words like negotiate/reimburse/mandatory, "C" = advanced 800+ words like procurement/arbitration/discretionary). IMPORTANT: "level" reflects the WORD ITSELF difficulty, NOT the question difficulty. A basic word like "schedule" is always "A" even in an advanced question. Choose words KEY to solving the question.'
+VOCAB_RULE = '\nVOCABULARY EXTRACTION: Include a "vocab" array with exactly 3 key words/phrases. For each: "word" (English — always BASE/DICTIONARY form), "pos" (part of speech: "noun","verb","adjective","adverb","phrase"), "ja" (Japanese meaning), "example" (short example sentence), "level" (word difficulty 5-scale: "A1" = basic ~400 level like go/have/meeting/office, "A2" = elementary ~500-600 like schedule/confirm/delay/available, "B1" = intermediate 600-700 like negotiate/implement/mandatory/comply, "B2" = upper-intermediate 750-850 like procurement/reimburse/discretionary/contingent, "C" = advanced 900+ like arbitration/adjudicate/commensurate/promulgate). IMPORTANT: "level" reflects the WORD ITSELF difficulty, NOT the question difficulty. A basic word like "schedule" is always "A2" even in an advanced question. Choose words KEY to solving the question.'
 CONSISTENCY = '\nCONSISTENCY RULE — CRITICAL: The "correct" field is a 0-indexed integer pointing to the correct choice. The "explanation_ja" and "explanation_en" MUST refer to the SAME letter as "correct" (correct=0→A, correct=1→B, correct=2→C, correct=3→D). NEVER write "正解は(C)" if correct=3, NEVER write "The answer is B" if correct=0. ALWAYS verify the correct letter matches before responding.\nEXPLANATION FORMAT — MANDATORY: explanation_ja MUST start with "正解は(X)。" where X is the correct letter (A/B/C/D). Then explain why it is correct and why each wrong answer is wrong. Example: "正解は(B)。[理由]。(A)は[なぜ間違い]。(C)は[なぜ間違い]。(D)は[なぜ間違い]。"\nDISTRACTOR QUALITY — ALL PARTS: Wrong answers must NOT be valid answers to the question. Each wrong answer must fail for a clear, identifiable reason. If a wrong answer could reasonably be correct, replace it with something clearly wrong.'
 AUDIO_RULE = '\nAUDIO CONSISTENCY RULE — CRITICAL: The "audio" field MUST contain the EXACT SAME text as what will be shown/read. For Part 1: audio MUST be verbatim "(A) <choice A text>. (B) <choice B text>. (C) <choice C text>. (D) <choice D text>." with the EXACT same wording as in the "choices" array. For Part 2: audio MUST be "<spoken question>. (A) <choice A>. (B) <choice B>. (C) <choice C>." with identical text. For Part 3: audio MUST be the EXACT "conversation" text. For Part 4: audio MUST be the EXACT "talk" text. NEVER use placeholders like [spoken] or [same as talk] — always write the literal text. If audio text differs from choices/conversation/talk, the output is INVALID.'
 
@@ -193,7 +193,7 @@ def build_prompt(level, part, t):
     # Listening系(Part 1-4)では音声整合性ルールを追加
     is_listening = part in ("part1", "part2", "part3", "part3_3p", "part4")
     audio_rule = AUDIO_RULE if is_listening else ""
-    sys = f"You are an expert TOEIC test maker. {LEVEL_GUIDES[level]}\nRespond with EXACTLY ONE JSON object — no arrays, no wrapping, no markdown, no backticks. DO NOT wrap the output in {{\"part1\":[...]}} or similar. DO NOT produce multiple questions. Output ONLY a single {{...}} object matching the template below.{JA}{EN_EXPL}{CONSISTENCY}{CHOICE_RULE}{audio_rule}{VOCAB_RULE}"
+    sys = f"You are an expert TOEIC test maker. {LEVEL_GUIDES[level]}\nRespond with EXACTLY ONE JSON object — no arrays, no wrapping, no markdown, no backticks. DO NOT wrap the output in {{\"part1\":[...]}} or similar. DO NOT produce multiple questions. Output ONLY a single {{...}} object matching the template below.{JA}{EN_EXPL}{CONSISTENCY}{CHOICE_RULE}{audio_rule}{VOCAB_RULE}\nDIFFICULTY RATING: Include \"difficulty\" (integer 200-990) = the TOEIC score a test-taker needs to answer correctly. Rate based on THESE OBJECTIVE CRITERIA:\n- VOCAB: basic (schedule/meeting) →400, business (negotiate/reimburse) →650, advanced (procurement/arbitration) →850\n- GRAMMAR: simple tense/preposition →400, relative clause/participle →600, subjunctive/inversion →800\n- INFERENCE: explicit info →400, simple inference →600, implication/cross-reference →800\n- DISTRACTORS: obviously wrong →400, plausible but wrong →650, very tricky/similar →850\nScore = average of applicable criteria. beginner-level questions MUST be 300-500, intermediate 500-750, advanced 700-950."
     tt, td = t.get("type","varied"), t.get("desc","")
     is_graphic = tt.startswith("graphic_")
     # Part 5 scenario diversity: randomly select a business context
@@ -299,7 +299,7 @@ def build_prompt(level, part, t):
     GRULE = ""
     if is_graphic:
         GRULE = '\\nGRAPHIC DATA — MANDATORY: You MUST include a "graphic" field in the JSON with structured data that the test-taker will see alongside the conversation/talk/text. The conversation/talk MUST reference specific data from this graphic. EXACTLY ONE of the 3 questions MUST start with "Look at the graphic." and can ONLY be answered by reading the graphic data.\\nGraphic format: "graphic":{{"title":"Graphic Title","headers":["Column1","Column2","Column3"],"rows":[["row1col1","row1col2","row1col3"],["row2col1","row2col2","row2col3"]]}}\\nMatch the graphic to the scenario type:\\n- Schedule/Agenda: headers=["Time","Event","Room"], rows=[["9:00 AM","Opening Remarks","Main Hall"],["10:00 AM","Workshop A","Room 201"]]\\n- Price list/Menu: headers=["Service","Standard","Premium"], rows=[["Oil Change","$35","$55"],["Tire Rotation","$25","$40"]]\\n- Order form/Invoice: headers=["Item","Qty","Unit Price","Total"], rows=[["Desk lamp","5","$35.00","$175.00"],["Monitor stand","3","$48.00","$144.00"]]\\n- Floor map/Seating: headers=["Room/Area","Department","Contact"], rows=[["Suite 301","Marketing","Ms. Chen"],["Suite 302","Finance","Mr. Park"]]\\n- Bar/Pie chart data: headers=["Quarter","Revenue ($M)","Growth (%)"], rows=[["Q1","12.4","8%"],["Q2","14.1","14%"],["Q3","11.8","-16%"]]\\n- Survey results: headers=["Category","Satisfaction (%)","Responses"], rows=[["Customer Service","92%","847"],["Delivery Speed","78%","823"]]\\n- Map/Directions: headers=["Destination","Building","Walking Time"], rows=[["Cafeteria","Building B","5 min"],["Parking","Lot C","8 min"]]\\n- Comparison: headers=["Feature","Plan A","Plan B","Plan C"], rows=[["Storage","10 GB","50 GB","Unlimited"],["Price/mo","$9.99","$19.99","$29.99"]]\\nUse 3-6 rows and 3-5 columns. Data must be SPECIFIC (real numbers, names, times) — never use placeholder text.'
-    VEX = ',"vocab":[{{"word":"English word","pos":"noun","ja":"日本語","example":"Short sentence","level":"B"}},{{"word":"word2","pos":"verb","ja":"訳","example":"sentence","level":"A"}},{{"word":"word3","pos":"adjective","ja":"訳","example":"sentence","level":"C"}}]'
+    VEX = ',"difficulty":750,"vocab":[{{"word":"English word","pos":"noun","ja":"日本語","example":"Short sentence","level":"B1"}},{{"word":"word2","pos":"verb","ja":"訳","example":"sentence","level":"A2"}},{{"word":"word3","pos":"adjective","ja":"訳","example":"sentence","level":"C"}}]'
     # Get level-specific rules per part
     R1 = get_level_rules("part1", level)
     R2 = get_level_rules("part2", level)
@@ -1158,16 +1158,21 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
     Returns the item dict on success, raises on failure."""
     prompt, ap = build_prompt(level, actual_part, to)
     raw = generate_text(prompt, engine, model, url, api_key)
-    qs = enforce_choice_count(normalize_set(parse_json(raw), ap))
+    parsed = parse_json(raw)
+    difficulty = parsed.get("difficulty", 0)  # Extract before normalize_set strips it
+    qs = enforce_choice_count(normalize_set(parsed, ap))
     if not qs.get("questions"): raise ValueError("No questions")
     # Consistency check BEFORE shuffle (letters still match LLM output)
     if not check_answer_consistency(qs, actual_part):
         print(f"[RETRY] Answer/explanation mismatch detected, regenerating...", flush=True)
         time.sleep(2)
         raw2 = generate_text(prompt, engine, model, url, api_key)
-        qs2 = enforce_choice_count(normalize_set(parse_json(raw2), ap))
+        parsed2 = parse_json(raw2)
+        difficulty2 = parsed2.get("difficulty", 0)
+        qs2 = enforce_choice_count(normalize_set(parsed2, ap))
         if qs2.get("questions") and check_answer_consistency(qs2, actual_part):
             qs = qs2
+            difficulty = difficulty2
         else:
             print(f"[WARN] Retry also inconsistent, keeping original", flush=True)
     # Shuffle AFTER consistency check
@@ -1176,6 +1181,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
     real_part = qs.get("part", actual_part)
     item = {"part": real_part, "level": level,
             "createdAt": int(time.time()*1000) + idx_seed,
+            "difficulty": difficulty,
             "qSet": qs, "imgUrl": None, "audioOpus": None}
     # TTS
     if do_tts and qs.get("audio"):
@@ -2244,7 +2250,7 @@ with st.sidebar:
                         st.session_state.pop("_html_export", None)
 
     st.divider()
-    st.caption("v2026.04.23b · Part 5和訳 + 解説強化 + scenario diversity · 303 types")
+    st.caption("v2026.04.23e · 5-level vocab + auto difficulty + P5和訳 + scenario diversity · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
