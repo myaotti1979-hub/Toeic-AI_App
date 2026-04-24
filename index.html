@@ -3314,6 +3314,7 @@ async function renderStockSelect() {
         </select>
       </div>
       <div id="difficultyProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
+      <div id="difficultyDist" style="margin-top:6px"></div>
       <button class="btn-s" id="part5TransBtn" style="width:100%;font-size:11px;color:#fbbf24;margin-top:6px">📖 Part 5 和訳を追加</button>
       <div id="transProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
     </div>
@@ -3526,6 +3527,59 @@ async function renderStockSelect() {
       const unrated = all.filter(it=>!it.difficulty).length;
       const prog = $("difficultyProgress");
       if (prog) prog.textContent = `判定済み: ${all.length-unrated}/${all.length}問`;
+      // Show difficulty distribution
+      const distEl = $("difficultyDist");
+      if (distEl && all.length - unrated > 0) {
+        const rated = all.filter(it=>it.difficulty>0);
+        const bands = [
+          {label:"~400", min:0, max:400, color:"#22c55e"},
+          {label:"400-550", min:401, max:550, color:"#86efac"},
+          {label:"550-700", min:551, max:700, color:"#fbbf24"},
+          {label:"700-850", min:701, max:850, color:"#f59e0b"},
+          {label:"850+", min:851, max:999, color:"#ef4444"},
+        ];
+        const counts = bands.map(b => ({...b, count: rated.filter(it=>it.difficulty>=b.min && it.difficulty<=b.max).length}));
+        const maxCount = Math.max(...counts.map(c=>c.count), 1);
+        // Per-part breakdown
+        const partDist = {};
+        rated.forEach(it => {
+          const p = it.part||"?";
+          if (!partDist[p]) partDist[p] = {total:0, sum:0, min:999, max:0};
+          partDist[p].total++;
+          partDist[p].sum += it.difficulty;
+          if (it.difficulty < partDist[p].min) partDist[p].min = it.difficulty;
+          if (it.difficulty > partDist[p].max) partDist[p].max = it.difficulty;
+        });
+        let partRows = "";
+        for (const p of ["part1","part2","part3","part4","part5","part6","part7"]) {
+          const d = partDist[p];
+          if (!d) continue;
+          const avg = Math.round(d.sum/d.total);
+          const avgCol = avg>=800?"#ef4444":avg>=600?"#f59e0b":"#22c55e";
+          partRows += `<div style="display:flex;justify-content:space-between;font-size:10px;padding:1px 0">
+            <span style="color:#a0b4c8;min-width:45px">${p.replace("part","P")}</span>
+            <span style="color:${avgCol}">${avg}点</span>
+            <span style="color:#64748b">${d.min}-${d.max}</span>
+            <span style="color:#7a8ea5">${d.total}問</span>
+          </div>`;
+        }
+        distEl.innerHTML = `<details style="margin-top:4px">
+          <summary style="font-size:11px;color:#fbbf24;cursor:pointer">📊 難易度分布 (${rated.length}問)</summary>
+          <div style="margin-top:6px">
+            ${counts.map(c => `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+              <span style="font-size:10px;color:#a0b4c8;min-width:50px">${c.label}</span>
+              <div style="flex:1;height:10px;background:#1e293b;border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${Math.round(c.count/maxCount*100)}%;background:${c.color}"></div>
+              </div>
+              <span style="font-size:10px;color:#dce6f0;min-width:30px;text-align:right">${c.count}</span>
+            </div>`).join("")}
+            <div style="border-top:1px solid rgba(255,255,255,0.05);margin-top:6px;padding-top:6px">
+              <div style="font-size:10px;color:#7a8ea5;margin-bottom:3px">パート別平均</div>
+              ${partRows}
+            </div>
+          </div>
+        </details>`;
+      }
       if (unrated === 0) drb.textContent = "✅ 全問判定済み";
       else drb.textContent = `🎯 未判定を判定 (${unrated}問)`;
     });
@@ -6269,7 +6323,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25a · IRT difficulty + P5和訳 + flashcard + 5-level vocab · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25b · difficulty distribution + IRT fix + P5和訳 + flashcard · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
