@@ -2007,9 +2007,10 @@ async function runDifficultyRating(onProgress, partFilter) {
     } catch(e) {
       console.warn("[DIFFICULTY] Batch error:", e.message || e);
       errors++;
+      S._lastDiffError = (e.message||String(e)).slice(0,200);
       if (errors > 20) throw new Error(`エラー${errors}回で中断: ${e.message||e}`);
     }
-    if (onProgress) onProgress(rated, total, errors);
+    if (onProgress) onProgress(rated, total, errors, S._lastDiffError);
     if (i + BATCH < unrated.length) await new Promise(r => setTimeout(r, 1000));
   }
   return {rated, total: all.length, errors};
@@ -3451,13 +3452,28 @@ async function renderStockSelect() {
       const unrated = all.filter(it=>!it.difficulty);
       const partLabel = partSel ? partSel.toUpperCase() : "全パート";
       if (unrated.length === 0) { alert(`✅ ${partLabel}の難易度判定が完了しています（${all.length}問判定済み）`); return; }
-      if (!confirm(`${partLabel}: 未判定 ${unrated.length}問 / 全${all.length}問\n推定時間: 約${Math.ceil(unrated.length/20*8/60)}分\n⚠️ 画面をスリープにしないでください。\n\n未判定のみ判定します。中断後は再実行で続きから判定できます。`)) return;
-      drb.disabled=true; drb.textContent="⏳ 判定中...";
+      
+      // Test run: try 3 questions first
       const prog = $("difficultyProgress");
+      drb.disabled=true; drb.textContent="🧪 テスト中...";
+      if(prog) prog.textContent="3問でAPIテスト中...";
       try {
-        const result = await runDifficultyRating((done,tot,err) => {
+        const testBatch = unrated.slice(0, 3);
+        const testScores = await rateDifficultyBatch(testBatch);
+        if(prog) prog.textContent=`✅ テスト成功: [${testScores.join(", ")}] — 続けて全問判定を開始します`;
+      } catch(e) {
+        drb.disabled=false; drb.textContent=`❌ テスト失敗`;
+        if(prog) prog.textContent=`API Error: ${(e.message||String(e)).slice(0,200)}`;
+        alert(`APIテスト失敗:\n${e.message||e}\n\nコンソール(F12)で詳細を確認してください。`);
+        return;
+      }
+      
+      if (!confirm(`${partLabel}: 未判定 ${unrated.length}問\n推定: 約${Math.ceil(unrated.length/25*15/60)}分\n⚠️ 画面をスリープにしないでください。\n\n開始しますか？`)) { drb.disabled=false; drb.textContent=`🎯 未判定を判定 (${unrated.length}問)`; return; }
+      drb.textContent="⏳ 判定中...";
+      try {
+        const result = await runDifficultyRating((done,tot,err,lastErr) => {
           drb.textContent=`⏳ ${done}/${tot}`;
-          if(prog) prog.textContent=`${Math.round(done/tot*100)}%${err?` (${err}err)`:""}`;
+          if(prog) prog.textContent=`${Math.round(done/tot*100)}%${err?` (${err}err) ${(lastErr||"").slice(0,80)}`:""}`;
         }, partSel || undefined);
         drb.textContent="✅ 完了";
         if(prog) prog.textContent=`${result.rated}問判定 (全${result.total}問)`;
@@ -3482,9 +3498,9 @@ async function renderStockSelect() {
     drrb.textContent="⏳ 判定中...";
     const prog = $("difficultyProgress");
     try {
-      const result = await runDifficultyRating((done,tot,err) => {
+      const result = await runDifficultyRating((done,tot,err,lastErr) => {
         drrb.textContent=`⏳ ${done}/${tot}`;
-        if(prog) prog.textContent=`${Math.round(done/tot*100)}%${err?` (${err}err)`:""}`;
+        if(prog) prog.textContent=`${Math.round(done/tot*100)}%${err?` (${err}err) ${(lastErr||"").slice(0,80)}`:""}`;
       }, partSel || undefined);
       drrb.textContent="✅ 完了";
       if(prog) prog.textContent=`${result.rated}問再判定完了`;
