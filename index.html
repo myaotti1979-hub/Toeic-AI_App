@@ -1900,6 +1900,20 @@ async function stockUpdateField(id, fields) {
   });
 }
 
+// Gemini call with thinking OFF (for structured JSON output)
+async function geminiJSON(prompt) {
+  const m = GEMINI_FLASH;
+  const res = await throttledFetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${S.apiKey}`,
+    { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],
+        generationConfig:{temperature:0.1, responseMimeType:"application/json"}}) }
+  );
+  if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0,150)}`);
+  const d = await res.json();
+  return d.candidates[0].content.parts.map(p=>p.text||"").join("");
+}
+
 function extractQuestionText(item) {
   const qs = item.qSet || {};
   const q = qs.questions?.[0] || {};
@@ -1912,67 +1926,62 @@ function extractQuestionText(item) {
   return `[${item.part}] ${text.slice(0,200)} | choices: ${choices.slice(0,100)}`;
 }
 
-async function rateDifficultyBatch(items, apiKey) {
+async function rateDifficultyBatch(items) {
   const texts = items.map((it,i) => `${i+1}. ${extractQuestionText(it)}`).join("\n");
   const prompt = `You are a TOEIC scoring expert calibrated against official ETS score descriptors.
-Rate each question's difficulty as the TOEIC score needed to answer it correctly.
+Rate each question's difficulty as the TOEIC score a test-taker needs to answer correctly.
 
-CALIBRATION CRITERIA (rate each factor, then average):
-1. VOCABULARY: basic daily words (schedule/office) →350-450 | business vocab (negotiate/deadline) →550-700 | advanced (procurement/arbitration/discretionary) →750-900
-2. GRAMMAR COMPLEXITY: simple SVO/basic tense →350-450 | relative clauses/passive/conditionals →550-700 | subjunctive/inversion/complex participle →750-900
-3. INFERENCE DEPTH: explicit info lookup →350-450 | simple inference/paraphrase →550-700 | implication/cross-reference/NOT questions →750-900
+CALIBRATION CRITERIA (evaluate each applicable factor, then average):
+1. VOCABULARY: basic daily words (schedule/office) →350-450 | business vocab (negotiate/deadline) →550-700 | advanced (procurement/arbitration) →750-900
+2. GRAMMAR COMPLEXITY: simple SVO/basic tense →350-450 | relative clauses/passive/conditionals →550-700 | subjunctive/inversion →750-900
+3. INFERENCE DEPTH: explicit info lookup →350-450 | simple inference/paraphrase →550-700 | implication/cross-reference/NOT →750-900
 4. DISTRACTOR QUALITY: obviously wrong choices →350-450 | plausible but distinguishable →550-700 | very tricky near-synonyms →750-900
 5. PROCESSING LOAD: short sentence →350-450 | medium passage →550-700 | long/multiple passages →750-900
 
 PART-SPECIFIC ANCHORS:
 - Part 1/2: mostly 350-600 (listening comprehension, explicit)
-- Part 5: word_form/basic_preposition →400-550, participle/conditional →600-750, rare vocab/complex structure →800+
+- Part 5: word_form/basic_preposition →400-550, participle/conditional →600-750, rare vocab →800+
 - Part 6: sentence insertion →700+, vocab in context →500-650
 - Part 7 single: main purpose →400-500, inference →650-800, NOT question →750+
 - Part 7 double/triple: cross-reference →750+, detail lookup →500-650
 
-Return ONLY a JSON array of integers, e.g. [650, 780, 420, ...]. No explanation.
+Return a JSON array of integers matching each question: [650, 780, 420, ...]
 
 Questions:
 ${texts}`;
 
-  const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey, {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.1,maxOutputTokens:500}})
-  });
-  if (!resp.ok) throw new Error(`API ${resp.status}`);
-  const data = await resp.json();
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  const cleaned = raw.replace(/```json|```/g,"").trim();
-  const scores = JSON.parse(cleaned);
-  if (!Array.isArray(scores) || scores.length !== items.length) throw new Error(`Expected ${items.length} scores, got ${scores.length}`);
-  return scores.map(s => Math.max(200, Math.min(990, Math.round(s))));
+  const raw = await geminiJSON(prompt);
+  const match = raw.match(/\[[\d\s,]+\]/);
+  if (!match) throw new Error("No JSON array: " + raw.slice(0,100));
+  const scores = JSON.parse(match[0]);
+  if (!Array.isArray(scores)) throw new Error("Not an array");
+  if (Math.abs(scores.length - items.length) > 2) throw new Error(`Expected ~${items.length}, got ${scores.length}`);
+  return scores.slice(0, items.length).map(s => Math.max(200, Math.min(990, Math.round(s))));
 }
 
 async function runDifficultyRating(onProgress) {
-  const apiKey = localStorage.getItem("gemini_api_key");
-  if (!apiKey) throw new Error("APIキーが設定されていません");
+  if (!S.apiKey) throw new Error("APIキーが設定されていません");
   const all = await stockGetAllLight();
   const unrated = all.filter(it => !it.difficulty);
   const total = unrated.length;
   if (total === 0) return {rated: 0, total: all.length};
-  const BATCH = 20;
+  const BATCH = 10;
   let rated = 0, errors = 0;
   for (let i = 0; i < unrated.length; i += BATCH) {
     const batch = unrated.slice(i, i + BATCH);
     try {
-      const scores = await rateDifficultyBatch(batch, apiKey);
-      for (let j = 0; j < batch.length; j++) {
+      const scores = await rateDifficultyBatch(batch);
+      for (let j = 0; j < batch.length && j < scores.length; j++) {
         await stockUpdateField(batch[j].id, {difficulty: scores[j]});
+        rated++;
       }
-      rated += batch.length;
     } catch(e) {
-      console.warn("[DIFFICULTY] Batch error:", e);
+      console.warn("[DIFFICULTY] Batch error:", e.message || e);
       errors++;
-      if (errors > 5) throw new Error("エラーが多すぎます。中断しました。");
+      if (errors > 15) throw new Error(`エラー${errors}回で中断: ${e.message||e}`);
     }
     if (onProgress) onProgress(rated, total, errors);
+    if (i + BATCH < unrated.length) await new Promise(r => setTimeout(r, 2000));
   }
   return {rated, total: all.length, errors};
 }
@@ -3380,8 +3389,7 @@ async function renderStockSelect() {
     loadNewSet();
   };
   const drb=$("difficultyRateBtn"); if(drb)drb.onclick=async()=>{
-    const apiKey = localStorage.getItem("gemini_api_key");
-    if (!apiKey) { alert("APIキーが設定されていません"); return; }
+    if (!S.apiKey) { alert("APIキーが設定されていません"); return; }
     const all = await stockGetAllLight();
     const unrated = all.filter(it=>!it.difficulty);
     if (unrated.length === 0) { alert("✅ 全問題の難易度判定が完了しています"); return; }
@@ -4410,7 +4418,7 @@ async function renderVocab() {
     ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>
     <div style="display:flex;gap:6px;padding:0 0 4px">
       <button class="btn-s" id="vocabFlashcard" style="flex:1;background:rgba(52,211,153,0.12);color:#34d399;font-size:12px">🃏 フラッシュカード</button>
-      ${weakWords.length>=4?`<button class="btn-s" id="vocabQuizWeak" style="flex:1;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button>`:""}</div>`:""}    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button> <button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24;margin-left:4px">🏷️ 5段階レベル判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
+      ${weakWords.length>=4?`<button class="btn-s" id="vocabQuizWeak" style="flex:1;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button>`:""}</div>`:""}    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button></div><div style="display:flex;gap:4px;justify-content:center;padding:0 0 4px"><button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24">🏷️ 未判定を判定 (${words.filter(w=>!["A1","A2","B1","B2","C"].includes(w.level)).length}語)</button><button class="btn-s" id="vocabLevelAllBtn" style="font-size:11px;color:#7a8ea5">🔄 全再判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
     <div style="display:flex;gap:4px;overflow-x:auto;padding:6px 0;flex-wrap:wrap">${filterBtns}</div>
     <div style="display:flex;gap:4px;overflow-x:auto;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
     <style>.pos-tab,.filter-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
@@ -4587,58 +4595,102 @@ async function renderVocab() {
     render();
   };
   // Level classification button
-  const lb=$("vocabLevelBtn"); if(lb)lb.onclick=async()=>{
+  async function runVocabLevelRating(target, btnEl) {
     if (!S.apiKey) { alert("Gemini APIキーを設定してください"); return; }
-    const allWords = await vocabGetAll();
-    // Migration: re-rate all words (old A/B/C → new A1/A2/B1/B2/C)
-    const oldLevel = allWords.filter(w => ["A","B","C"].includes(w.level));
-    const noLevel = allWords.filter(w => !w.level || !["A1","A2","B1","B2","C","A","B"].includes(w.level));
-    const target = allWords; // Re-rate everything for consistent 5-level
-    if (target.length === 0) { alert("単語がありません"); return; }
-    const newLevelCount = allWords.filter(w => ["A1","A2","B1","B2","C"].includes(w.level)).length;
-    const msg = oldLevel.length > 0
-      ? `全${target.length}語を5段階レベルに再判定します。\n（旧3段階: ${oldLevel.length}語 → 5段階に移行）\n\nGemini API: ${Math.ceil(target.length/30)}回\n続行しますか？`
-      : `${noLevel.length}語のレベル判定を実行します。\nGemini API: ${Math.ceil(noLevel.length/30)}回\n続行しますか？`;
-    if (!confirm(msg)) return;
-    lb.textContent = `⏳ 判定中... 0/${target.length}`;
+    if (target.length === 0) { alert("判定対象の単語がありません"); return; }
+    if (!confirm(`${target.length}語のレベル判定を実行します。\nGemini API: ${Math.ceil(target.length/15)}回（約${Math.ceil(target.length/15*3/60)}分）\n続行しますか？`)) return;
+    btnEl.textContent = `⏳ 0/${target.length}`;
     let done = 0, failed = 0;
-    for (let i = 0; i < target.length; i += 30) {
-      const batch = target.slice(i, i + 30);
-      const wordList = batch.map(w => w.word).join(", ");
-      const prompt = `Classify each English word/phrase by TOEIC difficulty level using this 5-scale system.
-A1 = basic (~400): very common words like go, have, meeting, office, name, time, work
-A2 = elementary (~500-600): common business like schedule, confirm, delay, available, attend, submit, approve
-B1 = intermediate (600-700): business vocabulary like negotiate, implement, mandatory, comply, substantial, allocate
-B2 = upper-intermediate (750-850): advanced business like procurement, reimburse, discretionary, contingent, expedite
-C = advanced (900+): sophisticated/rare like arbitration, adjudicate, commensurate, promulgate, notwithstanding
+    const BATCH = 15;
+    const remaining = [...target];  // Track unmatched for retry
 
-Words: ${wordList}
+    for (let round = 0; round < 2; round++) {
+      if (remaining.length === 0) break;
+      const workList = round === 0 ? remaining : remaining.filter(w => !w._lvDone);
+      if (workList.length === 0) break;
+      if (round === 1) btnEl.textContent = `🔄 リトライ ${workList.length}語`;
 
-Respond ONLY with JSON, no markdown: {"results":[{"word":"...","level":"A1"},{"word":"...","level":"B2"},...]}`;
-      try {
-        const raw = await geminiText(prompt, GEMINI_FLASH);
-        const cleaned = raw.replace(/```json|```/g, "").trim();
-        const parsed = JSON.parse(cleaned);
-        if (parsed.results && Array.isArray(parsed.results)) {
-          for (const r of parsed.results) {
-            const lv = (r.level || "").toUpperCase();
-            if (!["A1","A2","B1","B2","C"].includes(lv)) continue;
-            const match = batch.find(w => w.word.toLowerCase() === (r.word||"").toLowerCase());
-            if (match) {
-              await vocabUpdate(match.id, {level: lv});
-              done++;
+      for (let i = 0; i < workList.length; i += BATCH) {
+        const batch = workList.slice(i, i + BATCH);
+        // Number each word for reliable matching
+        const wordList = batch.map((w,idx) => `${idx+1}. ${w.word}`).join("\n");
+        const prompt = `You are a TOEIC vocabulary specialist. Classify each word by difficulty level.
+
+LEVEL DEFINITIONS (with 20 calibration examples each):
+A1 (~400点, basic): go, have, meeting, office, name, time, work, help, need, send, room, cost, plan, ask, open, close, begin, phone, address, today
+A2 (~500-600点, elementary): schedule, confirm, delay, available, attend, submit, approve, budget, client, deadline, arrange, purchase, deliver, receipt, invoice, facility, opportunity, recommend, participate, appointment
+B1 (600-700点, intermediate): negotiate, implement, mandatory, comply, substantial, allocate, comprehensive, prospective, accommodate, initiative, modification, complimentary, proficiency, subsequent, adjacent, verify, preliminary, renowned, designated, itinerary
+B2 (750-850点, upper): procurement, reimburse, discretionary, contingent, expedite, stipulate, consolidate, depreciation, remuneration, credential, proprietary, feasibility, unprecedented, scrutinize, fluctuation, apprehensive, lucrative, deteriorate, redundancy, amendment
+C (900+点, advanced): arbitration, adjudicate, commensurate, promulgate, notwithstanding, indemnify, jurisprudence, abrogate, exculpate, supersede
+
+RULES:
+- Rate the WORD's inherent difficulty, NOT the sentence context
+- Common words = A1/A2 even in advanced questions
+- Business jargon requiring TOEIC study = B1/B2
+- Legal/financial specialized terms = C
+
+Words to classify:
+${wordList}
+
+Return ONLY a JSON array matching the word order:
+[{"word":"...","level":"B1"},...]`;
+        try {
+          const raw = await geminiJSON(prompt);
+          // Try multiple extraction strategies
+          let results = null;
+          // Strategy 1: find JSON array
+          const arrMatch = raw.match(/\[[\s\S]*?\]/);
+          if (arrMatch) {
+            try { results = JSON.parse(arrMatch[0]); } catch(e) {}
+          }
+          // Strategy 2: find results object
+          if (!results) {
+            const objMatch = raw.match(/\{[\s\S]*?"results"\s*:\s*\[[\s\S]*?\]\s*\}/);
+            if (objMatch) {
+              try { results = JSON.parse(objMatch[0]).results; } catch(e) {}
             }
           }
+          if (results && Array.isArray(results)) {
+            for (let ri = 0; ri < results.length; ri++) {
+              const r = results[ri];
+              const lv = (r.level || "").toUpperCase();
+              if (!["A1","A2","B1","B2","C"].includes(lv)) continue;
+              const rWord = (r.word||"").toLowerCase().trim().replace(/^\d+\.\s*/, "");
+              // Fuzzy match: exact, startsWith, includes
+              let match = batch.find(w => w.word.toLowerCase().trim() === rWord);
+              if (!match) match = batch.find(w => rWord.startsWith(w.word.toLowerCase().trim()));
+              if (!match) match = batch.find(w => w.word.toLowerCase().trim().startsWith(rWord));
+              // Positional fallback: if index matches
+              if (!match && ri < batch.length) match = batch[ri];
+              if (match && !match._lvDone) {
+                await vocabUpdate(match.id, {level: lv});
+                match._lvDone = true;
+                done++;
+              }
+            }
+          }
+        } catch(e) {
+          console.warn("[LEVEL] batch error:", e.message||e);
         }
-      } catch(e) {
-        console.warn("[LEVEL] batch error:", e);
-        failed += batch.length;
+        btnEl.textContent = `⏳ ${done}/${target.length}`;
+        if (i + BATCH < workList.length) await new Promise(r => setTimeout(r, 2000));
       }
-      lb.textContent = `⏳ ${done}/${target.length}`;
-      if (i + 30 < target.length) await new Promise(r => setTimeout(r, 1500));
     }
-    alert(`✅ レベル判定完了\n5段階判定済み: ${done}語\n失敗: ${failed}語`);
+    failed = target.filter(w => !w._lvDone).length;
+    // Clean up temp flags
+    target.forEach(w => delete w._lvDone);
+    alert(`✅ レベル判定完了\n判定済み: ${done}語${failed>0?`\n未判定: ${failed}語（API応答で単語が一致しなかった可能性があります）`:""}`);
     render();
+  }
+  const lb=$("vocabLevelBtn"); if(lb)lb.onclick=async()=>{
+    const allWords = await vocabGetAll();
+    const unrated = allWords.filter(w => !["A1","A2","B1","B2","C"].includes(w.level));
+    if (unrated.length === 0) { alert("未判定の単語はありません"); return; }
+    await runVocabLevelRating(unrated, lb);
+  };
+  const lba=$("vocabLevelAllBtn"); if(lba)lba.onclick=async()=>{
+    const allWords = await vocabGetAll();
+    await runVocabLevelRating(allWords, lba);
   };
   const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
   const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
@@ -6133,7 +6185,7 @@ function renderHome() {
       // Check how many have difficulty ratings
       const rated = items.filter(it=>it.difficulty>0);
       if (rated.length < 5) {
-        const hasKey = !!localStorage.getItem("gemini_api_key");
+        const hasKey = !!S.apiKey;
         if (!hasKey) { alert("最適レベル出題にはAPIキーが必要です。\n設定画面でGemini APIキーを設定してください。"); el.textContent="🎯"; return; }
         if (!confirm(`難易度データが不足しています（${rated.length}/${items.length}問判定済）。\n\nバックグラウンドで難易度判定を実行しますか？\n（約${Math.ceil((items.length-rated.length)/20*4/60)}分、数円程度）`)) { el.textContent="🎯"; return; }
         // Run rating
