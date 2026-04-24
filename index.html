@@ -1900,6 +1900,21 @@ async function stockUpdateField(id, fields) {
   });
 }
 
+// Wake Lock: prevent screen sleep during long operations
+let _wakeLock = null;
+async function acquireWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      _wakeLock = await navigator.wakeLock.request('screen');
+      _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+      console.log("[WAKE LOCK] acquired");
+    }
+  } catch(e) { console.warn("[WAKE LOCK] failed:", e.message); }
+}
+function releaseWakeLock() {
+  if (_wakeLock) { _wakeLock.release(); _wakeLock = null; console.log("[WAKE LOCK] released"); }
+}
+
 // Gemini call with thinking OFF + JSON mode (for structured output)
 async function geminiJSON(prompt) {
   const m = GEMINI_FLASH;
@@ -2012,31 +2027,65 @@ ${texts}`;
   throw lastErr;
 }
 
-async function runDifficultyRating(onProgress) {
+async function runDifficultyRating(onProgress, partFilter) {
   if (!S.apiKey) throw new Error("APIキーが設定されていません");
-  const all = await stockGetAllLight();
+  await acquireWakeLock();
+  try {
+  const all = await stockGetAllLight(partFilter || undefined);
   const unrated = all.filter(it => !it.difficulty);
   const total = unrated.length;
-  if (total === 0) return {rated: 0, total: all.length};
-  const BATCH = 10;
+  if (total === 0) { releaseWakeLock(); return {rated: 0, total: all.length, skipped: 0}; }
+  const BATCH = 25;       // Larger batches = fewer API calls
+  const CONCURRENT = 2;   // 2 parallel API calls
   let rated = 0, errors = 0;
-  for (let i = 0; i < unrated.length; i += BATCH) {
-    const batch = unrated.slice(i, i + BATCH);
-    try {
-      const scores = await rateDifficultyBatch(batch);
-      for (let j = 0; j < batch.length && j < scores.length; j++) {
-        await stockUpdateField(batch[j].id, {difficulty: scores[j]});
-        rated++;
+
+  // Batch DB write helper
+  async function batchUpdateDifficulty(items, scores) {
+    const db = await openStockDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("questions","readwrite");
+      const store = tx.objectStore("questions");
+      let pending = 0;
+      for (let j = 0; j < items.length && j < scores.length; j++) {
+        pending++;
+        const req = store.get(items[j].id);
+        req.onsuccess = () => {
+          const r = req.result;
+          if (r) { r.difficulty = scores[j]; store.put(r); }
+          pending--;
+        };
       }
-    } catch(e) {
-      console.warn("[DIFFICULTY] Batch error:", e.message || e);
-      errors++;
-      if (errors > 15) throw new Error(`エラー${errors}回で中断: ${e.message||e}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  for (let i = 0; i < unrated.length; i += BATCH * CONCURRENT) {
+    // Launch up to CONCURRENT batches in parallel
+    const promises = [];
+    for (let c = 0; c < CONCURRENT; c++) {
+      const start = i + c * BATCH;
+      if (start >= unrated.length) break;
+      const batch = unrated.slice(start, start + BATCH);
+      promises.push(
+        rateDifficultyBatch(batch)
+          .then(async scores => {
+            await batchUpdateDifficulty(batch, scores);
+            rated += Math.min(batch.length, scores.length);
+          })
+          .catch(e => {
+            console.warn("[DIFFICULTY] Batch error:", e.message || e);
+            errors++;
+          })
+      );
     }
+    await Promise.all(promises);
+    if (errors > 15) throw new Error(`エラー${errors}回で中断`);
     if (onProgress) onProgress(rated, total, errors);
-    if (i + BATCH < unrated.length) await new Promise(r => setTimeout(r, 2000));
+    if (i + BATCH * CONCURRENT < unrated.length) await new Promise(r => setTimeout(r, 500));
   }
   return {rated, total: all.length, errors};
+  } finally { releaseWakeLock(); }
 }
 
 // Generic file download helper
@@ -3235,7 +3284,14 @@ async function renderStockSelect() {
         </select>
       </div>
       <button class="btn-s" id="graphicStockBtn" style="font-size:11px;color:#f472b6;margin-top:6px;width:100%" ${!S.level?"disabled":""}>🖼️ Graphic問題 作成</button>
-      <button class="btn-s" id="difficultyRateBtn" style="font-size:11px;color:#fbbf24;margin-top:6px;width:100%">🎯 全問題の難易度を判定</button>
+      <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+        <button class="btn-s" id="difficultyRateBtn" style="flex:1;font-size:11px;color:#fbbf24">🎯 未判定を判定</button>
+        <button class="btn-s" id="difficultyReRateBtn" style="font-size:11px;color:#7a8ea5">🔄 全再判定</button>
+        <select id="difficultyPartSel" style="background:#243040;color:#a0b4c8;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px;font-size:11px">
+          <option value="">全パート</option>
+          ${PARTS.map(p=>`<option value="${p.id}">${p.label}</option>`).join("")}
+        </select>
+      </div>
       <div id="difficultyProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
     </div>
     ${total===0?`<div style="text-align:center;color:#7a8ea5;padding:40px 0">ストックされた問題がありません。<br>問題を解いた後「💾 ストック」ボタンで保存できます。</div>`:""}
@@ -3441,29 +3497,66 @@ async function renderStockSelect() {
     shuffleSessionTypes();
     loadNewSet();
   };
-  const drb=$("difficultyRateBtn"); if(drb)drb.onclick=async()=>{
+  const drb=$("difficultyRateBtn"); if(drb) {
+    // Show unrated count asynchronously
+    stockGetAllLight().then(all => {
+      const unrated = all.filter(it=>!it.difficulty).length;
+      const prog = $("difficultyProgress");
+      if (prog) prog.textContent = `判定済み: ${all.length-unrated}/${all.length}問`;
+      if (unrated === 0) drb.textContent = "✅ 全問判定済み";
+      else drb.textContent = `🎯 未判定を判定 (${unrated}問)`;
+    });
+    drb.onclick=async()=>{
+      if (!S.apiKey) { alert("APIキーが設定されていません"); return; }
+      const partSel = $("difficultyPartSel")?.value || "";
+      const all = await stockGetAllLight(partSel || undefined);
+      const unrated = all.filter(it=>!it.difficulty);
+      const partLabel = partSel ? partSel.toUpperCase() : "全パート";
+      if (unrated.length === 0) { alert(`✅ ${partLabel}の難易度判定が完了しています（${all.length}問判定済み）`); return; }
+      if (!confirm(`${partLabel}: 未判定 ${unrated.length}問 / 全${all.length}問\n推定時間: 約${Math.ceil(unrated.length/50*12/60)}分\n⚠️ 画面をスリープにしないでください。\n\n未判定のみ判定します。中断後は再実行で続きから判定できます。`)) return;
+      drb.disabled=true; drb.textContent="⏳ 判定中...";
+      const prog = $("difficultyProgress");
+      try {
+        const result = await runDifficultyRating((done,tot,err) => {
+          drb.textContent=`⏳ ${done}/${tot}`;
+          if(prog) prog.textContent=`${Math.round(done/tot*100)}%${err?` (${err}err)`:""}`;
+        }, partSel || undefined);
+        drb.textContent="✅ 完了";
+        if(prog) prog.textContent=`${result.rated}問判定 (全${result.total}問)`;
+        alert(`✅ ${result.rated}問の難易度判定が完了しました`);
+      } catch(e) {
+        drb.textContent="❌ エラー";
+        if(prog) prog.textContent=e.message;
+        alert("判定エラー: "+e.message);
+      }
+      drb.disabled=false;
+    };
+  }
+  const drrb=$("difficultyReRateBtn"); if(drrb)drrb.onclick=async()=>{
     if (!S.apiKey) { alert("APIキーが設定されていません"); return; }
-    const all = await stockGetAllLight();
-    const unrated = all.filter(it=>!it.difficulty);
-    if (unrated.length === 0) { alert("✅ 全問題の難易度判定が完了しています"); return; }
-    const est = Math.ceil(unrated.length / 20 * 4);
-    if (!confirm(`未判定: ${unrated.length}問\n推定時間: 約${Math.ceil(est/60)}分\n推定費用: 約${Math.ceil(unrated.length*0.005)}円\n\n実行しますか？`)) return;
-    drb.disabled=true; drb.textContent="⏳ 判定中...";
+    const partSel = $("difficultyPartSel")?.value || "";
+    const all = await stockGetAllLight(partSel || undefined);
+    const partLabel = partSel ? partSel.toUpperCase() : "全パート";
+    if (!confirm(`${partLabel}: 全${all.length}問を再判定します。\n既存の判定は上書きされます。\n推定時間: 約${Math.ceil(all.length/50*12/60)}分\n\n続行しますか？`)) return;
+    // Clear existing difficulty
+    drrb.disabled=true; drrb.textContent="⏳ クリア中...";
+    for (const it of all) { await stockUpdateField(it.id, {difficulty: 0}); }
+    drrb.textContent="⏳ 判定中...";
     const prog = $("difficultyProgress");
     try {
       const result = await runDifficultyRating((done,tot,err) => {
-        drb.textContent=`⏳ ${done}/${tot}問`;
-        if(prog) prog.textContent=`${Math.round(done/tot*100)}% 完了${err?` (${err}エラー)`:""}`;
-      });
-      drb.textContent="✅ 完了";
-      if(prog) prog.textContent=`${result.rated}問判定完了 (全${result.total}問)`;
-      alert(`✅ ${result.rated}問の難易度判定が完了しました`);
+        drrb.textContent=`⏳ ${done}/${tot}`;
+        if(prog) prog.textContent=`${Math.round(done/tot*100)}%${err?` (${err}err)`:""}`;
+      }, partSel || undefined);
+      drrb.textContent="✅ 完了";
+      if(prog) prog.textContent=`${result.rated}問再判定完了`;
+      alert(`✅ ${result.rated}問の再判定が完了しました`);
     } catch(e) {
-      drb.textContent="❌ エラー";
+      drrb.textContent="❌ エラー";
       if(prog) prog.textContent=e.message;
       alert("判定エラー: "+e.message);
     }
-    drb.disabled=false;
+    drrb.disabled=false;
   };
   const pb=$("stockPurgeBtn"); if(pb)pb.onclick=async()=>{
     if(!confirm("音声や画像が欠損した問題を削除します。よろしいですか？")) return;
@@ -4651,7 +4744,8 @@ async function renderVocab() {
   async function runVocabLevelRating(target, btnEl) {
     if (!S.apiKey) { alert("Gemini APIキーを設定してください"); return; }
     if (target.length === 0) { alert("判定対象の単語がありません"); return; }
-    if (!confirm(`${target.length}語のレベル判定を実行します。\nGemini API: ${Math.ceil(target.length/15)}回（約${Math.ceil(target.length/15*3/60)}分）\n続行しますか？`)) return;
+    if (!confirm(`${target.length}語のレベル判定を実行します。\n⚠️ 画面をスリープにしないでください。\n\nGemini API: ${Math.ceil(target.length/15)}回（約${Math.ceil(target.length/15*3/60)}分）`)) return;
+    await acquireWakeLock();
     btnEl.textContent = `⏳ 0/${target.length}`;
     let done = 0, failed = 0;
     const BATCH = 15;
@@ -4742,8 +4836,8 @@ Return ONLY a JSON array matching the word order:
       }
     }
     failed = target.filter(w => !w._lvDone).length;
-    // Clean up temp flags
     target.forEach(w => delete w._lvDone);
+    releaseWakeLock();
     alert(`✅ レベル判定完了\n判定済み: ${done}語${failed>0?`\n未判定: ${failed}語（API応答で単語が一致しなかった可能性があります）`:""}`);
     render();
   }
@@ -6252,11 +6346,11 @@ function renderHome() {
       if (rated.length < 5) {
         const hasKey = !!S.apiKey;
         if (!hasKey) { alert("最適レベル出題にはAPIキーが必要です。\n設定画面でGemini APIキーを設定してください。"); el.textContent="🎯"; return; }
-        if (!confirm(`難易度データが不足しています（${rated.length}/${items.length}問判定済）。\n\nバックグラウンドで難易度判定を実行しますか？\n（約${Math.ceil((items.length-rated.length)/20*4/60)}分、数円程度）`)) { el.textContent="🎯"; return; }
-        // Run rating
+        if (!confirm(`難易度データが不足しています（${rated.length}/${items.length}問判定済）。\n\nこのパートの未判定問題を判定しますか？\n（約${Math.ceil((items.length-rated.length)/50*12/60)}分）`)) { el.textContent="🎯"; return; }
+        // Run rating for this part only
         el.textContent="判定中...";
         try {
-          await runDifficultyRating((done,tot) => { el.textContent=`${done}/${tot}`; });
+          await runDifficultyRating((done,tot) => { el.textContent=`${done}/${tot}`; }, partId);
           // Re-load
           const items2 = await stockGetAllLight(partId);
           const rated2 = items2.filter(it=>it.difficulty>0);
