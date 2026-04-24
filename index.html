@@ -1900,6 +1900,86 @@ async function stockUpdateField(id, fields) {
   });
 }
 
+// Update qSet fields (for adding translation_ja etc.)
+async function stockUpdateQSetField(id, qSetFields) {
+  const db = await openStockDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("questions","readwrite");
+    const store = tx.objectStore("questions");
+    const req = store.get(id);
+    req.onsuccess = () => {
+      const item = req.result;
+      if (item && item.qSet) { Object.assign(item.qSet, qSetFields); store.put(item); }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Batch translate Part 5 sentences
+async function runPart5Translation(onProgress) {
+  if (!S.apiKey) throw new Error("APIキーが設定されていません");
+  await acquireWakeLock();
+  try {
+    const all = await stockGetAllLight("part5");
+    const needTr = all.filter(it => !it.qSet?.translation_ja);
+    const total = needTr.length;
+    if (total === 0) return {done: 0, total: all.length};
+    const BATCH = 20;
+    let done = 0, errors = 0;
+    for (let i = 0; i < needTr.length; i += BATCH) {
+      const batch = needTr.slice(i, i + BATCH);
+      const lines = batch.map((it, bi) => {
+        const qs = it.qSet || {};
+        const q = qs.questions?.[0] || {};
+        const sentence = q.question || qs.sentence || "";
+        const choices = q.choices || [];
+        const correct = q.correct ?? 0;
+        const answer = choices[correct] ? choices[correct].replace(/^\([A-D]\)\s*/, "") : "";
+        const filled = sentence.replace("-------", answer);
+        return `${bi+1}. ${filled}`;
+      }).join("\n");
+      const prompt = `Translate each English sentence to natural Japanese. Return JSON array of strings.
+Example: ["マネージャーは全従業員に安全ガイドラインを確認するよう求めた。", "..."]
+
+Sentences:
+${lines}`;
+      try {
+        const raw = await geminiText(prompt, GEMINI_FLASH);
+        const parsed = extractJSON(raw);
+        let translations = null;
+        if (Array.isArray(parsed)) translations = parsed;
+        else if (parsed && typeof parsed === "object") translations = Object.values(parsed).find(v => Array.isArray(v));
+        if (translations) {
+          const db = await openStockDB();
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction("questions","readwrite");
+            const store = tx.objectStore("questions");
+            for (let j = 0; j < batch.length && j < translations.length; j++) {
+              if (typeof translations[j] === "string" && translations[j].length > 0) {
+                const req = store.get(batch[j].id);
+                req.onsuccess = () => {
+                  const item = req.result;
+                  if (item && item.qSet) { item.qSet.translation_ja = translations[j]; store.put(item); done++; }
+                };
+              }
+            }
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        } else { errors++; }
+      } catch(e) {
+        console.warn("[TRANSLATE] Batch error:", e.message);
+        errors++;
+        if (errors > 15) throw new Error(`エラー${errors}回: ${e.message}`);
+      }
+      if (onProgress) onProgress(done, total, errors);
+      if (i + BATCH < needTr.length) await new Promise(r => setTimeout(r, 1000));
+    }
+    return {done, total: all.length, errors};
+  } finally { releaseWakeLock(); }
+}
+
 // Wake Lock: prevent screen sleep during long operations
 let _wakeLock = null;
 async function acquireWakeLock() {
@@ -3125,6 +3205,7 @@ async function loadStockItem(itemOrId) {
   }
   S.part=item.part; S.level=item.level;
   S.screen="study"; S.stockMode=true; S.stockId=item.id;
+  S.stockDifficulty = item.difficulty || 0;
   // Don't reset stats when advancing through a playlist — accumulate across sessions
   if (!S._stockPlaylistActive) {
     S.stats={correct:0,wrong:0}; S.streak=0;
@@ -3232,6 +3313,8 @@ async function renderStockSelect() {
         </select>
       </div>
       <div id="difficultyProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
+      <button class="btn-s" id="part5TransBtn" style="width:100%;font-size:11px;color:#fbbf24;margin-top:6px">📖 Part 5 和訳を追加</button>
+      <div id="transProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
     </div>
     ${total===0?`<div style="text-align:center;color:#7a8ea5;padding:40px 0">ストックされた問題がありません。<br>問題を解いた後「💾 ストック」ボタンで保存できます。</div>`:""}
     <div style="padding:10px 0">${partSections}</div>
@@ -3512,6 +3595,57 @@ async function renderStockSelect() {
     }
     drrb.disabled=false;
   };
+  const p5tb=$("part5TransBtn"); if(p5tb) {
+    // Show count asynchronously
+    stockGetAllLight("part5").then(items => {
+      const need = items.filter(it=>!it.qSet?.translation_ja).length;
+      p5tb.textContent = need > 0 ? `📖 Part 5 和訳を追加 (${need}問未翻訳)` : `✅ Part 5 全問和訳済み`;
+    });
+    p5tb.onclick=async()=>{
+      if (!S.apiKey) { alert("APIキーが設定されていません"); return; }
+      const items = await stockGetAllLight("part5");
+      const need = items.filter(it=>!it.qSet?.translation_ja).length;
+      if (need === 0) { alert("✅ 全てのPart 5問題に和訳が設定済みです"); return; }
+      // Test with 3 sentences
+      const tp = $("transProgress");
+      p5tb.disabled=true; p5tb.textContent="🧪 テスト中...";
+      try {
+        const testItems = items.filter(it=>!it.qSet?.translation_ja).slice(0,3);
+        const testLines = testItems.map((it,i)=>{
+          const q=it.qSet?.questions?.[0]||{}; const choices=q.choices||[]; const correct=q.correct??0;
+          const ans=choices[correct]?choices[correct].replace(/^\([A-D]\)\s*/,""):"";
+          return `${i+1}. ${(q.question||"").replace("-------",ans)}`;
+        }).join("\n");
+        const raw = await geminiText(`Translate to Japanese. Return JSON: ["翻訳1","翻訳2","翻訳3"]\n\n${testLines}`, GEMINI_FLASH);
+        const parsed = extractJSON(raw);
+        if (!parsed || !Array.isArray(parsed)) throw new Error("Parse failed: " + raw.slice(0,100));
+        if(tp) tp.textContent=`✅ テスト成功: ${parsed[0]?.slice(0,30)}...`;
+      } catch(e) {
+        p5tb.disabled=false; p5tb.textContent=`❌ テスト失敗`;
+        if(tp) tp.textContent=`Error: ${(e.message||"").slice(0,100)}`;
+        return;
+      }
+      if (!confirm(`Part 5: ${need}問に和訳を追加します。\n約${Math.ceil(need/20*8/60)}分\n\n開始しますか？`)) {
+        p5tb.disabled=false; p5tb.textContent=`📖 Part 5 和訳を追加 (${need}問)`;
+        return;
+      }
+      p5tb.textContent="⏳ 翻訳中...";
+      try {
+        const result = await runPart5Translation((done,tot,err)=>{
+          p5tb.textContent=`⏳ ${done}/${tot}`;
+          if(tp) tp.textContent=`${Math.round(done/tot*100)}%${err?` (${err}err)`:""}`;
+        });
+        p5tb.textContent="✅ 完了";
+        if(tp) tp.textContent=`${result.done}問翻訳完了`;
+        alert(`✅ ${result.done}問のPart 5和訳を追加しました`);
+      } catch(e) {
+        p5tb.textContent="❌ エラー";
+        if(tp) tp.textContent=e.message;
+        alert("翻訳エラー: "+e.message);
+      }
+      p5tb.disabled=false;
+    };
+  }
   const pb=$("stockPurgeBtn"); if(pb)pb.onclick=async()=>{
     if(!confirm("音声や画像が欠損した問題を削除します。よろしいですか？")) return;
     try {
@@ -6659,7 +6793,7 @@ function renderStudy() {
         <span class="tag judge-toggle" id="judgeToggle" style="background:${S.judgeMode?"rgba(74,222,128,0.15)":"rgba(100,116,139,0.1)"};color:${S.judgeMode?"#4ade80":"#64748b"};font-size:10px;cursor:pointer">${S.judgeMode?"📊 判定ON":"📊 OFF"}</span>
         <span class="tag" id="timerDisplay" style="background:rgba(100,116,139,0.1);color:#a0b4c8;font-size:10px;font-family:monospace">⏱ 0s</span>
         ${S.stockMode
-          ?`<span class="tag" style="background:rgba(251,191,36,0.15);color:#fbbf24;font-size:10px">📦 ${S.stockPlayIdx+1}/${S.stockPlaylist.length}</span>`
+          ?`<span class="tag" style="background:rgba(251,191,36,0.15);color:#fbbf24;font-size:10px">📦 ${S.stockPlayIdx+1}/${S.stockPlaylist.length}</span>${S.stockDifficulty?`<span class="tag" style="background:rgba(${S.stockDifficulty>=800?"239,68,68":S.stockDifficulty>=600?"245,158,11":"34,197,94"},0.15);color:${S.stockDifficulty>=800?"#ef4444":S.stockDifficulty>=600?"#f59e0b":"#22c55e"};font-size:10px">${S.stockDifficulty}点</span>`:""}`
           :`<span class="tag" style="background:${PART_MODEL[S.part]===GEMINI_3FLASH?"rgba(52,211,153,0.15)":PART_MODEL[S.part]===GEMINI_PRO?"rgba(168,85,247,0.15)":PART_MODEL[S.part]===GEMINI_FLASH?"rgba(59,130,246,0.15)":"rgba(100,116,139,0.1)"};color:${PART_MODEL[S.part]===GEMINI_3FLASH?"#34d399":PART_MODEL[S.part]===GEMINI_PRO?"#a855f7":PART_MODEL[S.part]===GEMINI_FLASH?"#3b82f6":"#64748b"};font-size:10px">${PART_MODEL[S.part]===GEMINI_3FLASH?"3-Flash":PART_MODEL[S.part]===GEMINI_PRO?"Pro":PART_MODEL[S.part]===GEMINI_FLASH?"Flash":"Lite"}</span>
            <span class="tag" style="background:rgba(251,191,36,0.1);color:#fbbf24">${S.sessionNum}/${SESSION_SIZE}</span>`}
       </div>
