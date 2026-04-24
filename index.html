@@ -1915,36 +1915,18 @@ function releaseWakeLock() {
   if (_wakeLock) { _wakeLock.release(); _wakeLock = null; console.log("[WAKE LOCK] released"); }
 }
 
-// Gemini call with thinking OFF + JSON mode (for structured output)
+// Gemini call for JSON output (simple, no thinking overhead)
 async function geminiJSON(prompt) {
   const m = GEMINI_FLASH;
-  try {
-    const res = await throttledFetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${S.apiKey}`,
-      { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],
-          generationConfig:{temperature:0.1, responseMimeType:"application/json"}}) }
-    );
-    if (!res.ok) throw new Error(`API ${res.status}`);
-    const d = await res.json();
-    const text = d.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
-    if (text) { console.log("[geminiJSON] OK:", text.slice(0,100)); return text; }
-    throw new Error("Empty response");
-  } catch(e) {
-    // Fallback: use geminiText with thinking off via thinkingBudget:0
-    console.warn("[geminiJSON] Failed, fallback to geminiText:", e.message);
-    const res2 = await throttledFetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${S.apiKey}`,
-      { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],
-          generationConfig:{temperature:0.1, thinkingConfig:{thinkingBudget:0}}}) }
-    );
-    if (!res2.ok) throw new Error(`Fallback API ${res2.status}`);
-    const d2 = await res2.json();
-    const text2 = d2.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
-    console.log("[geminiJSON fallback]:", text2.slice(0,100));
-    return text2;
-  }
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${S.apiKey}`,
+    { method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],
+        generationConfig:{temperature:0.1, maxOutputTokens:1024}}) }
+  );
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  const d = await res.json();
+  return d.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
 }
 
 function extractQuestionText(item) {
@@ -1965,66 +1947,38 @@ async function rateDifficultyBatch(items) {
 Rate each question's difficulty as the TOEIC score a test-taker needs to answer correctly.
 
 CALIBRATION CRITERIA (evaluate each applicable factor, then average):
-1. VOCABULARY: basic daily words (schedule/office) →350-450 | business vocab (negotiate/deadline) →550-700 | advanced (procurement/arbitration) →750-900
-2. GRAMMAR COMPLEXITY: simple SVO/basic tense →350-450 | relative clauses/passive/conditionals →550-700 | subjunctive/inversion →750-900
-3. INFERENCE DEPTH: explicit info lookup →350-450 | simple inference/paraphrase →550-700 | implication/cross-reference/NOT →750-900
+1. VOCABULARY: basic daily words (schedule/office/meeting) →350-450 | business vocab (negotiate/deadline/implement) →550-700 | advanced (procurement/arbitration/discretionary) →750-900
+2. GRAMMAR COMPLEXITY: simple SVO/basic tense/preposition →350-450 | relative clauses/passive voice/conditionals →550-700 | subjunctive/inversion/complex participle →750-900
+3. INFERENCE DEPTH: explicit info lookup →350-450 | simple inference/paraphrase →550-700 | implication/cross-reference/NOT questions →750-900
 4. DISTRACTOR QUALITY: obviously wrong choices →350-450 | plausible but distinguishable →550-700 | very tricky near-synonyms →750-900
-5. PROCESSING LOAD: short sentence →350-450 | medium passage →550-700 | long/multiple passages →750-900
+5. PROCESSING LOAD: short sentence →350-450 | medium passage with context →550-700 | long/multiple passages requiring synthesis →750-900
 
 PART-SPECIFIC ANCHORS:
-- Part 1/2: mostly 350-600 (listening comprehension, explicit)
-- Part 5: word_form/basic_preposition →400-550, participle/conditional →600-750, rare vocab →800+
-- Part 6: sentence insertion →700+, vocab in context →500-650
-- Part 7 single: main purpose →400-500, inference →650-800, NOT question →750+
-- Part 7 double/triple: cross-reference →750+, detail lookup →500-650
+- Part 1: photo description, mostly 350-500
+- Part 2: question-response, mostly 350-600
+- Part 3/4: conversation/talk comprehension, 400-800
+- Part 5: word_form/basic_preposition →400-550, participle/conditional →600-750, rare vocab/complex structure →800+
+- Part 6: vocab in context →500-650, sentence insertion →700+
+- Part 7 single: main purpose →400-500, detail →500-650, inference →650-800, NOT question →750+
+- Part 7 double/triple: detail lookup →500-650, cross-reference →750+
 
-Return a JSON array of integers matching each question: [650, 780, 420, ...]
+Return a JSON array of ${items.length} integers: [score1, score2, ...]
 
 Questions:
 ${texts}`;
 
-  // Retry up to 3 times on transient errors (503, network)
-  let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
-      const raw = await geminiJSON(prompt);
-      console.log("[DIFFICULTY] response:", raw.slice(0, 300));
-      let scores = null;
-      // Strategy 1: direct parse as array
-      try { const p = JSON.parse(raw); if (Array.isArray(p)) scores = p; } catch(e) {}
-      // Strategy 2: parse as object, find first array value
-      if (!scores) {
-        try {
-          const p = JSON.parse(raw);
-          if (p && typeof p === "object") {
-            for (const v of Object.values(p)) { if (Array.isArray(v)) { scores = v; break; } }
-          }
-        } catch(e) {}
-      }
-      // Strategy 3: regex extract array of numbers
-      if (!scores) {
-        const m = raw.match(/\[[\d\s,.\n\r]+\]/);
-        if (m) try { scores = JSON.parse(m[0]); } catch(e) {}
-      }
-      // Strategy 4: extract all numbers from response
-      if (!scores) {
-        const nums = raw.match(/\b\d{3}\b/g);
-        if (nums && nums.length >= items.length * 0.5) scores = nums.map(Number);
-      }
-      if (!scores || scores.length === 0) throw new Error("Parse failed: " + raw.slice(0, 200));
-      // Pad if needed
-      while (scores.length < items.length) scores.push(600);
-      return scores.slice(0, items.length).map(s => Math.max(200, Math.min(990, Math.round(Number(s) || 600))));
-    } catch(e) {
-      lastErr = e;
-      console.warn("[DIFFICULTY] attempt", attempt, "error:", e.message);
-      if (e.message?.includes("503") || e.message?.includes("429")) continue;
-      if (attempt < 2) continue; // retry parsing errors too
-      throw e;
-    }
+  const raw = await geminiJSON(prompt);
+  console.log("[DIFFICULTY]", raw.slice(0, 300));
+  let scores = null;
+  try { const p = JSON.parse(raw); if (Array.isArray(p)) scores = p; } catch(e) {}
+  if (!scores) {
+    try { const p = JSON.parse(raw); if(p && typeof p==="object") for(const v of Object.values(p)) if(Array.isArray(v)){scores=v;break;} } catch(e) {}
   }
-  throw lastErr;
+  if (!scores) { const m = raw.match(/\[[\d\s,.\n\r]+\]/); if(m) try{scores=JSON.parse(m[0]);}catch(e){} }
+  if (!scores) { const nums = raw.match(/\b\d{3}\b/g); if(nums && nums.length >= items.length*0.5) scores=nums.map(Number); }
+  if (!scores || scores.length === 0) throw new Error("Parse failed: " + raw.slice(0, 150));
+  while (scores.length < items.length) scores.push(600);
+  return scores.slice(0, items.length).map(s => Math.max(200, Math.min(990, Math.round(Number(s)||600))));
 }
 
 async function runDifficultyRating(onProgress, partFilter) {
@@ -2035,54 +1989,30 @@ async function runDifficultyRating(onProgress, partFilter) {
   const unrated = all.filter(it => !it.difficulty);
   const total = unrated.length;
   if (total === 0) { releaseWakeLock(); return {rated: 0, total: all.length, skipped: 0}; }
-  const BATCH = 25;       // Larger batches = fewer API calls
-  const CONCURRENT = 2;   // 2 parallel API calls
+  const BATCH = 25;
   let rated = 0, errors = 0;
-
-  // Batch DB write helper
-  async function batchUpdateDifficulty(items, scores) {
-    const db = await openStockDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("questions","readwrite");
-      const store = tx.objectStore("questions");
-      let pending = 0;
-      for (let j = 0; j < items.length && j < scores.length; j++) {
-        pending++;
-        const req = store.get(items[j].id);
-        req.onsuccess = () => {
-          const r = req.result;
-          if (r) { r.difficulty = scores[j]; store.put(r); }
-          pending--;
-        };
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  }
-
-  for (let i = 0; i < unrated.length; i += BATCH * CONCURRENT) {
-    // Launch up to CONCURRENT batches in parallel
-    const promises = [];
-    for (let c = 0; c < CONCURRENT; c++) {
-      const start = i + c * BATCH;
-      if (start >= unrated.length) break;
-      const batch = unrated.slice(start, start + BATCH);
-      promises.push(
-        rateDifficultyBatch(batch)
-          .then(async scores => {
-            await batchUpdateDifficulty(batch, scores);
-            rated += Math.min(batch.length, scores.length);
-          })
-          .catch(e => {
-            console.warn("[DIFFICULTY] Batch error:", e.message || e);
-            errors++;
-          })
-      );
+  const db = await openStockDB();
+  for (let i = 0; i < unrated.length; i += BATCH) {
+    const batch = unrated.slice(i, i + BATCH);
+    try {
+      const scores = await rateDifficultyBatch(batch);
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("questions","readwrite");
+        const store = tx.objectStore("questions");
+        for (let j = 0; j < batch.length && j < scores.length; j++) {
+          const req = store.get(batch[j].id);
+          req.onsuccess = () => { const r = req.result; if(r){r.difficulty=scores[j]; store.put(r);} };
+        }
+        tx.oncomplete = () => { rated += Math.min(batch.length, scores.length); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch(e) {
+      console.warn("[DIFFICULTY] Batch error:", e.message || e);
+      errors++;
+      if (errors > 20) throw new Error(`エラー${errors}回で中断: ${e.message||e}`);
     }
-    await Promise.all(promises);
-    if (errors > 15) throw new Error(`エラー${errors}回で中断`);
     if (onProgress) onProgress(rated, total, errors);
-    if (i + BATCH * CONCURRENT < unrated.length) await new Promise(r => setTimeout(r, 500));
+    if (i + BATCH < unrated.length) await new Promise(r => setTimeout(r, 1000));
   }
   return {rated, total: all.length, errors};
   } finally { releaseWakeLock(); }
@@ -2349,24 +2279,34 @@ async function stockImportClassic(file) {
   const items = JSON.parse(text);
   if (!Array.isArray(items)) throw new Error("無効なファイル形式");
   const db = await openStockDB();
-  const existing = await new Promise((resolve, reject) => {
-    const set = new Set();
+  // Build createdAt → {id, difficulty} map for existing items
+  const existingMap = await new Promise((resolve, reject) => {
+    const map = new Map();
     const tx = db.transaction("questions","readonly");
     const req = tx.objectStore("questions").openCursor();
     req.onsuccess = (e) => {
       const c = e.target.result;
-      if (c) { set.add(c.value.createdAt); c.continue(); }
-      else resolve(set);
+      if (c) { map.set(c.value.createdAt, {id: c.value.id, difficulty: c.value.difficulty||0}); c.continue(); }
+      else resolve(map);
     };
     req.onerror = () => reject(req.error);
   });
-  let count = 0, skipped = 0, vocabAdded = 0, vocabTotal = 0, withVocab = 0;
+  let count = 0, skipped = 0, diffUpdated = 0, vocabAdded = 0, vocabTotal = 0, withVocab = 0;
   const vocabBefore = (await vocabGetAll()).length;
   for (const item of items) {
     if (!item.part || !item.qSet) continue;
     const ts = item.createdAt || Date.now();
-    if (existing.has(ts)) { skipped++; continue; }
-    existing.add(ts);
+    if (existingMap.has(ts)) {
+      // Duplicate — but update difficulty if imported item has it and existing doesn't
+      const ex = existingMap.get(ts);
+      if (item.difficulty && item.difficulty > 0 && (!ex.difficulty || ex.difficulty === 0)) {
+        await stockUpdateField(ex.id, {difficulty: item.difficulty});
+        diffUpdated++;
+      }
+      skipped++;
+      continue;
+    }
+    existingMap.set(ts, {id: null, difficulty: item.difficulty||0});
     const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts, difficulty:item.difficulty||0};
     if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
     else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
@@ -2385,7 +2325,7 @@ async function stockImportClassic(file) {
   }
   const vocabAfter = (await vocabGetAll()).length;
   vocabAdded = vocabAfter - vocabBefore;
-  return {count, skipped, vocabAdded, withVocab, vocabTotal};
+  return {count, skipped, diffUpdated, vocabAdded, withVocab, vocabTotal};
 }
 
 async function stockCount() {
@@ -3513,7 +3453,7 @@ async function renderStockSelect() {
       const unrated = all.filter(it=>!it.difficulty);
       const partLabel = partSel ? partSel.toUpperCase() : "全パート";
       if (unrated.length === 0) { alert(`✅ ${partLabel}の難易度判定が完了しています（${all.length}問判定済み）`); return; }
-      if (!confirm(`${partLabel}: 未判定 ${unrated.length}問 / 全${all.length}問\n推定時間: 約${Math.ceil(unrated.length/50*12/60)}分\n⚠️ 画面をスリープにしないでください。\n\n未判定のみ判定します。中断後は再実行で続きから判定できます。`)) return;
+      if (!confirm(`${partLabel}: 未判定 ${unrated.length}問 / 全${all.length}問\n推定時間: 約${Math.ceil(unrated.length/20*8/60)}分\n⚠️ 画面をスリープにしないでください。\n\n未判定のみ判定します。中断後は再実行で続きから判定できます。`)) return;
       drb.disabled=true; drb.textContent="⏳ 判定中...";
       const prog = $("difficultyProgress");
       try {
@@ -3537,7 +3477,7 @@ async function renderStockSelect() {
     const partSel = $("difficultyPartSel")?.value || "";
     const all = await stockGetAllLight(partSel || undefined);
     const partLabel = partSel ? partSel.toUpperCase() : "全パート";
-    if (!confirm(`${partLabel}: 全${all.length}問を再判定します。\n既存の判定は上書きされます。\n推定時間: 約${Math.ceil(all.length/50*12/60)}分\n\n続行しますか？`)) return;
+    if (!confirm(`${partLabel}: 全${all.length}問を再判定します。\n既存の判定は上書きされます。\n推定時間: 約${Math.ceil(all.length/20*8/60)}分\n\n続行しますか？`)) return;
     // Clear existing difficulty
     drrb.disabled=true; drrb.textContent="⏳ クリア中...";
     for (const it of all) { await stockUpdateField(it.id, {difficulty: 0}); }
@@ -6176,7 +6116,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.23e · 5-level vocab + difficulty + flashcard + timer + radar · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.23f · difficulty merge import + 5-level vocab + flashcard · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6346,7 +6286,7 @@ function renderHome() {
       if (rated.length < 5) {
         const hasKey = !!S.apiKey;
         if (!hasKey) { alert("最適レベル出題にはAPIキーが必要です。\n設定画面でGemini APIキーを設定してください。"); el.textContent="🎯"; return; }
-        if (!confirm(`難易度データが不足しています（${rated.length}/${items.length}問判定済）。\n\nこのパートの未判定問題を判定しますか？\n（約${Math.ceil((items.length-rated.length)/50*12/60)}分）`)) { el.textContent="🎯"; return; }
+        if (!confirm(`難易度データが不足しています（${rated.length}/${items.length}問判定済）。\n\nこのパートの未判定問題を判定しますか？\n（約${Math.ceil((items.length-rated.length)/20*8/60)}分）`)) { el.textContent="🎯"; return; }
         // Run rating for this part only
         el.textContent="判定中...";
         try {
@@ -6617,8 +6557,8 @@ function renderStudy() {
         ${q.explanation_en?`<details style="margin-bottom:8px"><summary style="font-size:13px;color:#60a5fa;cursor:pointer;user-select:none">💡 English Explanation</summary><div style="font-size:14px;line-height:1.9;color:#a0b4c8;margin-top:4px;padding:8px;background:rgba(96,165,250,0.06);border-radius:6px">${esc(q.explanation_en)}</div></details>`:""}
         <div class="det">${esc(q.explanation_ja||"")}</div>
       </div>`;
-      // 和訳トグル（解説の直後に表示 — Part 3,4,6,7）
-      if (["part3","part4","part6","part7"].includes(S.part)) {
+      // 和訳トグル（解説の直後に表示 — Part 3,4,5,6,7）
+      if (["part3","part4","part5","part6","part7"].includes(S.part)) {
         const trJa = qs.translation_ja || qs.translation_ja_1;
         let trHtml;
         if (qs.translation_ja_1) {
