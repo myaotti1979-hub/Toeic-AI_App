@@ -182,6 +182,7 @@ let S = {
   stockPlayIdx: 0,     // プレイリスト内の現在位置
   stockCreateMode: false, stockCreateTarget: 10, stockCreatePaused: false, // ストック作成モード
   judgeMode: JSON.parse(localStorage.getItem("judgeMode")||"false"), // 判定モード
+  timeAttackMode: JSON.parse(localStorage.getItem("timeAttackMode")||"false"), // 時間制限モード
   timerStart: 0, timerFrozen: 0, // 問題表示開始時刻 / 回答時の凍結時間
 };
 
@@ -1254,6 +1255,21 @@ function openJudgeDB() {
 }
 
 async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed) {
+  // Increment daily goal counter
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    const streak = JSON.parse(localStorage.getItem("studyStreak")||'{"count":0,"lastDate":"","todayCount":0,"todayDate":""}');
+    if (streak.todayDate !== today) {
+      const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+      const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||"30");
+      if (streak.lastDate === yesterday && streak.todayCount >= DAILY_GOAL) streak.count++;
+      else if (streak.lastDate !== yesterday) streak.count = streak.todayCount >= DAILY_GOAL ? streak.count : 0;
+      streak.todayCount = 0; streak.todayDate = today; streak.lastDate = today;
+    }
+    streak.todayCount++;
+    streak.lastDate = today;
+    localStorage.setItem("studyStreak", JSON.stringify(streak));
+  } catch(e) {}
   const db = await openJudgeDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("history","readwrite");
@@ -2764,8 +2780,11 @@ async function autoStockAndNext() {
 
 function handleAnswer(idx) {
   stopSpeak();
+  if (S._timerInterval) clearInterval(S._timerInterval);
   const qi=S.qIdx, q=S.qSet.questions[qi];
-  S.answers[qi]={selected:idx, answered:true};
+  const timeUp = (idx === -1);
+  if (timeUp) idx = -1; // No selection — always wrong
+  S.answers[qi]={selected:idx, answered:true, timeUp};
   const isCorrect = idx===q.correct;
   if (isCorrect) { S.stats.correct++; S.streak++; }
   else           { S.stats.wrong++;   S.streak=0;  }
@@ -2905,6 +2924,7 @@ function render() {
   else if (S.screen==="diagnosis") renderDiagnosis();
   else if (S.screen==="vocab") renderVocab();
   else if (S.screen==="vocabQuiz") renderVocabQuiz();
+  else if (S.screen==="flashcard") renderFlashcard();
   else if (S.screen==="listenPlay") renderListenPlay();
   else if (S.screen==="listenSetup") renderListenSetup();
   else if (S.screen==="mockSetup") renderMockSetup();
@@ -3912,6 +3932,82 @@ async function renderDiagnosis() {
       <div style="font-size:11px;color:#a0b4c8;margin-top:4px">L: ${lScore} ｜ R: ${rScore}</div>
     </div>
 
+    ${(()=>{
+      const targetScore = parseInt(localStorage.getItem("targetScore")||"0");
+      if (!targetScore) return `<div style="text-align:center;margin:4px 0"><button class="btn-s" id="setTargetBtn" style="font-size:11px;color:#fbbf24">🎯 目標スコアを設定</button></div>`;
+      const gap = targetScore - estScore;
+      const pct = Math.min(100, Math.round(estScore / targetScore * 100));
+      const gc = gap <= 0 ? "#4ade80" : gap <= 50 ? "#fbbf24" : "#f87171";
+      return `<div style="padding:8px 12px;background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.15);border-radius:8px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span style="color:#fbbf24">🎯 目標: ${targetScore}点</span>
+          <span style="color:${gc};font-weight:600">${gap<=0?"🎉 達成！":`あと${gap}点`}</span>
+        </div>
+        <div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${gc};transition:width 0.3s"></div>
+        </div>
+        <div style="text-align:right;margin-top:4px"><button class="btn-s" id="setTargetBtn" style="font-size:10px;color:#7a8ea5;padding:2px 6px">変更</button></div>
+      </div>`;
+    })()}
+
+    ${(()=>{
+      // Radar chart - Part 1-7 balance
+      const radarParts = [
+        {id:"part1",label:"P1",icon:"📷"},{id:"part2",label:"P2",icon:"💬"},
+        {id:"part3",label:"P3",icon:"🗣"},{id:"part4",label:"P4",icon:"🎙"},
+        {id:"part5",label:"P5",icon:"📝"},{id:"part6",label:"P6",icon:"📄"},
+        {id:"part7",label:"P7",icon:"📖"}
+      ];
+      const rates = radarParts.map(p => {
+        const d = byPart[p.id];
+        return d && d.total >= 2 ? Math.round(d.correct/d.total*100) : null;
+      });
+      if (rates.filter(r=>r!==null).length < 3) return "";
+      const n = radarParts.length;
+      const cx=120, cy=120, R=90;
+      const angleStep = 2*Math.PI/n;
+      // Grid lines
+      let grid = "";
+      for (const pct of [25,50,75,100]) {
+        const r = R*pct/100;
+        const pts = Array.from({length:n},(_, i)=>{
+          const a = -Math.PI/2+i*angleStep;
+          return `${cx+r*Math.cos(a)},${cy+r*Math.sin(a)}`;
+        }).join(" ");
+        grid += `<polygon points="${pts}" fill="none" stroke="rgba(255,255,255,${pct===50?0.12:0.06})" stroke-width="1"/>`;
+      }
+      // Axis lines + labels
+      let axes = "";
+      radarParts.forEach((p,i)=>{
+        const a = -Math.PI/2+i*angleStep;
+        const x2=cx+(R+5)*Math.cos(a), y2=cy+(R+5)*Math.sin(a);
+        const lx=cx+(R+18)*Math.cos(a), ly=cy+(R+18)*Math.sin(a);
+        axes += `<line x1="${cx}" y1="${cy}" x2="${x2}" y2="${y2}" stroke="rgba(255,255,255,0.08)"/>`;
+        const r = rates[i];
+        const col = r===null?"#64748b":r>=80?"#4ade80":r>=60?"#fbbf24":"#f87171";
+        axes += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="central" font-size="10" fill="${col}">${p.label}</text>`;
+      });
+      // Data polygon
+      const dataPoints = rates.map((r,i)=>{
+        const val = r!==null?r:0;
+        const a = -Math.PI/2+i*angleStep;
+        const rd = R*val/100;
+        return `${cx+rd*Math.cos(a)},${cy+rd*Math.sin(a)}`;
+      }).join(" ");
+      return `<div style="text-align:center;margin:8px 0">
+        <svg viewBox="0 0 240 240" width="220" style="display:inline-block">
+          ${grid}${axes}
+          <polygon points="${dataPoints}" fill="rgba(129,140,248,0.2)" stroke="#818cf8" stroke-width="2"/>
+          ${rates.map((r,i)=>{
+            if(r===null) return "";
+            const a=-Math.PI/2+i*angleStep;
+            const rd=R*r/100;
+            return `<circle cx="${cx+rd*Math.cos(a)}" cy="${cy+rd*Math.sin(a)}" r="3" fill="#818cf8"/>`;
+          }).join("")}
+        </svg>
+      </div>`;
+    })()}
+
     ${Object.keys(levelScores).length > 0 ? `<div style="margin:8px 0;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.06)">
       <div style="font-size:11px;color:#7a8ea5;margin-bottom:6px">📊 レベル別推定（IRT換算）</div>
       ${Object.entries(levelScores).sort((a,b)=>a[1].est-b[1].est).map(([lv,d])=>{
@@ -3990,10 +4086,84 @@ async function renderDiagnosis() {
       ${advice}
     </div>
 
+    <details style="margin-top:16px">
+      <summary style="font-size:13px;font-weight:700;color:#dce6f0;cursor:pointer;margin-bottom:8px">📋 学習レポート</summary>
+      ${(()=>{
+        const now = Date.now();
+        const oneDay = 86400000;
+        const oneWeek = 7*oneDay;
+        const toeicH = history.filter(h=>h.part!=="vocab");
+        // This week
+        const tw = toeicH.filter(h=>h.timestamp > now-oneWeek);
+        const twRate = tw.length>0 ? Math.round(tw.filter(h=>h.correct).length/tw.length*100) : 0;
+        // Last week
+        const lw = toeicH.filter(h=>h.timestamp > now-2*oneWeek && h.timestamp <= now-oneWeek);
+        const lwRate = lw.length>0 ? Math.round(lw.filter(h=>h.correct).length/lw.length*100) : null;
+        // This month (30 days)
+        const tm = toeicH.filter(h=>h.timestamp > now-30*oneDay);
+        const tmRate = tm.length>0 ? Math.round(tm.filter(h=>h.correct).length/tm.length*100) : 0;
+        // Daily average
+        const days = new Set(toeicH.map(h=>new Date(h.timestamp).toISOString().slice(0,10)));
+        const dailyAvg = days.size>0 ? Math.round(toeicH.length/days.size) : 0;
+        // Streak from studyStreak
+        const streak = JSON.parse(localStorage.getItem("studyStreak")||'{}');
+        // Most active part
+        const partCounts = {};
+        tm.forEach(h=>{partCounts[h.part]=(partCounts[h.part]||0)+1;});
+        const topPart = Object.entries(partCounts).sort((a,b)=>b[1]-a[1])[0];
+        // Most improved (compare this week vs last week per part)
+        let improved = "";
+        if (tw.length>=5 && lw.length>=5) {
+          const twByP={}, lwByP={};
+          tw.forEach(h=>{const p=h.part;if(!twByP[p])twByP[p]={c:0,t:0};twByP[p].t++;if(h.correct)twByP[p].c++;});
+          lw.forEach(h=>{const p=h.part;if(!lwByP[p])lwByP[p]={c:0,t:0};lwByP[p].t++;if(h.correct)lwByP[p].c++;});
+          let bestDiff=-999,bestP="";
+          for(const[p,d]of Object.entries(twByP)){
+            if(d.t<3||!lwByP[p]||lwByP[p].t<3) continue;
+            const diff=Math.round(d.c/d.t*100)-Math.round(lwByP[p].c/lwByP[p].t*100);
+            if(diff>bestDiff){bestDiff=diff;bestP=p;}
+          }
+          if(bestDiff>0) improved=`<div style="font-size:12px;color:#4ade80;margin-top:4px">📈 ${bestP} が先週比 +${bestDiff}% 改善！</div>`;
+        }
+
+        return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div style="padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:#dce6f0">${tw.length}</div>
+            <div style="font-size:10px;color:#7a8ea5">今週の回答数</div>
+            ${lwRate!==null?`<div style="font-size:10px;color:${twRate>lwRate?"#4ade80":"#f87171"}">${twRate}% (先週${lwRate}%)</div>`:""}
+          </div>
+          <div style="padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:#dce6f0">${tm.length}</div>
+            <div style="font-size:10px;color:#7a8ea5">今月の回答数</div>
+            <div style="font-size:10px;color:#a0b4c8">正答率 ${tmRate}%</div>
+          </div>
+          <div style="padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:#fbbf24">${dailyAvg}</div>
+            <div style="font-size:10px;color:#7a8ea5">1日平均</div>
+          </div>
+          <div style="padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:#f472b6">${days.size}</div>
+            <div style="font-size:10px;color:#7a8ea5">学習日数</div>
+            ${streak.count>0?`<div style="font-size:10px;color:#fbbf24">🔥${streak.count}日連続</div>`:""}
+          </div>
+        </div>
+        ${topPart?`<div style="font-size:12px;color:#a0b4c8;margin-top:4px">📊 今月最も学習: <strong style="color:#dce6f0">${topPart[0]}</strong> (${topPart[1]}問)</div>`:""}
+        ${improved}`;
+      })()}
+    </details>
+
     ${total>0?`<div style="margin-top:40px;text-align:center"><button class="btn-s" id="judgeClearBtn" style="color:#f87171;font-size:11px;opacity:0.6">🗑️ 判定データをリセット</button></div>`:""}`;
 
   // Handlers
   const db=$("diagBackBtn"); if(db)db.onclick=()=>{S.screen="home";render();};
+  const stb2=$("setTargetBtn"); if(stb2) stb2.onclick=()=>{
+    const cur = localStorage.getItem("targetScore")||"";
+    const g = prompt("目標TOEICスコアを入力してください（例: 800）:", cur);
+    if(g && !isNaN(parseInt(g)) && parseInt(g) >= 200 && parseInt(g) <= 990) {
+      localStorage.setItem("targetScore", String(parseInt(g)));
+      render();
+    }
+  };
   const al=$("applyLevelBtn"); if(al)al.onclick=()=>{
     S.level=suggestedLevel;
     al.textContent="✅ 変更しました"; al.disabled=true;
@@ -4089,8 +4259,9 @@ async function renderVocab() {
   app.innerHTML=`
     <div class="header" style="display:flex;justify-content:space-between;align-items:center"><div><h1 style="font-size:20px;margin:0">📝 単語帳</h1><div class="sub">${words.length}語</div></div><button class="btn-s" id="vocabBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button></div>
     ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>
-    ${weakWords.length>=4?`<div style="padding:0 0 4px"><button class="btn-s" id="vocabQuizWeak" style="width:100%;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button></div>`:""}`:""}
-    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button> <button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24;margin-left:4px">🏷️ レベル判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
+    <div style="display:flex;gap:6px;padding:0 0 4px">
+      <button class="btn-s" id="vocabFlashcard" style="flex:1;background:rgba(52,211,153,0.12);color:#34d399;font-size:12px">🃏 フラッシュカード</button>
+      ${weakWords.length>=4?`<button class="btn-s" id="vocabQuizWeak" style="flex:1;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button>`:""}</div>`:""}    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button> <button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24;margin-left:4px">🏷️ レベル判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
     <div style="display:flex;gap:4px;overflow-x:auto;padding:6px 0;flex-wrap:wrap">${filterBtns}</div>
     <div style="display:flex;gap:4px;overflow-x:auto;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
     <style>.pos-tab,.filter-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
@@ -4318,10 +4489,111 @@ Respond with ONLY a JSON object, no markdown, no backticks:
   const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
   const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
   const qpos=$("vocabQuizPos"); if(qpos)qpos.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="pos_quiz";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
+  const vfc=$("vocabFlashcard"); if(vfc)vfc.onclick=()=>{S.screen="flashcard";S._fcIdx=0;S._fcFlipped=false;S._fcStats={known:0,unknown:0};S._fcWords=null;render();};
   const qwk=$("vocabQuizWeak"); if(qwk)qwk.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=true;render();};
 }
 
 /* ── 単語クイズ画面 ── */
+async function renderFlashcard() {
+  if (!S._fcWords) {
+    const all = await vocabGetAll();
+    if (all.length === 0) { S.screen="vocab"; render(); return; }
+    // Shuffle
+    for(let i=all.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[all[i],all[j]]=[all[j],all[i]];}
+    S._fcWords = all;
+    S._fcIdx = 0;
+    S._fcFlipped = false;
+    S._fcStats = {known:0, unknown:0};
+  }
+  const words = S._fcWords;
+  const idx = S._fcIdx;
+  const total = words.length;
+
+  if (idx >= total) {
+    // Complete
+    const k=S._fcStats.known, u=S._fcStats.unknown;
+    app.innerHTML=`
+      <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+        <h1 style="font-size:20px;margin:0">🃏 フラッシュカード</h1>
+        <button class="btn-s" id="fcBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+      </div>
+      <div style="text-align:center;padding:40px 0">
+        <div style="font-size:48px;margin-bottom:12px">🎉</div>
+        <div style="font-size:18px;font-weight:700;color:#dce6f0;margin-bottom:8px">${total}語 完了！</div>
+        <div style="display:flex;gap:16px;justify-content:center;font-size:14px">
+          <span style="color:#4ade80">✅ 覚えた: ${k}</span>
+          <span style="color:#f87171">❌ まだ: ${u}</span>
+        </div>
+        <div style="margin-top:20px;display:flex;gap:8px;justify-content:center">
+          <button class="btn-s" id="fcRetryAll" style="font-size:13px;padding:10px 20px;color:#60a5fa">🔄 全部やり直す</button>
+          ${u>0?`<button class="btn-s" id="fcRetryWrong" style="font-size:13px;padding:10px 20px;color:#f87171">❌ 「まだ」だけ (${u}語)</button>`:""}
+        </div>
+      </div>`;
+    $("fcBackBtn").onclick=()=>{S.screen="vocab";render();};
+    const ra=$("fcRetryAll"); if(ra) ra.onclick=()=>{S._fcWords=null;render();};
+    const rw=$("fcRetryWrong"); if(rw) rw.onclick=()=>{
+      const wrongs=words.filter(w=>w._fcUnknown);
+      for(let i=wrongs.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[wrongs[i],wrongs[j]]=[wrongs[j],wrongs[i]];}
+      S._fcWords=wrongs; S._fcIdx=0; S._fcFlipped=false; S._fcStats={known:0,unknown:0}; render();
+    };
+    return;
+  }
+
+  const w = words[idx];
+  const flipped = S._fcFlipped;
+  const POS_LABELS = {noun:"名詞",verb:"動詞",adjective:"形容詞",adverb:"副詞",phrase:"フレーズ",other:"その他"};
+  const POS_COLORS = {noun:"#60a5fa",verb:"#4ade80",adjective:"#fbbf24",adverb:"#c084fc",phrase:"#f472b6",other:"#94a3b8"};
+  const lvBadge = ({"A":"<span style='font-size:10px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 5px;border-radius:3px'>A</span>","B":"<span style='font-size:10px;background:rgba(245,158,11,0.15);color:#f59e0b;padding:1px 5px;border-radius:3px'>B</span>","C":"<span style='font-size:10px;background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 5px;border-radius:3px'>C</span>"})[w.level]||"";
+  const meanings = (w.meaning||"").split("\n").filter(Boolean);
+  const examples = (w.context||"").split("\n").filter(Boolean);
+
+  app.innerHTML=`
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <h1 style="font-size:20px;margin:0">🃏 フラッシュカード</h1>
+      <button class="btn-s" id="fcBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:#7a8ea5;margin-bottom:8px">
+      <span>${idx+1} / ${total}</span>
+      <span style="color:#4ade80">✅${S._fcStats.known}</span>
+      <span style="color:#f87171">❌${S._fcStats.unknown}</span>
+    </div>
+    <div style="height:3px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:16px">
+      <div style="height:100%;width:${Math.round(idx/total*100)}%;background:#818cf8"></div>
+    </div>
+    <div id="fcCard" style="min-height:200px;padding:30px 20px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:16px;text-align:center;cursor:pointer;transition:all 0.2s;user-select:none">
+      <div style="font-size:24px;font-weight:700;color:#dce6f0;margin-bottom:8px">${esc(w.word)}</div>
+      <div style="margin-bottom:8px"><span style="font-size:11px;color:${POS_COLORS[w.pos]||'#94a3b8'}">${POS_LABELS[w.pos]||""}</span> ${lvBadge}</div>
+      ${flipped ? `
+        <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;margin-top:8px">
+          ${meanings.map((m,i)=>`<div style="font-size:15px;color:#7b9cf7;margin-bottom:4px">${meanings.length>1?("❶❷❸❹❺"[i]||"•")+" ":""}${esc(m)}</div>`).join("")}
+          ${examples.length>0?`<div style="margin-top:10px">${examples.map(ex=>`<div style="font-size:12px;color:#a0b4c8;margin-bottom:3px;line-height:1.5">📝 ${esc(ex)}</div>`).join("")}</div>`:""}
+        </div>
+      ` : `
+        <div style="margin-top:20px;font-size:13px;color:#64748b">タップで意味を表示</div>
+      `}
+    </div>
+    ${flipped ? `
+      <div style="display:flex;gap:12px;margin-top:16px">
+        <button class="btn-s" id="fcUnknown" style="flex:1;padding:14px;font-size:15px;font-weight:700;background:rgba(248,113,113,0.1);border-color:rgba(248,113,113,0.3);color:#f87171">❌ まだ</button>
+        <button class="btn-s" id="fcKnown" style="flex:1;padding:14px;font-size:15px;font-weight:700;background:rgba(74,222,128,0.1);border-color:rgba(74,222,128,0.3);color:#4ade80">✅ 覚えた</button>
+      </div>
+    ` : ""}`;
+
+  $("fcBackBtn").onclick=()=>{S.screen="vocab";render();};
+  $("fcCard").onclick=()=>{
+    if (!S._fcFlipped) { S._fcFlipped=true; render(); }
+  };
+  const fk=$("fcKnown"); if(fk) fk.onclick=()=>{
+    S._fcStats.known++;
+    S._fcIdx++; S._fcFlipped=false; render();
+  };
+  const fu=$("fcUnknown"); if(fu) fu.onclick=()=>{
+    S._fcStats.unknown++;
+    w._fcUnknown = true;
+    S._fcIdx++; S._fcFlipped=false; render();
+  };
+}
+
 async function renderVocabQuiz() {
   let words = await vocabGetAll();
   // Weak-only mode: filter to wrongCount > 0
@@ -5493,6 +5765,27 @@ function renderMockResult() {
 }
 
 function renderHome() {
+  // Daily goal & streak calculation
+  const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||"30");
+  const today = new Date().toISOString().slice(0,10);
+  const streak = JSON.parse(localStorage.getItem("studyStreak")||'{"count":0,"lastDate":"","todayCount":0,"todayDate":""}');
+  if (streak.todayDate !== today) {
+    // New day: check if yesterday was active
+    const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+    if (streak.lastDate === yesterday && streak.todayCount >= DAILY_GOAL) {
+      streak.count++;
+    } else if (streak.lastDate !== yesterday) {
+      streak.count = streak.todayCount >= DAILY_GOAL ? streak.count : 0;
+    }
+    streak.todayCount = 0;
+    streak.todayDate = today;
+    streak.lastDate = streak.lastDate || today;
+    localStorage.setItem("studyStreak", JSON.stringify(streak));
+  }
+  const goalPct = Math.min(100, Math.round(streak.todayCount / DAILY_GOAL * 100));
+  const goalColor = goalPct >= 100 ? "#4ade80" : goalPct >= 50 ? "#fbbf24" : "#60a5fa";
+  const streakDisplay = streak.count > 0 ? `🔥${streak.count}日連続` : "";
+
   // Build part rows with inline stock play buttons
   const groups=["L","R"].map(sec=>{
     const label=sec==="L"?"Listening":"Reading";
@@ -5517,17 +5810,34 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.23a · stock-first home + scenario diversity · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.23b · flashcard + timer + radar + report + P5和訳 · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
       <div style="font-size:13px;color:#7a8ea5;margin-top:2px">読込中...</div>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0;padding:8px 12px;background:rgba(255,255,255,0.02);border-radius:8px">
+      <div style="flex:1">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+          <span style="color:#a0b4c8">今日 ${streak.todayCount}/${DAILY_GOAL}問</span>
+          <span style="color:${goalColor};font-weight:600">${goalPct >= 100 ? "✅ 達成!" : `${goalPct}%`} ${streakDisplay}</span>
+        </div>
+        <div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${goalPct}%;background:${goalColor};transition:width 0.3s"></div>
+        </div>
+      </div>
+      <button class="btn-s" id="goalSettingBtn" style="font-size:10px;padding:2px 6px;color:#7a8ea5">⚙</button>
+    </div>
     ${groups}
     <div style="text-align:center;font-size:10px;color:#7a8ea5;margin-top:4px">▶通常 🆕未回答 🔥苦手特訓</div>
     <div id="judgeHomeToggle" style="text-align:center;margin-top:10px;cursor:pointer">
       <span style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:13px;font-weight:600;background:${S.judgeMode?"rgba(74,222,128,0.12)":"rgba(100,116,139,0.08)"};color:${S.judgeMode?"#4ade80":"#64748b"};border:1px solid ${S.judgeMode?"rgba(74,222,128,0.3)":"rgba(100,116,139,0.15)"}">
-        ${S.judgeMode?"📊 判定モード ON — 回答を記録中":"📊 判定モード OFF — タップでON"}
+        ${S.judgeMode?"📊 判定モード ON":"📊 判定モード OFF"}
+      </span>
+    </div>
+    <div id="timeAttackToggle" style="text-align:center;margin-top:6px;cursor:pointer">
+      <span style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:13px;font-weight:600;background:${S.timeAttackMode?"rgba(239,68,68,0.12)":"rgba(100,116,139,0.08)"};color:${S.timeAttackMode?"#ef4444":"#64748b"};border:1px solid ${S.timeAttackMode?"rgba(239,68,68,0.3)":"rgba(100,116,139,0.15)"}">
+        ${S.timeAttackMode?"⏱ タイムアタック ON":"⏱ タイムアタック OFF"}
       </span>
     </div>
     <div style="display:flex;gap:8px;justify-content:center;margin-top:12px">
@@ -5694,7 +6004,19 @@ function renderHome() {
     localStorage.setItem("judgeMode",JSON.stringify(S.judgeMode));
     render();
   };
+  $("timeAttackToggle").onclick=()=>{
+    S.timeAttackMode=!S.timeAttackMode;
+    localStorage.setItem("timeAttackMode",JSON.stringify(S.timeAttackMode));
+    render();
+  };
   $("changeKey").onclick=()=>{ localStorage.removeItem("gemini_api_key"); S.apiKey=""; S.screen="apikey"; render(); };
+  const gsBtn=$("goalSettingBtn"); if(gsBtn) gsBtn.onclick=()=>{
+    const g = prompt("1日の目標問題数を設定してください:", localStorage.getItem("dailyGoal")||"30");
+    if(g && !isNaN(parseInt(g)) && parseInt(g) > 0) {
+      localStorage.setItem("dailyGoal", String(parseInt(g)));
+      render();
+    }
+  };
 }
 
 /* ── Study (main game screen) ── */
@@ -5739,14 +6061,28 @@ function renderStudy() {
 
     // ── Conversation (Part 3) ──
     if (S.part==="part3"&&qs.conversation) {
-      inner+=ctxBlock("🗣️","会話",qs.conversation);
+      if (answered) {
+        inner+=ctxBlock("🗣️","会話",qs.conversation);
+      } else {
+        inner+=`<div style="font-size:12px;color:#7a8ea5;margin:8px 0">🎧 音声を聴いて回答してください
+          <details style="margin-top:4px"><summary style="font-size:11px;color:#60a5fa;cursor:pointer">📝 スクリプトを表示</summary>
+          ${ctxBlock("🗣️","会話",qs.conversation)}
+          </details></div>`;
+      }
       if (qs.graphic) inner+=renderGraphic(qs.graphic);
     }
 
     // ── Talk (Part 4) ──
     if (S.part==="part4"&&qs.talk) {
       const ttype=qs.talk_type?` (${qs.talk_type})`:"";
-      inner+=ctxBlock("🎙️",`トーク${ttype}`,qs.talk);
+      if (answered) {
+        inner+=ctxBlock("🎙️",`トーク${ttype}`,qs.talk);
+      } else {
+        inner+=`<div style="font-size:12px;color:#7a8ea5;margin:8px 0">🎧 音声を聴いて回答してください
+          <details style="margin-top:4px"><summary style="font-size:11px;color:#60a5fa;cursor:pointer">📝 スクリプトを表示</summary>
+          ${ctxBlock("🎙️",`トーク${ttype}`,qs.talk)}
+          </details></div>`;
+      }
       if (qs.graphic) inner+=renderGraphic(qs.graphic);
     }
 
@@ -5785,6 +6121,31 @@ function renderStudy() {
       }
     }
 
+    // ── Per-question timer (time attack mode) ──
+    const PART_TIME_LIMITS = {part1:8,part2:8,part3:15,part4:15,part5:25,part6:45,part7:60};
+    const timeAttack = S.timeAttackMode;
+    let timerHtml = "";
+    if (timeAttack && !answered) {
+      const limit = PART_TIME_LIMITS[S.part] || 30;
+      if (!S._qTimerStart || S._qTimerPart !== `${S.stockId||""}:${qi}`) {
+        S._qTimerStart = Date.now();
+        S._qTimerPart = `${S.stockId||""}:${qi}`;
+      }
+      const elapsed = Math.floor((Date.now() - S._qTimerStart) / 1000);
+      const remaining = Math.max(0, limit - elapsed);
+      const pct = Math.round(remaining / limit * 100);
+      const tc = remaining <= 3 ? "#ef4444" : remaining <= limit*0.3 ? "#fbbf24" : "#4ade80";
+      timerHtml = `<div style="margin:6px 0">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
+          <span style="color:${tc}">⏱ ${remaining}秒</span>
+          <span style="color:#7a8ea5">${limit}秒</span>
+        </div>
+        <div style="height:3px;background:#1e293b;border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${tc};transition:width 0.5s"></div>
+        </div>
+      </div>`;
+    }
+
     // ── Question progress indicator ──
     if (numQ>1) {
       const dots=Array.from({length:numQ},(_,i)=>{
@@ -5796,6 +6157,7 @@ function renderStudy() {
       }).join("");
       inner+=`<div class="q-prog"><span>問 ${qi+1}/${numQ}</span>${dots}</div>`;
     }
+    inner += timerHtml;
 
     // ── Question text ──
     if (S.part==="part2" && !answered) {
@@ -5826,7 +6188,7 @@ function renderStudy() {
     // ── Explanation ──
     if (answered) {
       inner+=`<div class="expl ${isOk?"ok":"ng"}">
-        <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":"😥 不正解..."}</div>
+        <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":ans.timeUp?"⏱ 時間切れ！":"😥 不正解..."}</div>
         ${q.explanation_en?`<details style="margin-bottom:8px"><summary style="font-size:13px;color:#60a5fa;cursor:pointer;user-select:none">💡 English Explanation</summary><div style="font-size:14px;line-height:1.9;color:#a0b4c8;margin-top:4px;padding:8px;background:rgba(96,165,250,0.06);border-radius:6px">${esc(q.explanation_en)}</div></details>`:""}
         <div class="det">${esc(q.explanation_ja||"")}</div>
       </div>`;
@@ -6087,6 +6449,22 @@ function renderStudy() {
       await speakGemini(choiceText,(err)=>setAudioBtn(pc,err?"error":"idle",err?String(err).slice(0,40):""));
       if (_curAudio) setAudioBtn(pc,"playing");
     };
+  }
+
+  // Time attack timer tick
+  if (S._timerInterval) clearInterval(S._timerInterval);
+  if (S.timeAttackMode && S.qSet && !S.answers?.[S.qIdx]?.answered) {
+    const PART_TIME = {part1:8,part2:8,part3:15,part4:15,part5:25,part6:45,part7:60};
+    const limit = PART_TIME[S.part] || 30;
+    S._timerInterval = setInterval(() => {
+      if (!S._qTimerStart || S.answers?.[S.qIdx]?.answered) { clearInterval(S._timerInterval); return; }
+      const elapsed = Math.floor((Date.now() - S._qTimerStart) / 1000);
+      const remaining = Math.max(0, limit - elapsed);
+      if (remaining <= 0) {
+        clearInterval(S._timerInterval);
+        handleAnswer(-1); // -1 = time up, auto-fail
+      }
+    }, 500);
   }
 }
 
