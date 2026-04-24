@@ -2249,8 +2249,94 @@ with st.sidebar:
                         st.session_state.pop("_export_data", None)
                         st.session_state.pop("_html_export", None)
 
+    # ── 難易度一括判定 ──
+    with st.expander("🎯 難易度一括判定（ストックJSON）"):
+        st.caption("エクスポートしたストックJSONに難易度スコア(200-990)を付与します")
+        diff_file = st.file_uploader("ストックJSONをアップロード", type=["json"], key="diff_rating_file")
+        if diff_file:
+            import json as _json
+            diff_data = _json.loads(diff_file.read().decode("utf-8"))
+            if isinstance(diff_data, list):
+                total_d = len(diff_data)
+                rated_d = sum(1 for it in diff_data if it.get("difficulty"))
+                unrated_d = total_d - rated_d
+                st.info(f"全{total_d}問 | 判定済み: {rated_d} | 未判定: {unrated_d}")
+                
+                rate_mode = st.radio("判定モード", ["未判定のみ", "全再判定"], key="diff_rate_mode", horizontal=True)
+                
+                if st.button(f"🎯 {'未判定'+str(unrated_d)+'問' if rate_mode=='未判定のみ' else '全'+str(total_d)+'問'}を判定", 
+                           use_container_width=True, key="diff_rate_btn"):
+                    target_d = [it for it in diff_data if not it.get("difficulty")] if rate_mode == "未判定のみ" else diff_data
+                    if not target_d:
+                        st.success("判定対象がありません")
+                    else:
+                        gemini_key = st.session_state.get("api_key", "")
+                        if not gemini_key:
+                            st.error("Gemini APIキーを設定してください")
+                        else:
+                            prog_d = st.progress(0)
+                            stat_d = st.status(f"🎯 {len(target_d)}問を判定中...", expanded=True)
+                            DBATCH = 15
+                            done_d, errors_d = 0, 0
+                            
+                            for di in range(0, len(target_d), DBATCH):
+                                batch_d = target_d[di:di+DBATCH]
+                                texts_d = []
+                                for bi, it in enumerate(batch_d):
+                                    qs = it.get("qSet", {})
+                                    q = qs.get("questions", [{}])[0]
+                                    text = q.get("question","") or qs.get("sentence","") or qs.get("spoken","") or ""
+                                    if qs.get("conversation"): text += " " + qs["conversation"][:150]
+                                    if qs.get("talk"): text += " " + qs["talk"][:150]
+                                    if qs.get("text"): text += " " + qs["text"][:150]
+                                    choices = " / ".join(q.get("choices",[])) if q.get("choices") else ""
+                                    texts_d.append(f"{bi+1}. [{it.get('part','?')}] {text[:200]} | {choices[:100]}")
+                                
+                                prompt_d = "You are a TOEIC scoring expert. Rate each question difficulty (200-990).\n\nCRITERIA:\n1. VOCAB: basic(schedule)→400 | business(negotiate)→650 | advanced(procurement)→850\n2. GRAMMAR: simple→400 | relative clause→650 | subjunctive→850\n3. INFERENCE: explicit→400 | implied→650 | cross-ref→800\n4. DISTRACTORS: obvious→400 | plausible→650 | tricky→850\nANCHORS: Part1/2→350-600, Part5 basic→400-550/adv→750+, Part7 cross-ref→750+.\n\nReturn ONLY JSON array: [score1, score2, ...]\n\nQuestions:\n" + "\n".join(texts_d)
+                                
+                                try:
+                                    resp_d = generate_text(prompt_d, "gemini", "gemini-2.5-flash", 
+                                                        "https://generativelanguage.googleapis.com/v1beta",
+                                                        gemini_key)
+                                    import re as _re
+                                    m_d = _re.search(r'\[[\d\s,.\n]+\]', resp_d)
+                                    if m_d:
+                                        scores_d = _json.loads(m_d.group())
+                                        for j in range(min(len(batch_d), len(scores_d))):
+                                            batch_d[j]["difficulty"] = max(200, min(990, round(float(scores_d[j]))))
+                                            done_d += 1
+                                    else:
+                                        nums_d = _re.findall(r'\b\d{3}\b', resp_d)
+                                        if len(nums_d) >= len(batch_d) * 0.5:
+                                            for j in range(min(len(batch_d), len(nums_d))):
+                                                batch_d[j]["difficulty"] = max(200, min(990, int(nums_d[j])))
+                                                done_d += 1
+                                        else:
+                                            errors_d += 1
+                                            stat_d.write(f"⚠️ Batch {di//DBATCH+1}: parse failed")
+                                except Exception as e:
+                                    errors_d += 1
+                                    stat_d.write(f"⚠️ Batch {di//DBATCH+1}: {str(e)[:80]}")
+                                    time.sleep(3)
+                                
+                                prog_d.progress(min(1.0, (di+DBATCH) / len(target_d)))
+                                stat_d.update(label=f"🎯 {done_d}/{len(target_d)}問 ({errors_d}err)")
+                                time.sleep(0.5)
+                            
+                            stat_d.update(label=f"✅ {done_d}問判定完了 ({errors_d}err)", state="complete")
+                            rated_after_d = sum(1 for it in diff_data if it.get("difficulty"))
+                            st.success(f"判定完了: {rated_after_d}/{total_d}問に難易度スコア付与済み")
+                            st.download_button(
+                                f"📥 難易度付きJSONをダウンロード ({rated_after_d}問)",
+                                data=_json.dumps(diff_data, ensure_ascii=False),
+                                file_name=f"toeic-stock-rated-{datetime.now().strftime('%Y%m%d-%H%M')}.json",
+                                mime="application/json",
+                                use_container_width=True
+                            )
+                            st.info("💡 HTMLアプリにインポート → 既存問題の難易度が更新されます")
+
     st.divider()
-    st.caption("v2026.04.23e · 5-level vocab + auto difficulty + P5和訳 + scenario diversity · 303 types")
+    st.caption("v2026.04.25a · IRT difficulty + bulk rating + 5-level vocab + P5和訳 · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 

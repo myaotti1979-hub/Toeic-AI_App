@@ -1270,7 +1270,7 @@ function openJudgeDB() {
   });
 }
 
-async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed) {
+async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed, difficulty) {
   // Increment daily goal counter
   try {
     const today = new Date().toISOString().slice(0,10);
@@ -1294,6 +1294,7 @@ async function judgeSave(part, level, type, questionIdx, correct, questionText, 
       questionIdx, correct,
       questionText: questionText?.slice(0,100)||"",
       elapsed: elapsed||0,
+      difficulty: difficulty||0,
       timestamp: Date.now(),
     });
     tx.oncomplete = () => resolve();
@@ -3085,7 +3086,7 @@ function handleAnswer(idx) {
       }
       if (qType === "unknown") qType = "office_general";
     }
-    judgeSave(S.part, S.level, qType, qi, isCorrect, q.question, elapsed).catch(e=>console.warn('judge save failed:', e));
+    judgeSave(S.part, S.level, qType, qi, isCorrect, q.question, elapsed, S.stockDifficulty||0).catch(e=>console.warn('judge save failed:', e));
     // 不正解 → 苦手問題として自動ストック（同一qSetで1回だけ）
     if (!isCorrect && S.qSet && !S.qSet._weakStocked) {
       S.qSet._weakStocked = true;
@@ -3836,9 +3837,13 @@ async function renderDiagnosis() {
     .sort((a,b) => a.rate - b.rate)
     .slice(0, 8); // 上位8弱点
 
-  // 推定スコア計算 — IRT（項目応答理論）ベースのレベル補正
-  // 各レベルの正答率からTOEICスコアを推定する換算テーブル
-  // 出典: TOEIC公式換算表 + IRT理論に基づく難易度別期待正答率の逆算
+  // 推定スコア計算 — IRT（項目応答理論）ベースの難易度補正
+  // difficulty（問題の実際の難易度スコア200-990）がある場合はそれを使用
+  // ない場合は生成レベル（beginner/intermediate/advanced）から推定
+
+  // difficulty→level変換
+  function diffToLevel(d) { return d >= 750 ? "advanced" : d >= 500 ? "intermediate" : "beginner"; }
+
   const SCORE_TABLE = {
     beginner:     [[0,200],[0.50,300],[0.70,400],[0.78,500],[0.85,600],[0.92,700],[0.97,800],[0.99,900],[1.00,950]],
     intermediate: [[0,200],[0.25,300],[0.40,400],[0.52,500],[0.60,600],[0.70,700],[0.83,800],[0.95,900],[1.00,960]],
@@ -3856,10 +3861,10 @@ async function renderDiagnosis() {
     return table[table.length-1][1];
   }
 
-  // レベル別集計
+  // レベル別集計（difficulty優先）
   const byLevel = {};
   history.forEach(h => {
-    const lv = h.level || "intermediate";
+    const lv = h.difficulty ? diffToLevel(h.difficulty) : (h.level || "intermediate");
     if (!byLevel[lv]) byLevel[lv] = {correct:0, total:0};
     byLevel[lv].total++;
     if (h.correct) byLevel[lv].correct++;
@@ -3871,7 +3876,7 @@ async function renderDiagnosis() {
     if (sectionHistory.length === 0) return {score:0, total:0};
     const sByLevel = {};
     sectionHistory.forEach(h => {
-      const lv = h.level || "intermediate";
+      const lv = h.difficulty ? diffToLevel(h.difficulty) : (h.level || "intermediate");
       if (!sByLevel[lv]) sByLevel[lv] = {correct:0, total:0};
       sByLevel[lv].total++;
       if (h.correct) sByLevel[lv].correct++;
@@ -6070,7 +6075,7 @@ function renderMockTest() {
       const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
       judgeSave(item.part, item.level||"intermediate",
         qs._questionType||qs.talk_type||qs.doc_type||"unknown",
-        S.mockQIdx, isCorrect, qText, elapsed).catch(()=>{});
+        S.mockQIdx, isCorrect, qText, elapsed, item.difficulty||0).catch(()=>{});
       // Advance
       S.mockQIdx++;
       if (S.mockQIdx >= questions.length) {
@@ -6264,7 +6269,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.23f · difficulty merge import + 5-level vocab + flashcard · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25a · IRT difficulty + P5和訳 + flashcard + 5-level vocab · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6344,8 +6349,9 @@ function renderHome() {
       return t[t.length-1][1];
     }
     const byLv = {};
+    function dToLv(d) { return d >= 750 ? "advanced" : d >= 500 ? "intermediate" : "beginner"; }
     toeicH.forEach(h => {
-      const lv = h.level||"intermediate";
+      const lv = h.difficulty ? dToLv(h.difficulty) : (h.level||"intermediate");
       if (!byLv[lv]) byLv[lv]={c:0,t:0};
       byLv[lv].t++; if (h.correct) byLv[lv].c++;
     });
