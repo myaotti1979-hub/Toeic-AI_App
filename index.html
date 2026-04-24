@@ -1916,17 +1916,17 @@ function releaseWakeLock() {
 }
 
 // Gemini call for JSON output (simple, no thinking overhead)
-async function geminiJSON(prompt) {
-  const m = GEMINI_FLASH;
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${S.apiKey}`,
-    { method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],
-        generationConfig:{temperature:0.1, maxOutputTokens:1024}}) }
-  );
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  const d = await res.json();
-  return d.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
+// Extract JSON from Gemini response (strips thinking, markdown, etc.)
+function extractJSON(raw) {
+  let s = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  try { return JSON.parse(s); } catch(e) {}
+  const m1 = s.match(/\[[\s\S]*\]/);
+  if (m1) try { return JSON.parse(m1[0]); } catch(e) {}
+  const m2 = s.match(/\{[\s\S]*\}/);
+  if (m2) try { return JSON.parse(m2[0]); } catch(e) {}
+  const nums = s.match(/\b\d{3}\b/g);
+  if (nums && nums.length >= 3) return nums.map(Number);
+  return null;
 }
 
 function extractQuestionText(item) {
@@ -1967,16 +1967,14 @@ Return a JSON array of ${items.length} integers: [score1, score2, ...]
 Questions:
 ${texts}`;
 
-  const raw = await geminiJSON(prompt);
-  console.log("[DIFFICULTY]", raw.slice(0, 300));
-  let scores = null;
-  try { const p = JSON.parse(raw); if (Array.isArray(p)) scores = p; } catch(e) {}
-  if (!scores) {
-    try { const p = JSON.parse(raw); if(p && typeof p==="object") for(const v of Object.values(p)) if(Array.isArray(v)){scores=v;break;} } catch(e) {}
+  const raw = await geminiText(prompt, GEMINI_FLASH);
+  console.log("[DIFFICULTY] raw:", raw.slice(0, 300));
+  let scores = extractJSON(raw);
+  // Handle object wrapper like {"scores":[...]} or {"difficulty":[...]}
+  if (scores && !Array.isArray(scores) && typeof scores === "object") {
+    scores = Object.values(scores).find(v => Array.isArray(v)) || null;
   }
-  if (!scores) { const m = raw.match(/\[[\d\s,.\n\r]+\]/); if(m) try{scores=JSON.parse(m[0]);}catch(e){} }
-  if (!scores) { const nums = raw.match(/\b\d{3}\b/g); if(nums && nums.length >= items.length*0.5) scores=nums.map(Number); }
-  if (!scores || scores.length === 0) throw new Error("Parse failed: " + raw.slice(0, 150));
+  if (!scores || !Array.isArray(scores) || scores.length === 0) throw new Error("Parse failed: " + raw.slice(0, 150));
   while (scores.length < items.length) scores.push(600);
   return scores.slice(0, items.length).map(s => Math.max(200, Math.min(990, Math.round(Number(s)||600))));
 }
@@ -4726,7 +4724,7 @@ Return ONLY a JSON array matching the word order:
           for (let attempt = 0; attempt < 3; attempt++) {
             try {
               if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
-              raw = await geminiJSON(prompt);
+              raw = await geminiText(prompt, GEMINI_FLASH);
               break;
             } catch(e) {
               lastErr2 = e;
