@@ -5005,30 +5005,30 @@ async function renderFlashcard() {
       <h1 style="font-size:20px;margin:0">🃏 フラッシュカード</h1>
       <button class="btn-s" id="fcBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
     </div>
-    <div style="display:flex;justify-content:space-between;font-size:11px;color:#7a8ea5;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;font-size:13px;color:#7a8ea5;margin-bottom:8px">
       <span>${idx+1} / ${total}</span>
       <span style="color:#4ade80">✅${S._fcStats.known}</span>
       <span style="color:#f87171">❌${S._fcStats.unknown}</span>
     </div>
-    <div style="height:3px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:16px">
+    <div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:16px">
       <div style="height:100%;width:${Math.round(idx/total*100)}%;background:#818cf8"></div>
     </div>
-    <div id="fcCard" style="min-height:200px;padding:30px 20px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:16px;text-align:center;cursor:pointer;transition:all 0.2s;user-select:none">
-      <div style="font-size:24px;font-weight:700;color:#dce6f0;margin-bottom:8px">${esc(w.word)}</div>
-      <div style="margin-bottom:8px"><span style="font-size:11px;color:${POS_COLORS[w.pos]||'#94a3b8'}">${POS_LABELS[w.pos]||""}</span> ${lvBadge}</div>
+    <div id="fcCard" style="min-height:240px;padding:36px 24px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:16px;text-align:center;cursor:pointer;transition:all 0.2s;user-select:none">
+      <div style="font-size:32px;font-weight:700;color:#dce6f0;margin-bottom:10px">${esc(w.word)}</div>
+      <div style="margin-bottom:10px"><span style="font-size:15px;color:${POS_COLORS[w.pos]||'#94a3b8'}">${POS_LABELS[w.pos]||""}</span> <span style="font-size:13px;background:${VL[w.level]?.bg||'rgba(100,116,139,0.1)'};color:${vlColor(w.level)};padding:3px 8px;border-radius:4px">${VL[w.level]?.label||w.level||""}</span></div>
       ${flipped ? `
-        <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;margin-top:8px">
-          ${meanings.map((m,i)=>`<div style="font-size:15px;color:#7b9cf7;margin-bottom:4px">${meanings.length>1?("❶❷❸❹❺"[i]||"•")+" ":""}${esc(m)}</div>`).join("")}
-          ${examples.length>0?`<div style="margin-top:10px">${examples.map(ex=>`<div style="font-size:12px;color:#a0b4c8;margin-bottom:3px;line-height:1.5">📝 ${esc(ex)}</div>`).join("")}</div>`:""}
+        <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:18px;margin-top:10px">
+          ${meanings.map((m,i)=>`<div style="font-size:20px;color:#7b9cf7;margin-bottom:6px">${meanings.length>1?("❶❷❸❹❺"[i]||"•")+" ":""}${esc(m)}</div>`).join("")}
+          ${examples.length>0?`<div style="margin-top:14px">${examples.map(ex=>`<div style="font-size:15px;color:#a0b4c8;margin-bottom:5px;line-height:1.6">📝 ${esc(ex)}</div>`).join("")}</div>`:""}
         </div>
       ` : `
-        <div style="margin-top:20px;font-size:13px;color:#64748b">タップで意味を表示</div>
+        <div style="margin-top:24px;font-size:16px;color:#64748b">タップで意味を表示</div>
       `}
     </div>
     ${flipped ? `
-      <div style="display:flex;gap:12px;margin-top:16px">
-        <button class="btn-s" id="fcUnknown" style="flex:1;padding:14px;font-size:15px;font-weight:700;background:rgba(248,113,113,0.1);border-color:rgba(248,113,113,0.3);color:#f87171">❌ まだ</button>
-        <button class="btn-s" id="fcKnown" style="flex:1;padding:14px;font-size:15px;font-weight:700;background:rgba(74,222,128,0.1);border-color:rgba(74,222,128,0.3);color:#4ade80">✅ 覚えた</button>
+      <div style="display:flex;gap:12px;margin-top:18px">
+        <button class="btn-s" id="fcUnknown" style="flex:1;padding:16px;font-size:17px;font-weight:700;background:rgba(248,113,113,0.1);border-color:rgba(248,113,113,0.3);color:#f87171">❌ まだ</button>
+        <button class="btn-s" id="fcKnown" style="flex:1;padding:16px;font-size:17px;font-weight:700;background:rgba(74,222,128,0.1);border-color:rgba(74,222,128,0.3);color:#4ade80">✅ 覚えた</button>
       </div>
     ` : ""}`;
 
