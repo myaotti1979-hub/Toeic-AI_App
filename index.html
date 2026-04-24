@@ -2024,26 +2024,31 @@ function extractQuestionText(item) {
 
 async function rateDifficultyBatch(items) {
   const texts = items.map((it,i) => `${i+1}. ${extractQuestionText(it)}`).join("\n");
-  const prompt = `You are a TOEIC scoring expert calibrated against official ETS score descriptors.
-Rate each question's difficulty as the TOEIC score a test-taker needs to answer correctly.
+  const prompt = `You are a TOEIC scoring expert. Rate each question's difficulty as the TOEIC score needed to answer correctly (integer 200-990).
 
-CALIBRATION CRITERIA (evaluate each applicable factor, then average):
-1. VOCABULARY: basic daily words (schedule/office/meeting) →350-450 | business vocab (negotiate/deadline/implement) →550-700 | advanced (procurement/arbitration/discretionary) →750-900
-2. GRAMMAR COMPLEXITY: simple SVO/basic tense/preposition →350-450 | relative clauses/passive voice/conditionals →550-700 | subjunctive/inversion/complex participle →750-900
-3. INFERENCE DEPTH: explicit info lookup →350-450 | simple inference/paraphrase →550-700 | implication/cross-reference/NOT questions →750-900
-4. DISTRACTOR QUALITY: obviously wrong choices →350-450 | plausible but distinguishable →550-700 | very tricky near-synonyms →750-900
-5. PROCESSING LOAD: short sentence →350-450 | medium passage with context →550-700 | long/multiple passages requiring synthesis →750-900
+CRITERIA — evaluate ALL applicable, then AVERAGE:
+- VOCAB: basic(schedule/office)→350-450 | business(negotiate/implement)→550-700 | advanced(procurement/arbitration/contingent)→800-900
+- GRAMMAR: simple SVO/preposition→350-450 | relative clause/passive→550-650 | subjunctive(recommend that X do)/inversion(Should X do, Had X done)→800-950
+- INFERENCE: explicit lookup→350-450 | paraphrase→550-650 | implied meaning/cross-reference/NOT→750-900
+- DISTRACTORS: obviously wrong→350-450 | plausible→550-700 | near-synonym traps→800+
 
-PART-SPECIFIC ANCHORS:
-- Part 1: photo description, mostly 350-500
-- Part 2: question-response, mostly 350-600
-- Part 3/4: conversation/talk comprehension, 400-800
-- Part 5: word_form/basic_preposition →400-550, participle/conditional →600-750, rare vocab/complex structure →800+
-- Part 6: vocab in context →500-650, sentence insertion →700+
-- Part 7 single: main purpose →400-500, detail →500-650, inference →650-800, NOT question →750+
-- Part 7 double/triple: detail lookup →500-650, cross-reference →750+
+STRICT PART ANCHORS (follow these precisely):
+- Part 1: simple photo→350-400, inference required→450-550. MAX 600.
+- Part 2: direct WH answer→350-450, indirect/implied→500-600. MAX 650.
+- Part 3: explicit detail→450-550, speaker intent→600-700, "What does X imply"→750+
+- Part 4: explicit detail→450-550, purpose/tone→600-700, implied meaning→750+
+- Part 5: basic preposition/tense→400-500, word form→500-600, conditional→650-750, SUBJUNCTIVE/INVERSION/rare vocab→800-950
+- Part 6: vocab in context→550-700, grammar blank→600-750, sentence insertion→750-850
+- Part 7 single: main purpose→450-550, detail lookup→550-650, inference→700-800, NOT question→750-850
+- Part 7 double/triple: detail→550-650, cross-reference→800-900
 
-Return a JSON array of ${items.length} integers: [score1, score2, ...]
+CRITICAL: Use the FULL range 300-950. Do NOT cluster around 550-700.
+- "Should the board approve..." (inverted conditional) = 850+
+- "When is the meeting?" = 350-400
+- "What does the speaker imply?" = 750+
+- A simple preposition fill = 400-500
+
+Return JSON array of ${items.length} integers: [score1, score2, ...]
 
 Questions:
 ${texts}`;
@@ -3293,10 +3298,12 @@ async function renderStockSelect() {
           <div style="font-size:10px;color:#7a8ea5">${l.score}</div>
         </div>`;
       }).join("")}</div>
-      <div class="sec-lbl" style="margin:0 0 4px">パート</div>
+      <div class="sec-lbl" style="margin:0 0 4px">パート <span style="font-size:10px;color:#7a8ea5">（推奨レベル表示）</span></div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${PARTS.map(p=>{
         const sel=S.part===p.id;
-        return `<button class="btn-s" data-pt="${p.id}" style="font-size:11px;padding:4px 8px;${sel?"background:rgba(129,140,248,0.2);border-color:rgba(129,140,248,0.4);color:#818cf8":""}">${p.label}</button>`;
+        const rec = {part1:"中級",part2:"中級",part3:"上級",part4:"上級",part5:"上級",part6:"上級",part7:"上級"}[p.id]||"";
+        const recCol = rec==="中級"?"#f59e0b":"#ef4444";
+        return `<button class="btn-s" data-pt="${p.id}" style="font-size:11px;padding:4px 8px;${sel?"background:rgba(129,140,248,0.2);border-color:rgba(129,140,248,0.4);color:#818cf8":""}">${p.label}<span style="font-size:8px;color:${recCol};margin-left:2px">${rec}</span></button>`;
       }).join("")}</div>
       <div style="display:flex;gap:6px;align-items:center">
         <button class="btn-s" id="stockCreateBtn" ${!S.level||!S.part?"disabled":""} style="flex:1;font-size:13px;padding:10px;background:rgba(129,140,248,0.15);color:#818cf8;font-weight:700">📦+ ストック作成</button>
@@ -6323,7 +6330,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25b · difficulty distribution + IRT fix + P5和訳 + flashcard · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25c · recalibrated difficulty + IRT fix + recommended levels · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>

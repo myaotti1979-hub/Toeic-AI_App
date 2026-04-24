@@ -89,6 +89,21 @@ PART_DEFAULT_MODEL = {
     "part7t": "gemini-3-flash (API best value)",
 }
 
+# Recommended generation level per part (based on part structural difficulty limits)
+PART_REC_LEVEL = {
+    "part1": "intermediate",   # Photo: structural limit ~550
+    "part2": "intermediate",   # Q&A: structural limit ~650
+    "part3": "advanced",       # Conversation: can be 450-800
+    "part3_3p": "advanced",
+    "part4": "advanced",       # Talk: can be 450-800
+    "part5": "advanced",       # Grammar: full range 400-950
+    "part6": "advanced",       # Text completion: 550-850
+    "part7": "advanced",       # Reading: full range 450-900
+    "part7s": "advanced",
+    "part7d": "advanced",
+    "part7t": "advanced",
+}
+
 # ══════════════════════════════════════
 # Type Pools (151 types)
 # ══════════════════════════════════════
@@ -193,7 +208,7 @@ def build_prompt(level, part, t):
     # Listening系(Part 1-4)では音声整合性ルールを追加
     is_listening = part in ("part1", "part2", "part3", "part3_3p", "part4")
     audio_rule = AUDIO_RULE if is_listening else ""
-    sys = f"You are an expert TOEIC test maker. {LEVEL_GUIDES[level]}\nRespond with EXACTLY ONE JSON object — no arrays, no wrapping, no markdown, no backticks. DO NOT wrap the output in {{\"part1\":[...]}} or similar. DO NOT produce multiple questions. Output ONLY a single {{...}} object matching the template below.{JA}{EN_EXPL}{CONSISTENCY}{CHOICE_RULE}{audio_rule}{VOCAB_RULE}\nDIFFICULTY RATING: Include \"difficulty\" (integer 200-990) = the TOEIC score a test-taker needs to answer correctly. Rate based on THESE OBJECTIVE CRITERIA:\n- VOCAB: basic (schedule/meeting) →400, business (negotiate/reimburse) →650, advanced (procurement/arbitration) →850\n- GRAMMAR: simple tense/preposition →400, relative clause/participle →600, subjunctive/inversion →800\n- INFERENCE: explicit info →400, simple inference →600, implication/cross-reference →800\n- DISTRACTORS: obviously wrong →400, plausible but wrong →650, very tricky/similar →850\nScore = average of applicable criteria. beginner-level questions MUST be 300-500, intermediate 500-750, advanced 700-950."
+    sys = f"You are an expert TOEIC test maker. {LEVEL_GUIDES[level]}\nRespond with EXACTLY ONE JSON object — no arrays, no wrapping, no markdown, no backticks. DO NOT wrap the output in {{\"part1\":[...]}} or similar. DO NOT produce multiple questions. Output ONLY a single {{...}} object matching the template below.{JA}{EN_EXPL}{CONSISTENCY}{CHOICE_RULE}{audio_rule}{VOCAB_RULE}\nDIFFICULTY RATING: Include \"difficulty\" (integer 200-990) = the TOEIC score needed to answer correctly.\nCRITERIA: VOCAB(basic→400, business→650, advanced→850) + GRAMMAR(simple→400, clause→600, subjunctive/inversion→800+) + INFERENCE(explicit→400, implied→650, cross-ref→800) + DISTRACTORS(obvious→400, plausible→650, tricky→850). Average all applicable.\nPART ANCHORS: Part1→350-550, Part2→350-600, Part3/4→450-800, Part5(preposition→450, word_form→550, conditional→700, subjunctive/inversion→850+), Part6→550-850, Part7(purpose→500, inference→750, cross-ref→850).\nCRITICAL: A subjunctive or inverted conditional MUST be 800+. A simple preposition fill MUST be 400-500. Use the FULL range."
     tt, td = t.get("type","varied"), t.get("desc","")
     is_graphic = tt.startswith("graphic_")
     # Part 5 scenario diversity: randomly select a business context
@@ -2292,7 +2307,7 @@ with st.sidebar:
                                     choices = " / ".join(q.get("choices",[])) if q.get("choices") else ""
                                     texts_d.append(f"{bi+1}. [{it.get('part','?')}] {text[:200]} | {choices[:100]}")
                                 
-                                prompt_d = "You are a TOEIC scoring expert. Rate each question difficulty (200-990).\n\nCRITERIA:\n1. VOCAB: basic(schedule)→400 | business(negotiate)→650 | advanced(procurement)→850\n2. GRAMMAR: simple→400 | relative clause→650 | subjunctive→850\n3. INFERENCE: explicit→400 | implied→650 | cross-ref→800\n4. DISTRACTORS: obvious→400 | plausible→650 | tricky→850\nANCHORS: Part1/2→350-600, Part5 basic→400-550/adv→750+, Part7 cross-ref→750+.\n\nReturn ONLY JSON array: [score1, score2, ...]\n\nQuestions:\n" + "\n".join(texts_d)
+                                prompt_d = "You are a TOEIC scoring expert. Rate each question's difficulty (200-990).\n\nCRITERIA (average all applicable):\n- VOCAB: basic(schedule)→400 | business(negotiate)→650 | advanced(procurement/arbitration)→850\n- GRAMMAR: simple SVO→400 | clause/passive→600 | subjunctive/inversion→800+\n- INFERENCE: explicit→400 | paraphrase→600 | implied/cross-ref→800\n- DISTRACTORS: obvious→400 | plausible→650 | tricky→850\n\nSTRICT PART ANCHORS:\n- Part1→350-550(MAX 600), Part2→350-600(MAX 650)\n- Part3/4: detail→500, intent→650, implication→750+\n- Part5: preposition→450, word_form→550, conditional→700, subjunctive/inversion→850+\n- Part6: vocab→600, insertion→750+\n- Part7: purpose→500, detail→600, inference→750, NOT/cross-ref→800+\n\nCRITICAL: Use FULL range 300-950. Subjunctive/inversion=800+. Simple preposition=400-500.\n\nReturn JSON array: [score1, score2, ...]\n\nQuestions:\n" + "\n".join(texts_d)
                                 
                                 try:
                                     resp_d = generate_text(prompt_d, "gemini", "gemini-2.5-flash", 
@@ -2336,7 +2351,7 @@ with st.sidebar:
                             st.info("💡 HTMLアプリにインポート → 既存問題の難易度が更新されます")
 
     st.divider()
-    st.caption("v2026.04.25a · IRT difficulty + bulk rating + 5-level vocab + P5和訳 · 303 types")
+    st.caption("v2026.04.25c · recalibrated difficulty + recommended levels + P5和訳 · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
