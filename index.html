@@ -3969,10 +3969,11 @@ async function renderDiagnosis() {
   const rScore = rEst.score;
   const estScore = lScore + rScore;
 
-  // レベル別スコア表示用（直近データから）
-  const recentToeic = toeicSorted.slice(0, IRT_RECENT_N * 2);  // L+R合計
+  // レベル別スコア表示用（パート別直近N問の合算）
+  const allRecentItems = [];
+  for (const p of PARTS) allRecentItems.push(...(recentByPart[p.id] || []));
   const byLevel = {};
-  recentToeic.forEach(h => {
+  allRecentItems.forEach(h => {
     const lv = h.difficulty ? diffToLevel(h.difficulty) : (h.level || "intermediate");
     if (!byLevel[lv]) byLevel[lv] = {correct:0, total:0};
     byLevel[lv].total++;
