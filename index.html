@@ -6602,45 +6602,52 @@ function renderHome() {
     const rate = toeicH.filter(h=>h.correct).length / toeicH.length;
     const estLevel = rate >= 0.75 ? "advanced" : rate >= 0.5 ? "intermediate" : "beginner";
     const lvInfo = LEVELS.find(l=>l.id===estLevel);
-    // Simple IRT score
+    // IRT推定（実力診断と同じロジック）
     const SCORE_TABLE = {
-      beginner:[[0,200],[0.50,300],[0.70,400],[0.85,600],[1.00,950]],
-      intermediate:[[0,200],[0.40,400],[0.60,600],[0.83,800],[1.00,960]],
-      advanced:[[0,200],[0.30,500],[0.45,700],[0.60,800],[0.80,900],[1.00,980]]
+      beginner:     [[0,200],[0.50,300],[0.70,400],[0.78,500],[0.85,600],[0.92,700],[0.97,800],[0.99,900],[1.00,950]],
+      intermediate: [[0,200],[0.25,300],[0.40,400],[0.52,500],[0.60,600],[0.70,700],[0.83,800],[0.95,900],[1.00,960]],
+      advanced:     [[0,200],[0.15,300],[0.25,400],[0.30,500],[0.35,600],[0.45,700],[0.60,800],[0.80,900],[1.00,980]]
     };
     function irt(acc, lv) {
       const t = SCORE_TABLE[lv]||SCORE_TABLE.intermediate;
+      if (acc <= 0) return t[0][1];
       for (let i=1;i<t.length;i++) { if (acc<=t[i][0]) { const [x0,y0]=t[i-1],[x1,y1]=t[i]; return Math.round(y0+(acc-x0)/(x1-x0)*(y1-y0)); } }
       return t[t.length-1][1];
     }
-    const byLv = {};
     function dToLv(d) { return d >= 750 ? "advanced" : d >= 500 ? "intermediate" : "beginner"; }
-    // パート別直近50問を合算してIRT
     const HPART_N = 50;
-    const hParts = ["part1","part2","part3","part4","part5","part6","part7"];
-    let recentTotal = 0;
-    for (const pid of hParts) {
-      const pItems = toeicH.filter(h=>h.part===pid);
-      pItems.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-      pItems.slice(0, HPART_N).forEach(h => {
-        const lv = h.difficulty ? dToLv(h.difficulty) : (h.level||"intermediate");
-        if (!byLv[lv]) byLv[lv]={c:0,t:0};
-        byLv[lv].t++; if (h.correct) byLv[lv].c++;
-        recentTotal++;
-      });
+    const hPartsL = ["part1","part2","part3","part4"];
+    const hPartsR = ["part5","part6","part7"];
+    function estimateHomeSection(partIds) {
+      const byLv = {};
+      for (const pid of partIds) {
+        const pItems = toeicH.filter(h=>h.part===pid);
+        pItems.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        pItems.slice(0, HPART_N).forEach(h => {
+          const lv = h.difficulty ? dToLv(h.difficulty) : (h.level||"intermediate");
+          if (!byLv[lv]) byLv[lv]={c:0,t:0};
+          byLv[lv].t++; if (h.correct) byLv[lv].c++;
+        });
+      }
+      let ws=0, wt=0;
+      for (const [lv,d] of Object.entries(byLv)) {
+        if (d.t>=2) { const s=irt(d.c/d.t,lv); ws+=s*d.t; wt+=d.t; }
+      }
+      if (wt === 0) return 0;
+      const rawEst = ws / wt;
+      return Math.min(495, Math.max(5, Math.round(rawEst / 2)));
     }
-    let ws=0, wt=0;
-    for (const [lv,d] of Object.entries(byLv)) {
-      if (d.t>=2) { const s=irt(d.c/d.t,lv); ws+=s*d.t; wt+=d.t; }
-    }
-    const estScore = wt>0 ? Math.round(ws/wt) : 0;
+    const lScore = estimateHomeSection(hPartsL);
+    const rScore = estimateHomeSection(hPartsR);
+    const estScore = lScore + rScore;
+    const recentTotal = toeicH.length;
     S.level = estLevel;
     el.innerHTML = `<div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
       <div style="display:flex;justify-content:center;align-items:baseline;gap:8px;margin-top:4px">
         <span style="font-size:22px;font-weight:800;color:${lvInfo?.color||'#94a3b8'}">${lvInfo?.label||'—'}</span>
         <span style="font-size:14px;color:#a0b4c8">推定 ${estScore}点</span>
       </div>
-      <div style="font-size:10px;color:#7a8ea5">各パート直近${HPART_N}問に基づく（全${toeicH.length}問）</div>`;
+      <div style="font-size:10px;color:#7a8ea5">L:${lScore} R:${rScore} ｜ 各パート直近${HPART_N}問（全${toeicH.length}問）</div>`;
   }).catch(()=>{});
 
   // Stock play handlers
