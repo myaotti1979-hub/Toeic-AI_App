@@ -1961,6 +1961,17 @@ with st.sidebar:
     if not edge: st.caption("⚠️ Edge TTS が使えません: `pip install edge-tts`")
 
     st.divider()
+    st.caption("v2026.04.28c · tab restructure + phrase + per-part IRT · 303 types")
+
+st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
+
+tab_gen, tab_manage, tab_practice, tab_vocab, tab_quiz, tab_listen, tab_mock_test = st.tabs(["🔧 Generate", "📦 管理", "🎯 Practice", "📚 Vocabulary", "🧠 単語Quiz", "🎧 Listening", "📝 模試テスト"])
+
+# ══════════════════════════════════════
+# TAB: 管理 (Management)
+# ══════════════════════════════════════
+with tab_manage:
+    st.divider()
     st.markdown(f"**Results: {len(st.session_state.results)}**")
     if st.session_state.results:
         # Quick summary (no expander needed)
@@ -2098,7 +2109,7 @@ with st.sidebar:
             st.divider()
             st.markdown(f"**🏷️ タイプ修復** ({len(no_type)}/{results_count}問にタイプ未設定)")
             repair_mode = st.radio("修復方法", ["📏 ルールベース (即座)", "🤖 AI判定 (API)"], key="repair_mode", horizontal=True, label_visibility="collapsed")
-            if st.button("🏷️ タイプ修復を実行", use_container_width=True, key="type_repair_btn"):
+            if st.button("🏷️ タイプ修復を実行", key="type_repair_btn"):
                 try:
                     with open(RESULTS_FILE, "r", encoding="utf-8") as f:
                         full_data = json.load(f)
@@ -2281,8 +2292,7 @@ with st.sidebar:
                 
                 rate_mode = st.radio("判定モード", ["未判定のみ", "全再判定"], key="diff_rate_mode", horizontal=True)
                 
-                if st.button(f"🎯 {'未判定'+str(unrated_d)+'問' if rate_mode=='未判定のみ' else '全'+str(total_d)+'問'}を判定", 
-                           use_container_width=True, key="diff_rate_btn"):
+                if st.button(f"🎯 {'未判定'+str(unrated_d)+'問' if rate_mode=='未判定のみ' else '全'+str(total_d)+'問'}を判定", key="diff_rate_btn"):
                     target_d = [it for it in diff_data if not it.get("difficulty")] if rate_mode == "未判定のみ" else diff_data
                     if not target_d:
                         st.success("判定対象がありません")
@@ -2347,17 +2357,13 @@ with st.sidebar:
                                 f"📥 難易度付きJSONをダウンロード ({rated_after_d}問)",
                                 data=_json.dumps(diff_data, ensure_ascii=False),
                                 file_name=f"toeic-stock-rated-{datetime.now().strftime('%Y%m%d-%H%M')}.json",
-                                mime="application/json",
-                                use_container_width=True
+                                mime="application/json"
                             )
                             st.info("💡 HTMLアプリにインポート → 既存問題の難易度が更新されます")
 
     st.divider()
-    st.caption("v2026.04.28a · phrase vocab + recalibrated difficulty + recommended levels · 303 types")
 
-st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
-tab_gen, tab_practice, tab_vocab, tab_quiz, tab_listen, tab_mock_test = st.tabs(["🔧 Generate", "🎯 Practice", "📚 Vocabulary", "🧠 単語Quiz", "🎧 Listening", "📝 模試テスト"])
 
 # ══════════════════════════════════════
 # TAB 1: Generate
@@ -2441,7 +2447,7 @@ with tab_gen:
         with c4: pass
         with c5: st.checkbox("🖼️ Image", key="enable_image")
 
-        gen_submitted = st.form_submit_button("🚀 Generate", type="primary", use_container_width=True)
+        gen_submitted = st.form_submit_button("🚀 Generate", type="primary")
 
     # Graphic mapping: part*_g → base part + graphic types
     GRAPHIC_MAP = {"part3_g":"part3", "part4_g":"part4", "part7_g":"part7s"}
@@ -2705,9 +2711,9 @@ with tab_gen:
 
     mc1, mc2 = st.columns(2)
     with mc1:
-        gen_half = st.button("⚡ 模試 100問 (ハーフ) 生成", use_container_width=True, type="secondary")
+        gen_half = st.button("⚡ 模試 100問 (ハーフ) 生成", type="secondary")
     with mc2:
-        gen_full = st.button("🏆 模試 200問 (フル) 生成", use_container_width=True, type="primary")
+        gen_full = st.button("🏆 模試 200問 (フル) 生成", type="primary")
 
     st.caption("💡 模試生成では以下が**自動設定**されます（上の Generate 設定は無視）:\n"
                "🤖 LLM: Auto (Part別最適) | 🔊 TTS: Gemini優先→Edge | 🖼️ Image: Gemini API (Part1/Graphic)")
@@ -3100,12 +3106,11 @@ with tab_gen:
                         data=batch_json,
                         file_name=f"toeic-mock-{bid}.json",
                         mime="application/json",
-                        use_container_width=True,
                         key=f"exp_{bid}"
                     )
                     del full_items, batch_json
                 with bc2:
-                    if st.button(f"🗑️ この模試を削除", key=f"del_{bid}", use_container_width=True):
+                    if st.button(f"🗑️ この模試を削除", key=f"del_{bid}"):
                         st.session_state.mock_results = [r for r in mock if r.get("batchId","legacy") != bid]
                         delete_mock_batch(bid)
                         st.rerun()
@@ -3127,12 +3132,11 @@ with tab_gen:
                 "📥 全模試エクスポート",
                 data=all_json,
                 file_name=f"toeic-mock-all-{datetime.now().strftime('%Y%m%d-%H%M')}.json",
-                mime="application/json",
-                use_container_width=True
+                mime="application/json"
             )
             del all_full, all_json
         with gc2:
-            if st.button("🗑️ 全模試ストックをクリア", use_container_width=True):
+            if st.button("🗑️ 全模試ストックをクリア"):
                 st.session_state.mock_results = []
                 clear_all_mock_batches()
                 st.rerun()
@@ -3181,14 +3185,14 @@ with tab_practice:
                 # Navigation
                 nav1, nav2, nav3 = st.columns([1,3,1])
                 with nav1:
-                    if st.button("◀", use_container_width=True, disabled=pidx<=0, key="prac_prev"):
+                    if st.button("◀", disabled=pidx<=0, key="prac_prev"):
                         st.session_state.prac_idx = pidx - 1
                         st.session_state.prac_answered = {}
                         st.rerun()
                 with nav2:
                     st.markdown(f"<div style='text-align:center;font-size:18px;padding:4px'><b>{pidx+1}</b> / {len(indices)}</div>", unsafe_allow_html=True)
                 with nav3:
-                    if st.button("▶", use_container_width=True, disabled=pidx>=len(indices)-1, key="prac_next"):
+                    if st.button("▶", disabled=pidx>=len(indices)-1, key="prac_next"):
                         st.session_state.prac_idx = pidx + 1
                         st.session_state.prac_answered = {}
                         st.rerun()
@@ -3214,7 +3218,7 @@ with tab_practice:
 
                 # Image (Part 1)
                 if item.get("imgUrl"):
-                    st.image(item["imgUrl"], use_container_width=True)
+                    st.image(item["imgUrl"])
 
                 # Content display (minimal — no heavy rendering)
                 if part == "part1" and qs.get("scene"):
@@ -3559,14 +3563,14 @@ Respond with ONLY a JSON object, no markdown:
                             fc1, fc2, fc3 = st.columns([1,2,1])
                             with fc1:
                                 audio_data = v.get("_audio","")
-                                if audio_data and st.button("🔊", key=f"fcp_{fck}", use_container_width=True):
+                                if audio_data and st.button("🔊", key=f"fcp_{fck}"):
                                     import streamlit.components.v1 as comp
                                     comp.html(f'<audio autoplay src="data:audio/webm;codecs=opus;base64,{audio_data}"></audio>', height=0)
                             with fc2:
-                                if st.button("👁️ Show", use_container_width=True, type="primary", key=f"fcs_{fck}"):
+                                if st.button("👁️ Show", type="primary", key=f"fcs_{fck}"):
                                     st.session_state[fck+"_show"] = True; st.rerun()
                             with fc3:
-                                if st.button("⏭️", use_container_width=True, key=f"fcn_{fck}"):
+                                if st.button("⏭️", key=f"fcn_{fck}"):
                                     queue.pop(0); st.session_state[fck+"_show"] = False; st.rerun()
                         else:
                             meanings = v.get("_meanings",[])
@@ -3574,7 +3578,7 @@ Respond with ONLY a JSON object, no markdown:
                             st.markdown(f"<div style='text-align:center;padding:30px;background:#1e293b;color:#e2e8f0;border-radius:16px'><h1 style='font-size:32px;margin:0 0 10px'>{v.get('word','')}</h1>{wlv_html}{mhtml}</div>", unsafe_allow_html=True)
                             fc1, fc2 = st.columns(2)
                             with fc1:
-                                if st.button("❌ Didn't Know", use_container_width=True, key=f"fcx_{fck}"):
+                                if st.button("❌ Didn't Know", key=f"fcx_{fck}"):
                                     queue.pop(0)
                                     # Re-insert 3-5 positions ahead for review
                                     reinsert = min(random.randint(3,5), len(queue))
@@ -3582,7 +3586,7 @@ Respond with ONLY a JSON object, no markdown:
                                     st.session_state[fck+"_miss"] = miss + 1
                                     st.session_state[fck+"_show"] = False; st.rerun()
                             with fc2:
-                                if st.button("✅ Got It!", use_container_width=True, type="primary", key=f"fcy_{fck}"):
+                                if st.button("✅ Got It!", type="primary", key=f"fcy_{fck}"):
                                     queue.pop(0)
                                     st.session_state[fck+"_got"] = got + 1
                                     st.session_state[fck+"_show"] = False; st.rerun()
@@ -3720,7 +3724,7 @@ with tab_quiz:
                     else:
                         st.button(choice, key=f"qc_{ci}", disabled=True)
                 else:
-                    if st.button(choice, key=f"qc_{ci}", use_container_width=True):
+                    if st.button(choice, key=f"qc_{ci}"):
                         st.session_state.quiz_answered = ci
                         sc = st.session_state.quiz_score
                         sc["total"] += 1
@@ -3735,7 +3739,7 @@ with tab_quiz:
                 if target.get("example_audio"):
                     import streamlit.components.v1 as comp
                     comp.html(f'<audio controls style="width:100%;height:36px" src="data:audio/webm;codecs=opus;base64,{target["example_audio"]}"></audio>', height=45)
-                if st.button("➡️ Next Question", type="primary", use_container_width=True):
+                if st.button("➡️ Next Question", type="primary"):
                     st.session_state.quiz_current = new_quiz()
                     st.session_state.quiz_answered = None
                     st.rerun()
@@ -3776,7 +3780,7 @@ with tab_listen:
 
             st.caption("解説: 英語の端的な1-2文（生成時に作成された explanation_en を使用）")
 
-            if st.button("🎵 Generate Listening Audio", type="primary", use_container_width=True):
+            if st.button("🎵 Generate Listening Audio", type="primary"):
                 if not check_edge_tts():
                     st.error("Edge TTS required. Install: pip install edge-tts")
                     st.stop()
@@ -3935,8 +3939,7 @@ with tab_listen:
                             f"📥 Download ({size_mb:.1f}MB, {duration_min:.0f}min)",
                             opus,
                             f"toeic_{lp}_listening_{lcount}q.webm",
-                            "audio/webm",
-                            use_container_width=True
+                            "audio/webm"
                         )
                         try: os.unlink(out_file.name)
                         except: pass
@@ -4058,7 +4061,7 @@ with tab_mock_test:
 
                     st.caption("問題は本番同様の順序 (Part 1→2→3→4→5→6→7) で出題されます")
 
-                    if st.button("🚀 テスト開始", type="primary", use_container_width=True):
+                    if st.button("🚀 テスト開始", type="primary"):
                         PART_ORDER = {"part1":1,"part2":2,"part3":3,"part3_3p":[{"type": "team_meeting", "desc": "3 colleagues discussing project, deadline, or task assignment"}, {"type": "office_move", "desc": "3 people coordinating office relocation or desk arrangement"}, {"type": "event_coordination", "desc": "3 people planning a company event, party, or conference"}, {"type": "client_presentation", "desc": "3 colleagues preparing for or debriefing a client meeting"}, {"type": "hiring_decision", "desc": "3 people discussing job candidates or interview results"}, {"type": "budget_review", "desc": "3 people reviewing department budget or expense approval"}, {"type": "travel_arrangement", "desc": "3 colleagues arranging a group business trip"}, {"type": "training_feedback", "desc": "3 people discussing training session, workshop, or seminar"}, {"type": "lunch_plans", "desc": "3 coworkers deciding where to eat or planning a lunch meeting"}, {"type": "problem_solving", "desc": "3 people troubleshooting a technical, logistics, or customer issue"}],"part4":4,"part5":5,"part6":6,"part7s":7,"part7d":8,"part7t":9,"part7":7}
                         sorted_items = sorted(selected_items, key=lambda x: PART_ORDER.get(x.get("part","part5"),5))
                         flat = []
@@ -4125,7 +4128,7 @@ with tab_mock_test:
 
                     # ── Image ──
                     if item.get("imgUrl"):
-                        st.image(item["imgUrl"], use_container_width=True)
+                        st.image(item["imgUrl"])
 
                     # ── Graphic table ──
                     if qs.get("graphic"):
@@ -4134,7 +4137,7 @@ with tab_mock_test:
                         if g.get("headers") and g.get("rows"):
                             import pandas as pd
                             df = pd.DataFrame(g["rows"], columns=g["headers"])
-                            st.dataframe(df, use_container_width=True, hide_index=True)
+                            st.dataframe(df, hide_index=True)
 
                     # ── Reading passage ──
                     if not is_listening:
@@ -4164,18 +4167,18 @@ with tab_mock_test:
                     nc1, nc2, nc3 = st.columns([1,1,1])
                     with nc1:
                         if idx > 0:
-                            st.button("← 前の問題", on_click=mt_prev, use_container_width=True)
+                            st.button("← 前の問題", on_click=mt_prev)
                     with nc2:
                         answered = len(st.session_state.mt_answers)
                         st.caption(f"回答済: {answered}/{total}")
                     with nc3:
                         if idx < total - 1:
-                            st.button("次の問題 →", on_click=mt_next, type="primary", use_container_width=True)
+                            st.button("次の問題 →", on_click=mt_next, type="primary")
                         else:
-                            st.button("✅ テスト終了", on_click=mt_end, type="primary", use_container_width=True)
+                            st.button("✅ テスト終了", on_click=mt_end, type="primary")
 
                     st.divider()
-                    st.button("🛑 テスト中断 → 結果を見る", on_click=mt_end, use_container_width=True)
+                    st.button("🛑 テスト中断 → 結果を見る", on_click=mt_end)
 
             # ── Results ──
             elif st.session_state.mt_done:
@@ -4279,12 +4282,12 @@ with tab_mock_test:
 
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("🔄 もう一度受験", use_container_width=True):
+                    if st.button("🔄 もう一度受験"):
                         st.session_state.mt_done = False
                         st.session_state.mt_active = False
                         st.rerun()
                 with c2:
-                    if st.button("🏠 テスト設定に戻る", use_container_width=True):
+                    if st.button("🏠 テスト設定に戻る"):
                         st.session_state.mt_done = False
                         st.session_state.mt_active = False
                         st.session_state.mt_flat = []
