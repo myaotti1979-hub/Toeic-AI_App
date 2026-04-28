@@ -4836,7 +4836,7 @@ async function renderVocab() {
     ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>
     <div style="display:flex;gap:6px;padding:0 0 4px">
       <button class="btn-s" id="vocabFlashcard" style="flex:1;background:rgba(52,211,153,0.12);color:#34d399;font-size:12px">🃏 フラッシュカード</button>
-      ${weakWords.length>=4?`<button class="btn-s" id="vocabQuizWeak" style="flex:1;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button>`:""}</div>`:""}    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button></div><div style="display:flex;gap:4px;justify-content:center;padding:0 0 4px"><button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24">🏷️ 未判定を判定 (${words.filter(w=>!["A1","A2","B1","B2","C"].includes(w.level)).length}語)</button><button class="btn-s" id="vocabLevelAllBtn" style="font-size:11px;color:#7a8ea5">🔄 全再判定</button></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
+      ${weakWords.length>=4?`<button class="btn-s" id="vocabQuizWeak" style="flex:1;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button>`:""}</div>`:""}    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button></div><div style="display:flex;gap:4px;justify-content:center;padding:0 0 4px"><button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24">🏷️ 未判定を判定 (${words.filter(w=>!["A1","A2","B1","B2","C"].includes(w.level)).length}語)</button><button class="btn-s" id="vocabLevelAllBtn" style="font-size:11px;color:#7a8ea5">🔄 全再判定</button></div><div style="text-align:center;padding:0 0 4px"><button class="btn-s" id="phraseCleanBtn" style="font-size:11px;color:#f472b6">🧹 非フレーズを削除 (${words.filter(w=>w.pos==="phrase").length}語を判定)</button><div id="phraseCleanProgress" style="font-size:10px;color:#7a8ea5;margin-top:2px"></div></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
     <div style="display:flex;gap:4px;overflow-x:auto;padding:6px 0;flex-wrap:wrap">${filterBtns}</div>
     <div style="display:flex;gap:4px;overflow-x:auto;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
     <style>.pos-tab,.filter-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
@@ -5122,6 +5122,82 @@ Return ONLY a JSON array matching the word order:
   const lba=$("vocabLevelAllBtn"); if(lba)lba.onclick=async()=>{
     const allWords = await vocabGetAll();
     await runVocabLevelRating(allWords, lba);
+  };
+  const pcb=$("phraseCleanBtn"); if(pcb)pcb.onclick=async()=>{
+    if (!S.apiKey) { alert("APIキーが設定されていません"); return; }
+    const allWords = await vocabGetAll();
+    const phrases = allWords.filter(w => w.pos === "phrase");
+    if (phrases.length === 0) { alert("フレーズがありません"); return; }
+    const pcp = $("phraseCleanProgress");
+    // Test first
+    pcb.disabled=true; pcb.textContent="🧪 テスト中...";
+    try {
+      const testWords = phrases.slice(0, 10).map(w => w.word);
+      const raw = await geminiText(`Classify each as KEEP or DELETE.
+KEEP = idiomatic phrase, phrasal verb, collocation, prepositional phrase (meaning is NOT obvious from individual words)
+  Examples: "in accordance with", "set up", "comply with", "prior to", "fill out", "look forward to", "on behalf of", "at your earliest convenience"
+DELETE = just a compound noun or simple word pair (meaning IS obvious from individual words)
+  Examples: "company policy", "budget report", "training session", "office building", "annual meeting", "new employee"
+
+Words: ${testWords.join(", ")}
+Return JSON: {"results":[{"word":"...","action":"KEEP"},{"word":"...","action":"DELETE"},...]}`, GEMINI_FLASH);
+      const parsed = extractJSON(raw);
+      if (!parsed?.results) throw new Error("Parse failed");
+      const keeps = parsed.results.filter(r => r.action === "KEEP").length;
+      const deletes = parsed.results.filter(r => r.action === "DELETE").length;
+      if(pcp) pcp.textContent = `テスト: ${keeps}語KEEP / ${deletes}語DELETE`;
+    } catch(e) {
+      pcb.disabled=false; pcb.textContent="❌ テスト失敗";
+      if(pcp) pcp.textContent = (e.message||"").slice(0,100);
+      return;
+    }
+    if (!confirm(`フレーズ${phrases.length}語をAIが判定し、複合名詞などの非フレーズを削除します。\n\n本当のフレーズ（句動詞・慣用句等）は残します。\n約${Math.ceil(phrases.length/30*5/60)}分\n\n開始しますか？`)) {
+      pcb.disabled=false; pcb.textContent="🧹 非フレーズを削除"; return;
+    }
+    pcb.textContent="⏳ 判定中...";
+    await acquireWakeLock();
+    let kept=0, deleted=0, errors=0;
+    const BATCH=30;
+    try {
+      for (let i=0; i<phrases.length; i+=BATCH) {
+        const batch = phrases.slice(i, i+BATCH);
+        const wordList = batch.map(w => w.word).join(", ");
+        try {
+          const raw = await geminiText(`Classify each as KEEP or DELETE.
+KEEP = idiomatic phrase, phrasal verb, collocation, prepositional phrase whose meaning is NOT obvious from individual words.
+DELETE = compound noun, simple adjective+noun, or word pair whose meaning IS obvious from individual words.
+KEEP examples: in accordance with, set up, fill out, comply with, prior to, look forward to, on behalf of, take into account, out of order, as soon as possible
+DELETE examples: company policy, budget report, training session, new employee, annual meeting, office building, parking lot, customer service, project manager
+
+Words: ${wordList}
+Return JSON: {"results":[{"word":"...","action":"KEEP"},{"word":"...","action":"DELETE"},...]}`, GEMINI_FLASH);
+          const parsed = extractJSON(raw);
+          if (parsed?.results && Array.isArray(parsed.results)) {
+            for (const r of parsed.results) {
+              const match = batch.find(w => w.word.toLowerCase() === (r.word||"").toLowerCase());
+              if (match && r.action === "DELETE") {
+                await vocabDelete(match.id);
+                deleted++;
+              } else if (match) {
+                kept++;
+              }
+            }
+          } else errors++;
+        } catch(e) { errors++; }
+        pcb.textContent = `⏳ ${i+BATCH}/${phrases.length}`;
+        if(pcp) pcp.textContent = `残す: ${kept} / 削除: ${deleted}${errors?" / err:"+errors:""}`;
+        if (i+BATCH < phrases.length) await new Promise(r=>setTimeout(r,1500));
+      }
+      pcb.textContent="✅ 完了";
+      if(pcp) pcp.textContent = `残す: ${kept} / 削除: ${deleted}`;
+      alert(`✅ 非フレーズ削除完了\n残したフレーズ: ${kept}語\n削除した複合名詞等: ${deleted}語`);
+      render();
+    } catch(e) {
+      pcb.textContent="❌ エラー";
+      if(pcp) pcp.textContent = e.message;
+    }
+    releaseWakeLock();
+    pcb.disabled=false;
   };
   const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
   const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
@@ -6448,7 +6524,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28a · phrase extract + local time + handler fix + per-part IRT · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28b · phrase cleanup + phrase extract + local time + per-part IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
