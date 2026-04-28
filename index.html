@@ -3326,6 +3326,8 @@ async function renderStockSelect() {
       <div id="difficultyDist" style="margin-top:6px"></div>
       <button class="btn-s" id="part5TransBtn" style="width:100%;font-size:11px;color:#fbbf24;margin-top:6px">📖 Part 5 和訳を追加</button>
       <div id="transProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
+      <button class="btn-s" id="phraseExtractBtn" style="width:100%;font-size:11px;color:#f472b6;margin-top:6px">💬 フレーズ抽出（既存問題）</button>
+      <div id="phraseProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
     </div>
     ${total===0?`<div style="text-align:center;color:#7a8ea5;padding:40px 0">ストックされた問題がありません。<br>問題を解いた後「💾 ストック」ボタンで保存できます。</div>`:""}
     <div style="padding:10px 0">${partSections}</div>
@@ -3708,6 +3710,102 @@ async function renderStockSelect() {
         alert("翻訳エラー: "+e.message);
       }
       p5tb.disabled=false;
+    };
+  }
+  const peb=$("phraseExtractBtn"); if(peb) {
+    // Count questions without phrases (Part 3+ only)
+    stockGetAllLight().then(async items => {
+      const allWords = await vocabGetAll();
+      const phraseWords = new Set(allWords.filter(w=>w.pos==="phrase").map(w=>w.word.toLowerCase()));
+      const needPhrase = items.filter(it => {
+        if (["part1","part2"].includes(it.part)) return false; // P1/P2は短文なので除外
+        const vocab = it.qSet?.vocab || [];
+        return vocab.length > 0 && !vocab.some(v=>v.pos==="phrase");
+      });
+      peb.textContent = `💬 フレーズ抽出 (P3-7: ${needPhrase.length}問にフレーズなし / 単語帳${phraseWords.size}フレーズ)`;
+    });
+    peb.onclick=async()=>{
+      if (!S.apiKey) { alert("APIキーが設定されていません"); return; }
+      const items = await stockGetAllLight();
+      const needPhrase = items.filter(it => {
+        if (["part1","part2"].includes(it.part)) return false;
+        const vocab = it.qSet?.vocab || [];
+        return vocab.length > 0 && !vocab.some(v=>v.pos==="phrase");
+      });
+      if (needPhrase.length === 0) { alert("全ての問題にフレーズが含まれています"); return; }
+      const pp = $("phraseProgress");
+      // Test
+      peb.disabled=true; peb.textContent="🧪 テスト中...";
+      try {
+        const testItems = needPhrase.slice(0,5);
+        const testTexts = testItems.map((it,i)=>{
+          const qs=it.qSet||{};const q=qs.questions?.[0]||{};
+          let text=q.question||qs.sentence||qs.spoken||qs.conversation?.slice(0,150)||qs.talk?.slice(0,150)||qs.text?.slice(0,150)||"";
+          return `${i+1}. [${it.part}] ${text.slice(0,200)}`;
+        }).join("\n");
+        const raw = await geminiText(`Extract 1-2 key TOEIC phrases/collocations from each question. Return JSON: [{"phrases":[{"word":"in compliance with","ja":"〜に従って","level":"B2"}]},...]
+
+Questions:
+${testTexts}`, GEMINI_FLASH);
+        const parsed = extractJSON(raw);
+        if (!parsed) throw new Error("Parse failed");
+        if(pp) pp.textContent=`✅ テスト成功`;
+      } catch(e) {
+        peb.disabled=false; peb.textContent="❌ テスト失敗";
+        if(pp) pp.textContent=`Error: ${(e.message||"").slice(0,100)}`;
+        return;
+      }
+      if (!confirm(`${needPhrase.length}問からフレーズを抽出します。\n約${Math.ceil(needPhrase.length/15*8/60)}分\n\n開始しますか？`)) {
+        peb.disabled=false; peb.textContent="💬 フレーズ抽出"; return;
+      }
+      peb.textContent="⏳ 抽出中...";
+      await acquireWakeLock();
+      let done=0, added=0, errors=0;
+      const BATCH=15;
+      try {
+        for (let i=0; i<needPhrase.length; i+=BATCH) {
+          const batch = needPhrase.slice(i, i+BATCH);
+          const texts = batch.map((it,bi)=>{
+            const qs=it.qSet||{};const q=qs.questions?.[0]||{};
+            let text=q.question||qs.sentence||qs.spoken||qs.conversation?.slice(0,150)||qs.talk?.slice(0,150)||qs.text?.slice(0,150)||"";
+            return `${bi+1}. [${it.part}] ${text.slice(0,200)}`;
+          }).join("\n");
+          try {
+            const raw = await geminiText(`Extract 1-2 key TOEIC phrases/collocations from each question.
+A "phrase" = multi-word expression like: in accordance with, prior to, on behalf of, file a complaint, take into account, at your earliest convenience, in lieu of, subject to, with regard to.
+Return JSON array: [{"phrases":[{"word":"phrase","ja":"意味","level":"B1"}]},...]
+
+Questions:
+${texts}`, GEMINI_FLASH);
+            const parsed = extractJSON(raw);
+            if (parsed && Array.isArray(parsed)) {
+              for (let j=0; j<batch.length && j<parsed.length; j++) {
+                const ph = parsed[j]?.phrases;
+                if (ph && Array.isArray(ph)) {
+                  for (const p of ph) {
+                    if (p.word && p.ja) {
+                      await vocabAutoSave([{word:p.word, pos:"phrase", ja:p.ja, example:"", level:p.level||"B1"}], batch[j].part).catch(()=>{});
+                      added++;
+                    }
+                  }
+                }
+              }
+              done += batch.length;
+            } else errors++;
+          } catch(e) { errors++; }
+          peb.textContent=`⏳ ${done}/${needPhrase.length}`;
+          if(pp) pp.textContent=`${added}フレーズ追加 ${errors?`(${errors}err)`:""}`;
+          if (i+BATCH < needPhrase.length) await new Promise(r=>setTimeout(r,1500));
+        }
+        peb.textContent="✅ 完了";
+        if(pp) pp.textContent=`${added}フレーズ追加完了`;
+        alert(`✅ ${added}フレーズを単語帳に追加しました`);
+      } catch(e) {
+        peb.textContent="❌ エラー";
+        if(pp) pp.textContent=e.message;
+      }
+      releaseWakeLock();
+      peb.disabled=false;
     };
   }
   const pb=$("stockPurgeBtn"); if(pb)pb.onclick=async()=>{
@@ -6340,7 +6438,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25e · handler fix + per-part recent-N IRT + recalibrated difficulty · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25e · phrase extract + local time + handler fix + per-part IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
