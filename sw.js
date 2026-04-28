@@ -1,4 +1,4 @@
-const CACHE_NAME = 'toeic-trainer-v2026.04.28b';
+const CACHE_NAME = 'toeic-trainer-v2026.04.28c';
 const ASSETS = ['./', './index.html'];
 
 // Install: cache core assets

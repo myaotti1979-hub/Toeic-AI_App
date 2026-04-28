@@ -5133,11 +5133,10 @@ Return ONLY a JSON array matching the word order:
     pcb.disabled=true; pcb.textContent="🧪 テスト中...";
     try {
       const testWords = phrases.slice(0, 10).map(w => w.word);
-      const raw = await geminiText(`Classify each as KEEP or DELETE.
-KEEP = idiomatic phrase, phrasal verb, collocation, prepositional phrase (meaning is NOT obvious from individual words)
-  Examples: "in accordance with", "set up", "comply with", "prior to", "fill out", "look forward to", "on behalf of", "at your earliest convenience"
-DELETE = just a compound noun or simple word pair (meaning IS obvious from individual words)
-  Examples: "company policy", "budget report", "training session", "office building", "annual meeting", "new employee"
+      const raw = await geminiText(`Classify each as KEEP or DELETE. Be STRICT.
+KEEP = phrasal verbs, fixed prepositional phrases, true idioms, grammar patterns.
+DELETE = TOEIC question fragments, verb+random object, preposition+noun, adjective+noun.
+RULE: If the object/noun can be freely swapped, it's DELETE. "take into account"=KEEP, "submit expenses"=DELETE.
 
 Words: ${testWords.join(", ")}
 Return JSON: {"results":[{"word":"...","action":"KEEP"},{"word":"...","action":"DELETE"},...]}`, GEMINI_FLASH);
@@ -5163,11 +5162,22 @@ Return JSON: {"results":[{"word":"...","action":"KEEP"},{"word":"...","action":"
         const batch = phrases.slice(i, i+BATCH);
         const wordList = batch.map(w => w.word).join(", ");
         try {
-          const raw = await geminiText(`Classify each as KEEP or DELETE.
-KEEP = idiomatic phrase, phrasal verb, collocation, prepositional phrase whose meaning is NOT obvious from individual words.
-DELETE = compound noun, simple adjective+noun, or word pair whose meaning IS obvious from individual words.
-KEEP examples: in accordance with, set up, fill out, comply with, prior to, look forward to, on behalf of, take into account, out of order, as soon as possible
-DELETE examples: company policy, budget report, training session, new employee, annual meeting, office building, parking lot, customer service, project manager
+          const raw = await geminiText(`Classify each as KEEP or DELETE. Be STRICT.
+KEEP = ONLY these types:
+  1. Phrasal verbs: set up, fill out, look into, drop off
+  2. Fixed prepositional phrases: in accordance with, prior to, subject to, on behalf of
+  3. True idioms/collocations with non-obvious meaning: take into account, meet the deadline, raise funds, work overtime, remain in effect
+  4. Grammar patterns: No sooner...than, Not until...did, provided that, imperative that
+
+DELETE = ALL of these:
+  1. TOEIC question fragments: "what is mentioned", "NOT indicated", "closest in meaning to", "is mentioned about"
+  2. Any verb + random object (NOT a fixed expression): "implement a new system", "approve budget", "submit expenses", "confirm appointments", "negotiate the terms", "authorize the merger"
+  3. Simple preposition + noun: "in the invoice", "for the position", "by the deadline", "a requirement for", "pricing of", "merger of"
+  4. Adjective + noun or noun + noun: "additional funding", "tight deadline", "formal negotiations"
+
+RULE: If you can freely swap the object/noun and the phrase still makes sense, it's DELETE.
+  "submit expenses" → "submit documents/reports/forms" → DELETE (submit + anything)
+  "take into account" → cannot swap → KEEP (fixed expression)
 
 Words: ${wordList}
 Return JSON: {"results":[{"word":"...","action":"KEEP"},{"word":"...","action":"DELETE"},...]}`, GEMINI_FLASH);
@@ -6524,7 +6534,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28b · phrase cleanup + phrase extract + local time + per-part IRT · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28c · strict phrase cleanup + phrase extract + local time + per-part IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
