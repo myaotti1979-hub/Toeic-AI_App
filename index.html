@@ -1382,7 +1382,7 @@ async function vocabUpdate(id, data) {
   });
 }
 // Basic English lemmatization to dictionary form
-function lemmatize(w) {
+function lemmatizeWord(w) {
   w = w.toLowerCase().trim();
   if (w.endsWith("ied") && w.length>4) return w.slice(0,-3)+"y";
   if (w.endsWith("ied")) return w.slice(0,-1);
@@ -1394,6 +1394,12 @@ function lemmatize(w) {
   if (w.endsWith("es") && w.length>4) return w.slice(0,-2);
   if (w.endsWith("s") && !w.endsWith("ss") && w.length>3) return w.slice(0,-1);
   return w;
+}
+function lemmatize(w) {
+  // For phrases: lemmatize each word, then join
+  const words = w.toLowerCase().trim().split(/\s+/);
+  if (words.length === 1) return lemmatizeWord(words[0]);
+  return words.map(lemmatizeWord).join(" ");
 }
 // Normalize Japanese meaning into a set of segments for comparison
 function meaningSegments(m) {
