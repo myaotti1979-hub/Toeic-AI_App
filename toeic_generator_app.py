@@ -2351,7 +2351,7 @@ with st.sidebar:
                             st.info("💡 HTMLアプリにインポート → 既存問題の難易度が更新されます")
 
     st.divider()
-    st.caption("v2026.04.25e · phrase vocab + recalibrated difficulty + recommended levels · 303 types")
+    st.caption("v2026.04.28a · phrase vocab + recalibrated difficulty + recommended levels · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
