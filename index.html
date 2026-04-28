@@ -1273,10 +1273,10 @@ function openJudgeDB() {
 async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed, difficulty) {
   // Increment daily goal counter
   try {
-    const today = new Date().toISOString().slice(0,10);
+    const today = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
     const streak = JSON.parse(localStorage.getItem("studyStreak")||'{"count":0,"lastDate":"","todayCount":0,"todayDate":""}');
     if (streak.todayDate !== today) {
-      const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+      const _yd = new Date(Date.now()-86400000); const yesterday = `${_yd.getFullYear()}-${String(_yd.getMonth()+1).padStart(2,'0')}-${String(_yd.getDate()).padStart(2,'0')}`;
       const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||"30");
       if (streak.lastDate === yesterday && streak.todayCount >= DAILY_GOAL) streak.count++;
       else if (streak.lastDate !== yesterday) streak.count = streak.todayCount >= DAILY_GOAL ? streak.count : 0;
@@ -3830,7 +3830,7 @@ function renderStockCreate() {
 
   // Event handlers
   const rb=$("retryBtn"); if(rb)rb.onclick=()=>{ S.error=null; loadNewSet(); };
-  $("backBtn").onclick=()=>{ stopSpeak(); S.stockCreateMode=false; S.stockCreatePaused=false; S.screen="home"; render(); };
+  const bb3=$("backBtn"); if(bb3) bb3.onclick=()=>{ stopSpeak(); S.stockCreateMode=false; S.stockCreatePaused=false; S.screen="home"; render(); };
 
   // Audio
   const pa=$("playAudio");
@@ -4568,7 +4568,7 @@ async function renderDiagnosis() {
         const tm = toeicH.filter(h=>h.timestamp > now-30*oneDay);
         const tmRate = tm.length>0 ? Math.round(tm.filter(h=>h.correct).length/tm.length*100) : 0;
         // Daily average
-        const days = new Set(toeicH.map(h=>new Date(h.timestamp).toISOString().slice(0,10)));
+        const days = new Set(toeicH.map(h=>{const _d=new Date(h.timestamp);return `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;}));
         const dailyAvg = days.size>0 ? Math.round(toeicH.length/days.size) : 0;
         // Streak from studyStreak
         const streak = JSON.parse(localStorage.getItem("studyStreak")||'{}');
@@ -4889,7 +4889,7 @@ async function renderVocab() {
   });
   applyFilters();
 
-  $("vocabBackBtn").onclick=()=>{S.screen="home";render();};
+  const vbb=$("vocabBackBtn"); if(vbb) vbb.onclick=()=>{S.screen="home";render();};
   const dd=$("vocabDedupeBtn"); if(dd)dd.onclick=async()=>{
     dd.textContent="⏳ 整理中...";
     const r = await vocabDedupe();
@@ -5893,7 +5893,7 @@ function renderMockSetup() {
     };
   });
 
-  $("mockBackBtn").onclick = () => { S.screen = "home"; render(); };
+  const mbb=$("mockBackBtn"); if(mbb) mbb.onclick = () => { S.screen = "home"; render(); };
 }
 
 /* ─ MOCK STOCK (separate IndexedDB store) ─ */
@@ -6296,11 +6296,11 @@ function renderMockResult() {
 function renderHome() {
   // Daily goal & streak calculation
   const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||"30");
-  const today = new Date().toISOString().slice(0,10);
+  const today = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
   const streak = JSON.parse(localStorage.getItem("studyStreak")||'{"count":0,"lastDate":"","todayCount":0,"todayDate":""}');
   if (streak.todayDate !== today) {
     // New day: check if yesterday was active
-    const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+    const _yd = new Date(Date.now()-86400000); const yesterday = `${_yd.getFullYear()}-${String(_yd.getMonth()+1).padStart(2,'0')}-${String(_yd.getDate()).padStart(2,'0')}`;
     if (streak.lastDate === yesterday && streak.todayCount >= DAILY_GOAL) {
       streak.count++;
     } else if (streak.lastDate !== yesterday) {
@@ -6340,7 +6340,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25e · per-part recent-N IRT + recalibrated difficulty · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.25e · handler fix + per-part recent-N IRT + recalibrated difficulty · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6567,9 +6567,9 @@ function renderHome() {
     });
   }
 
-  // Navigation handlers
-  $("stockManageBtn").onclick=()=>{ S.screen="stockSelect"; render(); };
-  $("listenModeBtn").onclick=async()=>{
+  // Navigation handlers (all with null guards)
+  const smb=$("stockManageBtn"); if(smb)smb.onclick=()=>{ S.screen="stockSelect"; render(); };
+  const lmb=$("listenModeBtn"); if(lmb)lmb.onclick=async()=>{
     const [p2, p3, p4] = await Promise.all([
       stockGetAllLight("part2"), stockGetAllLight("part3"), stockGetAllLight("part4")
     ]);
@@ -6579,9 +6579,9 @@ function renderHome() {
     S.listenAllStocks = listenStocks;
     render();
   };
-  $("diagnosisBtn").onclick=()=>{ S.screen="diagnosis"; render(); };
-  $("vocabBtn").onclick=()=>{ S.screen="vocab"; render(); };
-  $("mockTestBtn").onclick=()=>{ S.screen="mockSetup"; render(); };
+  const dgb=$("diagnosisBtn"); if(dgb)dgb.onclick=()=>{ S.screen="diagnosis"; render(); };
+  const vcb=$("vocabBtn"); if(vcb)vcb.onclick=()=>{ S.screen="vocab"; render(); };
+  const mtb=$("mockTestBtn"); if(mtb)mtb.onclick=()=>{ S.screen="mockSetup"; render(); };
   const heb=$("homeExportBtn"); if(heb) heb.onclick=()=>{ S.screen="stockSelect"; render(); };
   const hib=$("homeImportBtn"); if(hib) hib.onclick=()=>$("homeFileInput").click();
   const hfi=$("homeFileInput"); if(hfi) hfi.onchange=async(e)=>{
@@ -6598,17 +6598,17 @@ function renderHome() {
     alert(`インポート結果:\n${results.join("\n")}`);
     hib.textContent="📥 インポート"; hfi.value=""; render();
   };
-  $("judgeHomeToggle").onclick=()=>{
+  const jht=$("judgeHomeToggle"); if(jht)jht.onclick=()=>{
     S.judgeMode=!S.judgeMode;
     localStorage.setItem("judgeMode",JSON.stringify(S.judgeMode));
     render();
   };
-  $("timeAttackToggle").onclick=()=>{
+  const tat=$("timeAttackToggle"); if(tat)tat.onclick=()=>{
     S.timeAttackMode=!S.timeAttackMode;
     localStorage.setItem("timeAttackMode",JSON.stringify(S.timeAttackMode));
     render();
   };
-  $("changeKey").onclick=()=>{ localStorage.removeItem("gemini_api_key"); S.apiKey=""; S.screen="apikey"; render(); };
+  const ck=$("changeKey"); if(ck)ck.onclick=()=>{ localStorage.removeItem("gemini_api_key"); S.apiKey=""; S.screen="apikey"; render(); };
   const gsBtn=$("goalSettingBtn"); if(gsBtn) gsBtn.onclick=()=>{
     const g = prompt("1日の目標問題数を設定してください:", localStorage.getItem("dailyGoal")||"30");
     if(g && !isNaN(parseInt(g)) && parseInt(g) > 0) {
@@ -6943,7 +6943,7 @@ function renderStudy() {
       }
     }
   }
-  $("backBtn").onclick=()=>{
+  const bb6=$("backBtn"); if(bb6) bb6.onclick=()=>{
     if(S.stockMode) { stopSpeak();S.stockMode=false;S.screen=S._stockReturnScreen||"home";render(); return; }
     if(S.sessionNum>0 && S.sessionNum<SESSION_SIZE) {
       if(!confirm(`セッション進行中です（${S.sessionNum}/${SESSION_SIZE}問完了）。\nホームに戻りますか？`)) return;
