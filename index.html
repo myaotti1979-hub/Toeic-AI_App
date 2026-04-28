@@ -3743,7 +3743,8 @@ async function renderStockSelect() {
           let text=q.question||qs.sentence||qs.spoken||qs.conversation?.slice(0,150)||qs.talk?.slice(0,150)||qs.text?.slice(0,150)||"";
           return `${i+1}. [${it.part}] ${text.slice(0,200)}`;
         }).join("\n");
-        const raw = await geminiText(`Extract 1-2 key TOEIC phrases/collocations from each question. Return JSON: [{"phrases":[{"word":"in compliance with","ja":"〜に従って","level":"B2"}]},...]
+        const raw = await geminiText(`Extract ONLY 1 key TOEIC phrase/collocation from each question (idiomatic expressions only, NOT compound nouns). Return JSON: [{"phrases":[{"word":"in compliance with","ja":"〜に従って","level":"B2"}]},...]
+If no real phrase exists, return {"phrases":[]}.
 
 Questions:
 ${testTexts}`, GEMINI_FLASH);
@@ -3771,8 +3772,11 @@ ${testTexts}`, GEMINI_FLASH);
             return `${bi+1}. [${it.part}] ${text.slice(0,200)}`;
           }).join("\n");
           try {
-            const raw = await geminiText(`Extract 1-2 key TOEIC phrases/collocations from each question.
-A "phrase" = multi-word expression like: in accordance with, prior to, on behalf of, file a complaint, take into account, at your earliest convenience, in lieu of, subject to, with regard to.
+            const raw = await geminiText(`Extract ONLY 1 key TOEIC phrase/collocation from each question.
+A "phrase" must be an IDIOMATIC multi-word expression that has a meaning beyond its individual words:
+✅ GOOD: in accordance with, prior to, on behalf of, comply with, provided that, out of order, fill out, set up, look forward to, at your earliest convenience
+❌ BAD: new employee, company policy, budget report, training session (these are just compound nouns, NOT phrases)
+If a question has no real phrase, return empty: {"phrases":[]}
 Return JSON array: [{"phrases":[{"word":"phrase","ja":"意味","level":"B1"}]},...]
 
 Questions:
