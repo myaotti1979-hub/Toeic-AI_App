@@ -2025,34 +2025,38 @@ function extractQuestionText(item) {
   if (qs.text) text += " " + qs.text.slice(0,150);
   if (qs.text_1) text += " " + qs.text_1.slice(0,150);
   const choices = q.choices ? q.choices.join(" / ") : "";
-  return `[${item.part}] ${text.slice(0,200)} | choices: ${choices.slice(0,100)}`;
+  const lv = item.level || "unknown";
+  return `[${item.part}/${lv}] ${text.slice(0,200)} | choices: ${choices.slice(0,100)}`;
 }
 
 async function rateDifficultyBatch(items) {
   const texts = items.map((it,i) => `${i+1}. ${extractQuestionText(it)}`).join("\n");
-  const prompt = `You are a TOEIC scoring expert. Rate each question's difficulty as the TOEIC score needed to answer correctly (integer 200-990).
+  const prompt = `You are a TOEIC scoring expert. Rate each question's difficulty (integer 200-990).
+Each question is labeled [partN/level] where level is the INTENDED generation difficulty.
 
-CRITERIA — evaluate ALL applicable, then AVERAGE:
-- VOCAB: basic(schedule/office)→350-450 | business(negotiate/implement)→550-700 | advanced(procurement/arbitration/contingent)→800-900
-- GRAMMAR: simple SVO/preposition→350-450 | relative clause/passive→550-650 | subjunctive(recommend that X do)/inversion(Should X do, Had X done)→800-950
-- INFERENCE: explicit lookup→350-450 | paraphrase→550-650 | implied meaning/cross-reference/NOT→750-900
-- DISTRACTORS: obviously wrong→350-450 | plausible→550-700 | near-synonym traps→800+
+CRITERIA — evaluate ALL, then AVERAGE:
+- VOCAB: basic(schedule)→400 | business(negotiate)→650 | advanced(procurement/arbitration)→850
+- GRAMMAR: simple SVO→400 | clause/passive→600 | subjunctive/inversion→850
+- INFERENCE: explicit→400 | paraphrase→600 | implied/cross-ref→800
+- DISTRACTORS: obvious→400 | plausible→650 | tricky→850
 
-STRICT PART ANCHORS (follow these precisely):
-- Part 1: simple photo→350-400, inference required→450-550. MAX 600.
-- Part 2: direct WH answer→350-450, indirect/implied→500-600. MAX 650.
-- Part 3: explicit detail→450-550, speaker intent→600-700, "What does X imply"→750+
-- Part 4: explicit detail→450-550, purpose/tone→600-700, implied meaning→750+
-- Part 5: basic preposition/tense→400-500, word form→500-600, conditional→650-750, SUBJUNCTIVE/INVERSION/rare vocab→800-950
-- Part 6: vocab in context→550-700, grammar blank→600-750, sentence insertion→750-850
-- Part 7 single: main purpose→450-550, detail lookup→550-650, inference→700-800, NOT question→750-850
-- Part 7 double/triple: detail→550-650, cross-reference→800-900
+GENERATION LEVEL CALIBRATION:
+- If labeled "/beginner": typical range 300-500
+- If labeled "/intermediate": typical range 450-700
+- If labeled "/advanced": typical range 650-950
+  Advanced questions use complex grammar, advanced vocabulary, or require deep inference.
+  An advanced Part 2 with indirect answers and tricky distractors = 600-700, NOT 400-500.
+  An advanced Part 3 with implied meaning = 700-850, NOT 550.
 
-CRITICAL: Use the FULL range 300-950. Do NOT cluster around 550-700.
-- "Should the board approve..." (inverted conditional) = 850+
-- "When is the meeting?" = 350-400
-- "What does the speaker imply?" = 750+
-- A simple preposition fill = 400-500
+PART GUIDELINES (not caps — advanced questions can exceed these):
+- Part 1: beginner 350-400, advanced 450-600
+- Part 2: beginner 350-450, advanced 550-700
+- Part 3/4: beginner 400-500, advanced 650-850
+- Part 5: beginner 400-500, advanced 750-950
+- Part 6: beginner 500-600, advanced 700-900
+- Part 7: beginner 450-550, advanced 700-900
+
+CRITICAL: Respect the generation level. Do NOT rate an "/advanced" question below 600.
 
 Return JSON array of ${items.length} integers: [score1, score2, ...]
 
@@ -4003,7 +4007,14 @@ async function renderDiagnosis() {
   // difficulty（問題の実際の難易度スコア200-990）がある場合はそれを使用
   // ない場合は生成レベル（beginner/intermediate/advanced）から推定
 
-  // difficulty→level変換
+  // difficulty→level変換（生成レベルも考慮）
+  // 上級で作った問題がdiff=550に判定されても、生成レベルの下限を適用
+  const LEVEL_FLOOR = {beginner: 0, intermediate: 450, advanced: 650};
+  function effectiveDifficulty(h) {
+    const rated = h.difficulty || 0;
+    const floor = LEVEL_FLOOR[h.level] || 0;
+    return Math.max(rated, floor);
+  }
   function diffToLevel(d) { return d >= 750 ? "advanced" : d >= 500 ? "intermediate" : "beginner"; }
 
   // 直近N問から判定（パート別に直近N問 → セクション合算）
@@ -4049,7 +4060,7 @@ async function renderDiagnosis() {
     if (sectionItems.length === 0) return {score:0, total:0, recentN: 0};
     const sByLevel = {};
     sectionItems.forEach(h => {
-      const lv = h.difficulty ? diffToLevel(h.difficulty) : (h.level || "intermediate");
+      const lv = diffToLevel(effectiveDifficulty(h));
       if (!sByLevel[lv]) sByLevel[lv] = {correct:0, total:0};
       sByLevel[lv].total++;
       if (h.correct) sByLevel[lv].correct++;
@@ -4082,7 +4093,7 @@ async function renderDiagnosis() {
   for (const p of PARTS) allRecentItems.push(...(recentByPart[p.id] || []));
   const byLevel = {};
   allRecentItems.forEach(h => {
-    const lv = h.difficulty ? diffToLevel(h.difficulty) : (h.level || "intermediate");
+    const lv = diffToLevel(effectiveDifficulty(h));
     if (!byLevel[lv]) byLevel[lv] = {correct:0, total:0};
     byLevel[lv].total++;
     if (h.correct) byLevel[lv].correct++;
@@ -6534,7 +6545,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28c · strict phrase cleanup + tab restructure + phrase extract + local time + per-part IRT · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28e · level-aware difficulty rating + IRT fix + phrase extract + local time + per-part IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6615,6 +6626,8 @@ function renderHome() {
       return t[t.length-1][1];
     }
     function dToLv(d) { return d >= 750 ? "advanced" : d >= 500 ? "intermediate" : "beginner"; }
+    const LV_FLOOR = {beginner: 0, intermediate: 450, advanced: 650};
+    function effDiff(h) { return Math.max(h.difficulty||0, LV_FLOOR[h.level]||0); }
     const HPART_N = 50;
     const hPartsL = ["part1","part2","part3","part4"];
     const hPartsR = ["part5","part6","part7"];
@@ -6624,7 +6637,7 @@ function renderHome() {
         const pItems = toeicH.filter(h=>h.part===pid);
         pItems.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
         pItems.slice(0, HPART_N).forEach(h => {
-          const lv = h.difficulty ? dToLv(h.difficulty) : (h.level||"intermediate");
+          const lv = dToLv(effDiff(h));
           if (!byLv[lv]) byLv[lv]={c:0,t:0};
           byLv[lv].t++; if (h.correct) byLv[lv].c++;
         });
