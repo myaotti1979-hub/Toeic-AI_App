@@ -2394,6 +2394,9 @@ with tab_manage:
             if not gemini_key:
                 st.error("Gemini APIキーを設定してください")
             else:
+                # Auto-save path
+                RATED_SAVE_PATH = SCRIPT_DIR / "toeic-stock-rated-progress.json"
+                
                 prog_d = st.progress(0)
                 stat_d = st.status(f"🎯 {len(target_d)}問を判定中...", expanded=True)
                 DBATCH = 15
@@ -2421,7 +2424,7 @@ with tab_manage:
                         import re as _re
                         m_d = _re.search(r'\[[\d\s,.\n]+\]', resp_d)
                         if m_d:
-                            scores_d = _json.loads(m_d.group())
+                            scores_d = json.loads(m_d.group())
                             for j in range(min(len(batch_d), len(scores_d))):
                                 batch_d[j]["difficulty"] = max(200, min(990, round(float(scores_d[j]))))
                                 done_d += 1
@@ -2441,20 +2444,49 @@ with tab_manage:
                     
                     prog_d.progress(min(1.0, (di+DBATCH) / len(target_d)))
                     stat_d.update(label=f"🎯 {done_d}/{len(target_d)}問 ({errors_d}err)")
+                    
+                    # Auto-save every 10 batches (150問ごと)
+                    if (di // DBATCH) % 10 == 9:
+                        try:
+                            # Save light version (without audio) for progress backup
+                            light = [{k:v for k,v in it.items() if k not in ("audioOpus","audioPcm")} for it in deduped]
+                            with open(RATED_SAVE_PATH, "w", encoding="utf-8") as f:
+                                json.dump(light, f, ensure_ascii=False)
+                            stat_d.write(f"💾 自動保存 ({done_d}問判定済み → {RATED_SAVE_PATH.name})")
+                        except Exception as e:
+                            stat_d.write(f"⚠️ 自動保存失敗: {e}")
+                    
                     time.sleep(0.5)
                 
                 stat_d.update(label=f"✅ {done_d}問判定完了 ({errors_d}err)", state="complete")
                 
-                # Show final distribution
+                # Final save to disk (パート別)
                 rated_after = sum(1 for it in deduped if it.get("difficulty"))
+                output_dir = SCRIPT_DIR / "rated_output"
+                output_dir.mkdir(exist_ok=True)
+                ts_str = datetime.now().strftime('%Y%m%d-%H%M')
+                saved_files = []
+                by_part_save = {}
+                for it in deduped:
+                    p = it.get("part", "unknown")
+                    if p not in by_part_save: by_part_save[p] = []
+                    by_part_save[p].append(it)
+                for p, items in sorted(by_part_save.items()):
+                    fp = output_dir / f"toeic-stock-{p}-diff-{ts_str}.json"
+                    with open(fp, "w", encoding="utf-8") as f:
+                        json.dump(items, f, ensure_ascii=False)
+                    saved_files.append(f"  {fp.name}: {len(items)}問")
+                
+                st.success(f"✅ 判定完了: {rated_after}/{len(deduped)}問\n\n📁 保存先: {output_dir}")
+                st.code("\n".join(saved_files), language=None)
+                
+                # Show distribution
                 diffs_after = [it["difficulty"] for it in deduped if it.get("difficulty")]
                 if diffs_after:
                     bands = [(0,400,"~400"),(401,550,"400-550"),(551,700,"550-700"),(701,850,"700-850"),(851,999,"850+")]
                     for lo,hi,label in bands:
                         cnt = sum(1 for d in diffs_after if lo<=d<=hi)
                         st.caption(f"{label}: {cnt}問")
-                    
-                    # Per-part averages
                     part_avg = {}
                     for it in deduped:
                         if it.get("difficulty"):
@@ -2465,40 +2497,26 @@ with tab_manage:
                         vals = part_avg[p]
                         st.caption(f"  {p}: avg={sum(vals)//len(vals)} ({min(vals)}-{max(vals)}) {len(vals)}問")
                 
-                st.success(f"✅ 判定完了: {rated_after}/{len(deduped)}問")
-                
-                # Save rated data to session state for download
+                # Save to session state too
                 st.session_state["_diff_rated_data"] = deduped
         
         # Use rated data from session state if available
         download_data = st.session_state.get("_diff_rated_data", deduped)
         
-        # Download buttons — per-part with full data (audio included)
+        # Download — files already saved to disk
         st.divider()
-        rated_final = sum(1 for it in download_data if it.get("difficulty"))
-        st.markdown(f"**📥 ダウンロード ({len(download_data)}問, 判定済み{rated_final})**")
-        
-        # Group by part
-        by_part_dl = {}
-        for it in download_data:
-            p = it.get("part", "unknown")
-            if p not in by_part_dl: by_part_dl[p] = []
-            by_part_dl[p].append(it)
-        
-        ts = datetime.now().strftime('%Y%m%d-%H%M')
-        cols = st.columns(min(4, len(by_part_dl)))
-        for ci, (p, items) in enumerate(sorted(by_part_dl.items())):
-            with cols[ci % len(cols)]:
-                p_json = json.dumps(items, ensure_ascii=False)
-                p_mb = len(p_json) / 1024 / 1024
-                p_rated = sum(1 for it in items if it.get("difficulty"))
-                st.download_button(
-                    f"{p} ({len(items)}問, {p_mb:.0f}MB)",
-                    data=p_json,
-                    file_name=f"toeic-stock-{p}-diff-{ts}.json",
-                    mime="application/json",
-                    key=f"dl_{p}"
-                )
+        output_dir = SCRIPT_DIR / "rated_output"
+        if output_dir.exists() and list(output_dir.glob("toeic-stock-*.json")):
+            saved = sorted(output_dir.glob("toeic-stock-*.json"))
+            st.success(f"💾 パート別JSONが保存済み: `{output_dir}`")
+            for fp in saved:
+                st.caption(f"  📄 {fp.name} ({fp.stat().st_size/1024/1024:.0f}MB)")
+            st.info("💡 このフォルダのJSONをHTMLアプリにインポートしてください")
+        else:
+            download_data = st.session_state.get("_diff_rated_data", deduped)
+            rated_final = sum(1 for it in download_data if it.get("difficulty"))
+            st.markdown(f"**📥 ダウンロード ({len(download_data)}問, 判定済み{rated_final})**")
+            st.caption("判定を実行するとパート別JSONがディスクに自動保存されます")
         
         st.info("💡 HTMLアプリにインポート → createdAt一致で既存問題のdifficultyが更新されます")
 
@@ -2523,7 +2541,7 @@ with tab_gen:
             try:
                 import json as _json
                 content = uploaded.read().decode("utf-8")
-                data = _json.loads(content)
+                data = json.loads(content)
                 if not isinstance(data, list):
                     st.error("無効なファイル形式（配列である必要があります）")
                 else:
