@@ -6556,10 +6556,10 @@ function renderHome() {
         <span style="font-size:13px;flex:1;color:#94a3b8">${p.desc}</span>
         <span id="sc_${p.id}" style="font-size:10px;color:#7a8ea5;min-width:32px;text-align:right">…</span>
         <div style="display:flex;gap:3px;margin-left:4px">
-          <button class="btn-s" data-home-rnd="${p.id}" style="font-size:10px;padding:3px 6px" title="通常出題">▶</button>
-          <button class="btn-s" data-home-new="${p.id}" style="font-size:10px;padding:3px 6px;color:#60a5fa" title="未回答">🆕</button>
-          <button class="btn-s" data-home-weak="${p.id}" style="font-size:10px;padding:3px 6px;color:#f87171" title="苦手特訓">🔥</button>
-          <button class="btn-s" data-home-optimal="${p.id}" style="font-size:10px;padding:3px 6px;color:#fbbf24" title="最適レベル">🎯</button>
+          <button class="btn-s" data-home-rnd="${p.id}" style="font-size:13px;padding:5px 8px;color:#dce6f0" title="通常出題">▶</button>
+          <button class="btn-s" data-home-new="${p.id}" style="font-size:13px;padding:5px 8px;color:#60a5fa" title="未回答">🆕</button>
+          <button class="btn-s" data-home-weak="${p.id}" style="font-size:13px;padding:5px 8px;color:#f87171" title="苦手特訓">🔥</button>
+          <button class="btn-s" data-home-optimal="${p.id}" style="font-size:13px;padding:5px 8px;color:#fbbf24" title="最適レベル">🎯</button>
         </div>
       </div>`;
     }).join("");
@@ -6571,7 +6571,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28f · no-API-key entry + level-aware difficulty + phrase extract + local time + per-part IRT · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.01a · no-API-key entry + level-aware difficulty + phrase extract + local time + per-part IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6590,7 +6590,7 @@ function renderHome() {
       <button class="btn-s" id="goalSettingBtn" style="font-size:10px;padding:2px 6px;color:#7a8ea5">⚙</button>
     </div>
     ${groups}
-    <div style="text-align:center;font-size:10px;color:#7a8ea5;margin-top:4px">▶通常 🆕未回答 🔥苦手特訓 🎯最適レベル</div>
+    <div style="text-align:center;font-size:12px;color:#dce6f0;margin-top:6px">▶通常 🆕未回答 🔥苦手特訓 🎯最適レベル</div>
     <div id="judgeHomeToggle" style="text-align:center;margin-top:10px;cursor:pointer">
       <span style="display:inline-block;padding:6px 16px;border-radius:8px;font-size:13px;font-weight:600;background:${S.judgeMode?"rgba(74,222,128,0.12)":"rgba(100,116,139,0.08)"};color:${S.judgeMode?"#4ade80":"#64748b"};border:1px solid ${S.judgeMode?"rgba(74,222,128,0.3)":"rgba(100,116,139,0.15)"}">
         ${S.judgeMode?"📊 判定モード ON":"📊 判定モード OFF"}
