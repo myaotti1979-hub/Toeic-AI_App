@@ -1177,6 +1177,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
     raw = generate_text(prompt, engine, model, url, api_key)
     parsed = parse_json(raw)
     difficulty = parsed.get("difficulty", 0)  # Extract before normalize_set strips it
+    print(f"[DIFFICULTY] parsed keys: {list(parsed.keys())[:10]}, difficulty={difficulty}", flush=True)
     qs = enforce_choice_count(normalize_set(parsed, ap))
     if not qs.get("questions"): raise ValueError("No questions")
     # Consistency check BEFORE shuffle (letters still match LLM output)
@@ -1200,6 +1201,7 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
             "createdAt": int(time.time()*1000) + idx_seed,
             "difficulty": difficulty,
             "qSet": qs, "imgUrl": None, "audioOpus": None}
+    print(f"[ITEM] part={real_part}, level={level}, difficulty={difficulty}, keys={list(item.keys())}", flush=True)
     # TTS
     if do_tts and qs.get("audio"):
         try:
@@ -1531,7 +1533,8 @@ def load_results(filepath):
                             # Re-strip after save
                             for i in cleaned: _strip_audio(i)
                         except Exception: pass
-                    print(f"[PERSIST] Loaded {len(cleaned)} items from {filepath.name} ({audio_count} with audio, {len(_audio_store)} in audio_store)" + (f" (purged {purged})" if purged else ""), flush=True)
+                    diff_loaded = sum(1 for it in cleaned if it.get("difficulty"))
+                    print(f"[PERSIST] Loaded {len(cleaned)} items from {filepath.name} ({audio_count} with audio, {len(_audio_store)} in audio_store, {diff_loaded} with difficulty)" + (f" (purged {purged})" if purged else ""), flush=True)
                     return cleaned
     except Exception as e:
         print(f"[PERSIST] Load error {filepath.name}: {e}", flush=True)
@@ -1540,6 +1543,9 @@ def load_results(filepath):
 def save_results(filepath, items):
     """Save results to JSON file. Merges audioOpus back from _audio_store."""
     try:
+        # Check if difficulty is present
+        diff_count = sum(1 for it in items if it.get("difficulty"))
+        print(f"[SAVE] {len(items)} items, {diff_count} with difficulty", flush=True)
         # Reconstruct full items with audio for saving
         full_items = []
         for item in items:
@@ -1667,7 +1673,7 @@ if "_init" not in st.session_state:
     st.session_state.results = load_results(RESULTS_FILE)
     st.session_state.mock_results = load_all_mock_batches()
     gk = st.session_state.gemini_key
-    print(f"[INIT] key={'set' if gk else 'empty'} | results={len(st.session_state.results)} | mock={len(st.session_state.mock_results)}", flush=True)
+    print(f"[INIT] key={'set' if gk else 'empty'} | results={len(st.session_state.results)} | mock={len(st.session_state.mock_results)} | VERSION=v2026.05.01a", flush=True)
     st.session_state._init = True  # Set LAST so incomplete init retries
 
 # Safety defaults — ensure critical keys exist even if init was from old version
@@ -1961,7 +1967,7 @@ with st.sidebar:
     if not edge: st.caption("⚠️ Edge TTS が使えません: `pip install edge-tts`")
 
     st.divider()
-    st.caption("v2026.04.28e · level-aware difficulty rating (vocab/quiz/listen removed) · 303 types")
+    st.caption("v2026.05.01a · multi-file difficulty rating + level-aware · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2278,88 +2284,223 @@ with tab_manage:
                         st.session_state.pop("_html_export", None)
 
     # ── 難易度一括判定 ──
-    with st.expander("🎯 難易度一括判定（ストックJSON）"):
-        st.caption("エクスポートしたストックJSONに難易度スコア(200-990)を付与します")
-        diff_file = st.file_uploader("ストックJSONをアップロード", type=["json"], key="diff_rating_file")
-        if diff_file:
-            import json as _json
-            diff_data = _json.loads(diff_file.read().decode("utf-8"))
-            if isinstance(diff_data, list):
-                total_d = len(diff_data)
-                rated_d = sum(1 for it in diff_data if it.get("difficulty"))
-                unrated_d = total_d - rated_d
-                st.info(f"全{total_d}問 | 判定済み: {rated_d} | 未判定: {unrated_d}")
+    st.subheader("🎯 難易度一括判定")
+    st.caption("JSONファイルの難易度判定 → マージして出力。HTMLアプリにインポートで反映。")
+    
+    input_method = st.radio("入力方法", ["📁 フォルダ指定（高速・大容量対応）", "📤 ファイルアップロード"], key="diff_input_method", horizontal=True)
+    
+    diff_files_data = []  # List of (filename, data_list)
+    
+    if input_method.startswith("📁"):
+        folder_path = st.text_input("JSONファイルがあるフォルダパス", value=str(SCRIPT_DIR), key="diff_folder")
+        if folder_path and st.button("📁 フォルダを読み込む", key="diff_scan_btn"):
+            import glob as _glob
+            json_files = sorted(_glob.glob(os.path.join(folder_path, "toeic-stock*.json")))
+            if not json_files:
+                json_files = sorted(_glob.glob(os.path.join(folder_path, "*.json")))
+            if not json_files:
+                st.warning(f"JSONファイルが見つかりません: {folder_path}")
+            else:
+                for fp in json_files:
+                    try:
+                        with open(fp, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        if isinstance(data, list) and len(data) > 0:
+                            diff_files_data.append((os.path.basename(fp), data))
+                    except Exception as e:
+                        st.caption(f"  ⚠️ {os.path.basename(fp)}: {str(e)[:50]}")
+                st.session_state["_diff_files_data"] = diff_files_data
+        # Persist across reruns
+        if "_diff_files_data" in st.session_state:
+            diff_files_data = st.session_state["_diff_files_data"]
+    else:
+        uploaded = st.file_uploader("ストックJSONをアップロード（複数可）", type=["json"], key="diff_rating_files", accept_multiple_files=True)
+        if uploaded:
+            for df in uploaded:
+                try:
+                    data = json.loads(df.read().decode("utf-8"))
+                    df.seek(0)
+                    if isinstance(data, list):
+                        diff_files_data.append((df.name, data))
+                except Exception as e:
+                    st.caption(f"  ⚠️ {df.name}: {str(e)[:50]}")
+    
+    if diff_files_data:
+        import json as _json
+        # Merge all files
+        all_diff_data = []
+        file_info = []
+        for fname, data in diff_files_data:
+            rated = sum(1 for it in data if it.get("difficulty"))
+            file_info.append(f"  {fname}: {len(data)}問 (判定済み{rated})")
+            all_diff_data.extend(data)
+        
+        # Dedup by createdAt
+        seen_ts = set()
+        deduped = []
+        dupes = 0
+        for it in all_diff_data:
+            ts = it.get("createdAt", 0)
+            if ts and ts in seen_ts:
+                dupes += 1
+                continue
+            if ts: seen_ts.add(ts)
+            deduped.append(it)
+        
+        rated_d2 = sum(1 for it in deduped if it.get("difficulty"))
+        unrated_d2 = len(deduped) - rated_d2
+        
+        st.markdown("**📁 読み込み結果:**")
+        st.code("\n".join(file_info), language=None)
+        if dupes > 0:
+            st.warning(f"重複 {dupes}問を除外")
+        
+        # Part breakdown
+        by_part = {}
+        by_level = {}
+        for it in deduped:
+            p = it.get("part","?")
+            lv = it.get("level","?")
+            by_part[p] = by_part.get(p,0) + 1
+            by_level[lv] = by_level.get(lv,0) + 1
+        
+        col_info1, col_info2 = st.columns(2)
+        with col_info1:
+            st.metric("合計問題数", f"{len(deduped)}問")
+            st.caption(" / ".join(f"{p}:{n}" for p,n in sorted(by_part.items())))
+        with col_info2:
+            st.metric("判定状況", f"{rated_d2} / {len(deduped)}")
+            st.caption(" / ".join(f"{lv}:{n}" for lv,n in sorted(by_level.items())))
+        
+        # Distribution (if any rated)
+        if rated_d2 > 0:
+            diffs_existing = [it["difficulty"] for it in deduped if it.get("difficulty")]
+            bands = [(0,400,"~400"),(401,550,"400-550"),(551,700,"550-700"),(701,850,"700-850"),(851,999,"850+")]
+            dist_text = " | ".join(f"{label}:{sum(1 for d in diffs_existing if lo<=d<=hi)}" for lo,hi,label in bands)
+            st.caption(f"現在の分布: {dist_text}")
+        
+        rate_mode = st.radio("判定モード", ["未判定のみ", "全再判定"], key="diff_rate_mode", horizontal=True)
+        target_count = unrated_d2 if rate_mode == "未判定のみ" else len(deduped)
+        
+        col_btn1, col_btn2 = st.columns([3,1])
+        with col_btn1:
+            do_rate = st.button(f"🎯 {target_count}問を判定開始", key="diff_rate_btn", disabled=target_count==0)
+        with col_btn2:
+            st.caption(f"≈{max(1, target_count//100)}分")
+        
+        if do_rate:
+            target_d = [it for it in deduped if not it.get("difficulty")] if rate_mode == "未判定のみ" else deduped
+            gemini_key = st.session_state.get("gemini_key", "")
+            if not gemini_key:
+                st.error("Gemini APIキーを設定してください")
+            else:
+                prog_d = st.progress(0)
+                stat_d = st.status(f"🎯 {len(target_d)}問を判定中...", expanded=True)
+                DBATCH = 15
+                done_d, errors_d = 0, 0
                 
-                rate_mode = st.radio("判定モード", ["未判定のみ", "全再判定"], key="diff_rate_mode", horizontal=True)
-                
-                if st.button(f"🎯 {'未判定'+str(unrated_d)+'問' if rate_mode=='未判定のみ' else '全'+str(total_d)+'問'}を判定", key="diff_rate_btn"):
-                    target_d = [it for it in diff_data if not it.get("difficulty")] if rate_mode == "未判定のみ" else diff_data
-                    if not target_d:
-                        st.success("判定対象がありません")
-                    else:
-                        gemini_key = st.session_state.get("api_key", "")
-                        if not gemini_key:
-                            st.error("Gemini APIキーを設定してください")
+                for di in range(0, len(target_d), DBATCH):
+                    batch_d = target_d[di:di+DBATCH]
+                    texts_d = []
+                    for bi, it in enumerate(batch_d):
+                        qs = it.get("qSet", {})
+                        q = qs.get("questions", [{}])[0]
+                        text = q.get("question","") or qs.get("sentence","") or qs.get("spoken","") or ""
+                        if qs.get("conversation"): text += " " + qs["conversation"][:150]
+                        if qs.get("talk"): text += " " + qs["talk"][:150]
+                        if qs.get("text"): text += " " + qs["text"][:150]
+                        choices = " / ".join(q.get("choices",[])) if q.get("choices") else ""
+                        texts_d.append(f"{bi+1}. [{it.get('part','?')}/{it.get('level','unknown')}] {text[:200]} | {choices[:100]}")
+                    
+                    prompt_d = "You are a TOEIC scoring expert. Rate each question's difficulty (200-990).\nEach question is labeled [partN/level] where level is the INTENDED generation difficulty.\n\nCRITERIA: VOCAB(basic→400, business→650, advanced→850) + GRAMMAR(simple→400, clause→600, subjunctive→850) + INFERENCE(explicit→400, implied→650, cross-ref→800) + DISTRACTORS(obvious→400, plausible→650, tricky→850).\n\nGENERATION LEVEL CALIBRATION:\n- /beginner: range 300-500\n- /intermediate: range 450-700\n- /advanced: range 650-950 (MUST be 650+)\nAn advanced Part 2 with indirect answers = 600-700. An advanced Part 3 with implied meaning = 700-850.\n\nCRITICAL: Do NOT rate an /advanced question below 600. Respect the generation level.\n\nReturn JSON array: [score1, score2, ...]\n\nQuestions:\n" + "\n".join(texts_d)
+                    
+                    try:
+                        resp_d = generate_text(prompt_d, "gemini", "gemini-2.5-flash", 
+                                            "https://generativelanguage.googleapis.com/v1beta",
+                                            gemini_key)
+                        import re as _re
+                        m_d = _re.search(r'\[[\d\s,.\n]+\]', resp_d)
+                        if m_d:
+                            scores_d = _json.loads(m_d.group())
+                            for j in range(min(len(batch_d), len(scores_d))):
+                                batch_d[j]["difficulty"] = max(200, min(990, round(float(scores_d[j]))))
+                                done_d += 1
                         else:
-                            prog_d = st.progress(0)
-                            stat_d = st.status(f"🎯 {len(target_d)}問を判定中...", expanded=True)
-                            DBATCH = 15
-                            done_d, errors_d = 0, 0
-                            
-                            for di in range(0, len(target_d), DBATCH):
-                                batch_d = target_d[di:di+DBATCH]
-                                texts_d = []
-                                for bi, it in enumerate(batch_d):
-                                    qs = it.get("qSet", {})
-                                    q = qs.get("questions", [{}])[0]
-                                    text = q.get("question","") or qs.get("sentence","") or qs.get("spoken","") or ""
-                                    if qs.get("conversation"): text += " " + qs["conversation"][:150]
-                                    if qs.get("talk"): text += " " + qs["talk"][:150]
-                                    if qs.get("text"): text += " " + qs["text"][:150]
-                                    choices = " / ".join(q.get("choices",[])) if q.get("choices") else ""
-                                    texts_d.append(f"{bi+1}. [{it.get('part','?')}/{it.get('level','unknown')}] {text[:200]} | {choices[:100]}")
-                                
-                                prompt_d = "You are a TOEIC scoring expert. Rate each question's difficulty (200-990).\nEach question is labeled [partN/level] where level is the INTENDED generation difficulty.\n\nCRITERIA: VOCAB(basic→400, business→650, advanced→850) + GRAMMAR(simple→400, clause→600, subjunctive→850) + INFERENCE(explicit→400, implied→650, cross-ref→800) + DISTRACTORS(obvious→400, plausible→650, tricky→850).\n\nGENERATION LEVEL CALIBRATION:\n- /beginner: range 300-500\n- /intermediate: range 450-700\n- /advanced: range 650-950 (MUST be 650+)\nAn advanced Part 2 with indirect answers = 600-700. An advanced Part 3 with implied meaning = 700-850.\n\nCRITICAL: Do NOT rate an /advanced question below 600. Respect the generation level.\n\nReturn JSON array: [score1, score2, ...]\n\nQuestions:\n" + "\n".join(texts_d)
-                                
-                                try:
-                                    resp_d = generate_text(prompt_d, "gemini", "gemini-2.5-flash", 
-                                                        "https://generativelanguage.googleapis.com/v1beta",
-                                                        gemini_key)
-                                    import re as _re
-                                    m_d = _re.search(r'\[[\d\s,.\n]+\]', resp_d)
-                                    if m_d:
-                                        scores_d = _json.loads(m_d.group())
-                                        for j in range(min(len(batch_d), len(scores_d))):
-                                            batch_d[j]["difficulty"] = max(200, min(990, round(float(scores_d[j]))))
-                                            done_d += 1
-                                    else:
-                                        nums_d = _re.findall(r'\b\d{3}\b', resp_d)
-                                        if len(nums_d) >= len(batch_d) * 0.5:
-                                            for j in range(min(len(batch_d), len(nums_d))):
-                                                batch_d[j]["difficulty"] = max(200, min(990, int(nums_d[j])))
-                                                done_d += 1
-                                        else:
-                                            errors_d += 1
-                                            stat_d.write(f"⚠️ Batch {di//DBATCH+1}: parse failed")
-                                except Exception as e:
-                                    errors_d += 1
-                                    stat_d.write(f"⚠️ Batch {di//DBATCH+1}: {str(e)[:80]}")
-                                    time.sleep(3)
-                                
-                                prog_d.progress(min(1.0, (di+DBATCH) / len(target_d)))
-                                stat_d.update(label=f"🎯 {done_d}/{len(target_d)}問 ({errors_d}err)")
-                                time.sleep(0.5)
-                            
-                            stat_d.update(label=f"✅ {done_d}問判定完了 ({errors_d}err)", state="complete")
-                            rated_after_d = sum(1 for it in diff_data if it.get("difficulty"))
-                            st.success(f"判定完了: {rated_after_d}/{total_d}問に難易度スコア付与済み")
-                            st.download_button(
-                                f"📥 難易度付きJSONをダウンロード ({rated_after_d}問)",
-                                data=_json.dumps(diff_data, ensure_ascii=False),
-                                file_name=f"toeic-stock-rated-{datetime.now().strftime('%Y%m%d-%H%M')}.json",
-                                mime="application/json"
-                            )
-                            st.info("💡 HTMLアプリにインポート → 既存問題の難易度が更新されます")
+                            nums_d = _re.findall(r'\b\d{3}\b', resp_d)
+                            if len(nums_d) >= len(batch_d) * 0.5:
+                                for j in range(min(len(batch_d), len(nums_d))):
+                                    batch_d[j]["difficulty"] = max(200, min(990, int(nums_d[j])))
+                                    done_d += 1
+                            else:
+                                errors_d += 1
+                                stat_d.write(f"⚠️ Batch {di//DBATCH+1}: parse failed")
+                    except Exception as e:
+                        errors_d += 1
+                        stat_d.write(f"⚠️ Batch {di//DBATCH+1}: {str(e)[:80]}")
+                        time.sleep(3)
+                    
+                    prog_d.progress(min(1.0, (di+DBATCH) / len(target_d)))
+                    stat_d.update(label=f"🎯 {done_d}/{len(target_d)}問 ({errors_d}err)")
+                    time.sleep(0.5)
+                
+                stat_d.update(label=f"✅ {done_d}問判定完了 ({errors_d}err)", state="complete")
+                
+                # Show final distribution
+                rated_after = sum(1 for it in deduped if it.get("difficulty"))
+                diffs_after = [it["difficulty"] for it in deduped if it.get("difficulty")]
+                if diffs_after:
+                    bands = [(0,400,"~400"),(401,550,"400-550"),(551,700,"550-700"),(701,850,"700-850"),(851,999,"850+")]
+                    for lo,hi,label in bands:
+                        cnt = sum(1 for d in diffs_after if lo<=d<=hi)
+                        st.caption(f"{label}: {cnt}問")
+                    
+                    # Per-part averages
+                    part_avg = {}
+                    for it in deduped:
+                        if it.get("difficulty"):
+                            p = it.get("part","?")
+                            if p not in part_avg: part_avg[p] = []
+                            part_avg[p].append(it["difficulty"])
+                    for p in sorted(part_avg):
+                        vals = part_avg[p]
+                        st.caption(f"  {p}: avg={sum(vals)//len(vals)} ({min(vals)}-{max(vals)}) {len(vals)}問")
+                
+                st.success(f"✅ 判定完了: {rated_after}/{len(deduped)}問")
+                
+                # Save rated data to session state for download
+                st.session_state["_diff_rated_data"] = deduped
+        
+        # Use rated data from session state if available
+        download_data = st.session_state.get("_diff_rated_data", deduped)
+        
+        # Download buttons — per-part with full data (audio included)
+        st.divider()
+        rated_final = sum(1 for it in download_data if it.get("difficulty"))
+        st.markdown(f"**📥 ダウンロード ({len(download_data)}問, 判定済み{rated_final})**")
+        
+        # Group by part
+        by_part_dl = {}
+        for it in download_data:
+            p = it.get("part", "unknown")
+            if p not in by_part_dl: by_part_dl[p] = []
+            by_part_dl[p].append(it)
+        
+        ts = datetime.now().strftime('%Y%m%d-%H%M')
+        cols = st.columns(min(4, len(by_part_dl)))
+        for ci, (p, items) in enumerate(sorted(by_part_dl.items())):
+            with cols[ci % len(cols)]:
+                p_json = json.dumps(items, ensure_ascii=False)
+                p_mb = len(p_json) / 1024 / 1024
+                p_rated = sum(1 for it in items if it.get("difficulty"))
+                st.download_button(
+                    f"{p} ({len(items)}問, {p_mb:.0f}MB)",
+                    data=p_json,
+                    file_name=f"toeic-stock-{p}-diff-{ts}.json",
+                    mime="application/json",
+                    key=f"dl_{p}"
+                )
+        
+        st.info("💡 HTMLアプリにインポート → createdAt一致で既存問題のdifficultyが更新されます")
 
     st.divider()
 
