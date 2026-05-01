@@ -3200,12 +3200,37 @@ function renderApiKey() {
       <input id="ki" type="password" placeholder="AIza..." autocomplete="off">
       <button class="btn-p" id="ks">保存して続ける →</button>
       <p style="margin-top:12px;font-size:11px;color:#475569">キーはlocalStorageにのみ保存されます</p>
+      <div style="margin-top:20px;border-top:1px solid rgba(255,255,255,0.08);padding-top:16px">
+        <button class="btn-s" id="skipApiKey" style="width:100%;padding:12px;font-size:14px;color:#60a5fa">APIキーなしで始める →</button>
+        <p style="font-size:11px;color:#475569;margin-top:8px">ストック問題の学習・単語帳・フラッシュカードが利用できます。<br>問題生成・難易度判定にはAPIキーが必要です。</p>
+      </div>
+      <div style="margin-top:12px">
+        <button class="btn-s" id="importOnSetup" style="width:100%;padding:10px;font-size:13px;color:#4ade80">📥 問題データをインポート</button>
+        <input type="file" id="setupFileInput" accept=".json" multiple style="display:none">
+      </div>
     </div>`;
   $("ks").onclick=()=>{
     const k=$("ki").value.trim(); if(!k)return;
     localStorage.removeItem("gemini_api_key");
     localStorage.setItem("gemini_api_key",k);
     S.apiKey=k; S.screen="home"; render();
+  };
+  $("skipApiKey").onclick=()=>{ S.screen="home"; render(); };
+  const isb=$("importOnSetup"); if(isb) isb.onclick=()=>$("setupFileInput").click();
+  const sfi=$("setupFileInput"); if(sfi) sfi.onchange=async(e)=>{
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    isb.textContent=`⏳ ${files.length}ファイル...`;
+    const results = [];
+    for (const f of files) {
+      try {
+        const r = await dataImportSmart(f);
+        results.push(`${f.name}: ${r.count}件追加`);
+      } catch(err) { results.push(`${f.name}: ❌ ${err.message}`); }
+    }
+    alert(`インポート結果:\n${results.join("\n")}`);
+    isb.textContent="📥 問題データをインポート"; sfi.value="";
+    S.screen="home"; render();
   };
 }
 
@@ -3516,6 +3541,7 @@ async function renderStockSelect() {
   document.querySelectorAll("[data-pt]").forEach(el=>{ el.onclick=()=>{S.part=el.dataset.pt;render();}; });
   const scNum=$("stockCreateNum"); if(scNum) scNum.onchange=()=>{ S.stockCreateTarget=parseInt(scNum.value); };
   const scBtn=$("stockCreateBtn"); if(scBtn) scBtn.onclick=()=>{
+    if(!S.apiKey){alert("問題生成にはGemini APIキーが必要です。\nHOME画面の「🔑 APIキーを設定」から設定してください。");return;}
     if(!S.level||!S.part)return;
     S.stockCreateTarget=parseInt($("stockCreateNum")?.value||"10");
     S.screen="stockCreate"; S.stockCreateMode=true; S.stockCreateCount=0; S.stockCreatePaused=false;
@@ -6545,7 +6571,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28e · level-aware difficulty rating + IRT fix + phrase extract + local time + per-part IRT · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.04.28f · no-API-key entry + level-aware difficulty + phrase extract + local time + per-part IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6590,7 +6616,8 @@ function renderHome() {
     </div>
     <input type="file" id="homeFileInput" accept=".json" multiple style="display:none">
     <div style="text-align:center;margin-top:14px">
-      <button class="btn-s" id="changeKey">🔑 APIキー変更</button>
+      <button class="btn-s" id="changeKey">${S.apiKey?"🔑 APIキー変更":"🔑 APIキーを設定"}</button>
+      ${!S.apiKey?`<div style="font-size:10px;color:#fbbf24;margin-top:4px">⚠️ APIキー未設定 — 問題生成・難易度判定には設定が必要です</div>`:""}
     </div>`;
 
   // Async: load stock counts and IRT level
