@@ -2016,6 +2016,31 @@ function extractJSON(raw) {
   return null;
 }
 
+// Shuffle that distributes question types evenly (avoids same-type streaks)
+function diverseShuffle(items) {
+  if (items.length <= 1) return items;
+  const byType = {};
+  items.forEach(it => {
+    const qs = it.qSet || it;
+    const t = qs._questionType || qs.talk_type || qs.doc_type || "x";
+    if (!byType[t]) byType[t] = [];
+    byType[t].push(it);
+  });
+  // Shuffle within each type
+  for (const arr of Object.values(byType)) {
+    for (let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+  }
+  // Round-robin: pick one from each type in turn
+  const queues = Object.values(byType).sort((a,b)=>b.length-a.length);
+  const result = [];
+  while (result.length < items.length) {
+    let added = false;
+    for (const q of queues) { if (q.length > 0) { result.push(q.shift()); added = true; } }
+    if (!added) break;
+  }
+  return result;
+}
+
 function extractQuestionText(item) {
   const qs = item.qSet || {};
   const q = qs.questions?.[0] || {};
@@ -3502,12 +3527,12 @@ async function renderStockSelect() {
       el.textContent="⏳ 読込中...";
       const items = await stockGetAllLight(el.dataset.stockRnd);
       if(items.length===0) { el.textContent="🔀 ランダム再生"; return; }
-      for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+      const shuffled2 = diverseShuffle(items);
       S._stockReturnScreen = "stockSelect";
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+      S.stockPlaylist = shuffled2.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
       S._stockPlaylistActive = false;
-      await loadStockItem(items[0].id);
+      await loadStockItem(shuffled2[0].id);
     };
   });
 
@@ -3887,10 +3912,11 @@ ${texts}`, GEMINI_FLASH);
             const allItems = await stockGetAllLight(btn.dataset.stockNew);
             const items = allItems.filter(it=>!it.lastPracticed);
             if(items.length===0){ alert("未回答の問題がありません"); btn.textContent="🆕 未回答のみ"; return; }
+            const shuffledNew = diverseShuffle(items);
             S._stockReturnScreen = "stockSelect";
-            S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+            S.stockPlaylist = shuffledNew.map(it=>({id:it.id, part:it.part}));
             S.stockPlayIdx = 0; S._stockPlaylistActive = false;
-            await loadStockItem(items[0].id);
+            await loadStockItem(shuffledNew[0].id);
           };
         });
         extra.querySelectorAll("[data-del-mastered]").forEach(btn => {
@@ -6571,7 +6597,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.01a · no-API-key entry + level-aware difficulty + phrase extract + local time + per-part IRT · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02a · diverse shuffle + no-API-key + level-aware difficulty + per-part IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6696,7 +6722,7 @@ function renderHome() {
       el.textContent="⏳";
       const items = await stockGetAllLight(el.dataset.homeRnd);
       if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="🔀";return;}
-      for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
+      items = diverseShuffle(items);
       S._stockReturnScreen = "home";
       S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
@@ -6710,11 +6736,11 @@ function renderHome() {
       if(!items.length){alert("このパートのストックがありません。");el.textContent="🆕";return;}
       const unplayed = items.filter(it=>!it.lastPracticed);
       if(!unplayed.length){alert("未回答の問題がありません。全問回答済みです。");el.textContent="🆕";return;}
-      for(let i=unplayed.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[unplayed[i],unplayed[j]]=[unplayed[j],unplayed[i]];}
+      const shuffled = diverseShuffle(unplayed);
       S._stockReturnScreen = "home";
-      S.stockPlaylist = unplayed.map(it=>({id:it.id, part:it.part}));
+      S.stockPlaylist = shuffled.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
-      await loadStockItem(unplayed[0].id);
+      await loadStockItem(shuffled[0].id);
     };
   });
   document.querySelectorAll("[data-home-weak]").forEach(el=>{
@@ -6740,11 +6766,11 @@ function renderHome() {
         const items = await stockGetAllLight(partId);
         const weakItems = items.filter(it => weakTypes.includes(it.qSet?._questionType));
         if (!weakItems.length) { alert(`苦手タイプ（${weakTypes.join(", ")}）のストック問題がありません。\n問題を生成してストックしてください。`); el.textContent="🔥"; return; }
-        for(let i=weakItems.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[weakItems[i],weakItems[j]]=[weakItems[j],weakItems[i]];}
+        const shuffledWeak = diverseShuffle(weakItems);
         S._stockReturnScreen = "home";
-        S.stockPlaylist = weakItems.map(it=>({id:it.id, part:it.part}));
+        S.stockPlaylist = shuffledWeak.map(it=>({id:it.id, part:it.part}));
         S.stockPlayIdx = 0; S._stockPlaylistActive = false;
-        await loadStockItem(weakItems[0].id);
+        await loadStockItem(shuffledWeak[0].id);
       } catch(e) { alert("苦手分析に失敗: "+e.message); el.textContent="🔥"; }
     };
   });
@@ -6798,9 +6824,7 @@ function renderHome() {
       // Sort: priority range first (shuffled), then rest (shuffled)
       const priority = inRange.filter(it => Math.abs(it.difficulty - userScore) <= PRIORITY_RANGE);
       const rest = inRange.filter(it => Math.abs(it.difficulty - userScore) > PRIORITY_RANGE);
-      for(let i=priority.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[priority[i],priority[j]]=[priority[j],priority[i]];}
-      for(let i=rest.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[rest[i],rest[j]]=[rest[j],rest[i]];}
-      const sorted = [...priority, ...rest];
+      const sorted = diverseShuffle([...priority, ...rest]);
       S._stockReturnScreen = "home";
       S.stockPlaylist = sorted.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
