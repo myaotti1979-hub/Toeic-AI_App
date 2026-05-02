@@ -1441,6 +1441,55 @@ def build_mock_plan(scale=1.0):
 
 
 # ══════════════════════════════════════
+# Distractor Quality Check
+# ══════════════════════════════════════
+def check_distractor_quality(items, api_key, on_progress=None):
+    """Check if wrong answer choices are plausibly wrong (not obviously broken).
+    Returns list of (item_index, quality_rating, issues)."""
+    results = []
+    BATCH = 10
+    for i in range(0, len(items), BATCH):
+        batch = items[i:i+BATCH]
+        texts = []
+        for bi, item in enumerate(batch):
+            qs = item.get("qSet", {})
+            for qi, q in enumerate(qs.get("questions", [])):
+                correct = q.get("correct", 0)
+                choices = q.get("choices", [])
+                question = q.get("question", "") or qs.get("sentence", "") or ""
+                wrong = [c for ci, c in enumerate(choices) if ci != correct]
+                texts.append(f"{bi+1}-Q{qi+1}. {question[:100]} | Wrong: {' / '.join(wrong)}")
+        if not texts:
+            continue
+        prompt = f"""Rate distractor quality for these TOEIC questions. For each, answer:
+A = All distractors are plausible (grammatically correct, could fool a student)
+B = Most distractors plausible, 1 is weak
+C = Multiple distractors are obviously wrong (grammatically broken or nonsensical)
+
+Return one letter per line: "1-Q1: A", "1-Q2: B", etc.
+
+{chr(10).join(texts)}"""
+        try:
+            body = {"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0.1,"maxOutputTokens":1024,"thinkingConfig":{"thinkingBudget":0}}}
+            resp = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",json=body,timeout=60)
+            if resp.ok:
+                parts = resp.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
+                result_text = "".join(p.get("text","") for p in parts if "text" in p)
+                for line in result_text.strip().split("\n"):
+                    m = re.match(r'(\d+)-Q(\d+):\s*([ABC])', line.strip())
+                    if m:
+                        bi2, qi2, grade = int(m.group(1))-1, int(m.group(2))-1, m.group(3)
+                        if i+bi2 < len(items):
+                            results.append({"idx": i+bi2, "qi": qi2, "grade": grade})
+        except Exception as e:
+            print(f"[DISTRACTOR] Batch error: {e}", flush=True)
+        if on_progress:
+            on_progress(min(i+BATCH, len(items)), len(items))
+        time.sleep(1)
+    return results
+
+
+# ══════════════════════════════════════
 # Persistence (auto-save to local JSON file)
 # ══════════════════════════════════════
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -3299,6 +3348,46 @@ with tab_gen:
                 st.session_state.mock_results = []
                 clear_all_mock_batches()
                 st.rerun()
+
+    # ── 不正解選択肢の品質チェック ──
+    st.subheader("🔍 不正解選択肢の品質チェック")
+    st.caption("各問題の不正解選択肢が「もっともらしく間違っている」かをGeminiで検証します")
+    if st.session_state.results and gemini_key:
+        dc_part = st.selectbox("パートフィルタ", ["全パート"]+[f"Part {i}" for i in range(1,8)], key="dc_part_sel")
+        dc_items = st.session_state.results
+        if dc_part != "全パート":
+            dc_p = f"part{dc_part.split()[-1]}"
+            dc_items = [r for r in dc_items if r.get("part") == dc_p]
+        st.caption(f"対象: {len(dc_items)}問")
+        if st.button("🔍 品質チェック実行", key="dc_run_btn") and dc_items:
+            prog = st.progress(0)
+            stat = st.empty()
+            def dc_prog(done, total):
+                prog.progress(done/max(total,1))
+                stat.text(f"チェック中... {done}/{total}")
+            results = check_distractor_quality(dc_items, gemini_key, dc_prog)
+            prog.progress(1.0)
+            # Summarize
+            grades = {"A":0, "B":0, "C":0}
+            for r in results:
+                grades[r["grade"]] = grades.get(r["grade"],0)+1
+            total_checked = sum(grades.values())
+            if total_checked > 0:
+                a_pct = round(grades["A"]/total_checked*100)
+                st.success(f"✅ チェック完了: {total_checked}問 | A(良質):{grades['A']} ({a_pct}%) | B(普通):{grades['B']} | C(要改善):{grades['C']}")
+                c_items = [r for r in results if r["grade"] == "C"]
+                if c_items:
+                    st.warning(f"⚠️ 品質C（不正解が明らかにおかしい）: {len(c_items)}問")
+                    for ci in c_items[:10]:
+                        item = dc_items[ci["idx"]]
+                        q = item.get("qSet",{}).get("questions",[])[ci["qi"]] if ci["qi"] < len(item.get("qSet",{}).get("questions",[])) else {}
+                        st.text(f"  {item.get('part','?')} Q{ci['qi']+1}: {(q.get('question',''))[:80]}")
+            else:
+                stat.text("チェック結果なし")
+    elif not gemini_key:
+        st.info("Gemini APIキーが必要です")
+    else:
+        st.info("問題を生成してからチェックしてください")
 
 
 # ══════════════════════════════════════

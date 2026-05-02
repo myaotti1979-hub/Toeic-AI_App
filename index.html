@@ -137,6 +137,14 @@ const MASTERY_STREAK = 3;          // correctStreak >= this → mastered
 const PART_RECENT_N = 50;          // Per-part recent questions for IRT estimation
 const BATCH_ERROR_LIMIT = 15;      // Max errors before aborting batch operations
 const DEFAULT_DAILY_GOAL = 30;     // Default daily goal (questions per day)
+const SPEED_DRILL_TIME = 10;       // Part 5 speed drill mode: 10 seconds
+const WPM_TARGET = 150;            // Target reading speed (words/min) for 900+
+const MISTAKE_REASONS = [
+  {id:"knowledge", label:"知識不足", icon:"📚", desc:"文法・単語を知らなかった"},
+  {id:"oversight", label:"読み飛ばし", icon:"👁️", desc:"知っていたが見落とした"},
+  {id:"timeout",   label:"時間切れ", icon:"⏱️", desc:"解けたはずだが遅かった"},
+  {id:"trap",      label:"引っかけ", icon:"🪤", desc:"選択肢のトラップに嵌った"},
+];
 
 // 3-Flash = 高性能+低コスト (2.5 Pro超え、料金1/3)
 const PART_MODEL = {
@@ -204,6 +212,9 @@ let S = {
   judgeMode: JSON.parse(localStorage.getItem("judgeMode")||"false"), // 判定モード
   timeAttackMode: JSON.parse(localStorage.getItem("timeAttackMode")||"false"), // 時間制限モード
   timerStart: 0, timerFrozen: 0, // 問題表示開始時刻 / 回答時の凍結時間
+  speedDrillMode: JSON.parse(localStorage.getItem("speedDrillMode")||"false"),
+  _readingStartTime: 0,  // WPM tracking for Part 7
+  _mistakeReasonPending: null, // {part, level, type, qi, qText, elapsed, diff} waiting for reason
 };
 
 if (S.apiKey) S.screen = "home";
@@ -1307,7 +1318,7 @@ function openJudgeDB() {
   });
 }
 
-async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed, difficulty) {
+async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed, difficulty, mistakeReason) {
   // Increment daily goal counter
   try {
     const today = localDateStr();
@@ -1332,6 +1343,7 @@ async function judgeSave(part, level, type, questionIdx, correct, questionText, 
       questionText: questionText?.slice(0,100)||"",
       elapsed: elapsed||0,
       difficulty: difficulty||0,
+      mistakeReason: mistakeReason||null,
       timestamp: Date.now(),
     });
     tx.oncomplete = () => resolve();
@@ -3291,6 +3303,9 @@ function render() {
   else if (S.screen==="mockSetup") renderMockSetup();
   else if (S.screen==="mockTest") renderMockTest();
   else if (S.screen==="mockResult") renderMockResult();
+  else if (S.screen==="shadowing") renderShadowing();
+  else if (S.screen==="writing") renderWriting();
+  else if (S.screen==="colloQuiz") renderColloQuiz();
   else                          renderStudy();
 }
 
@@ -4623,6 +4638,38 @@ async function renderDiagnosis() {
     weeklyComparison = `<div style="font-size:12px;color:#7a8ea5">今週のデータが不足（3問以上必要）</div>`;
   }
 
+  // 間違い理由分析
+  const reasonHistory = history.filter(h => h.mistakeReason);
+  let mistakeAnalysisHtml = "";
+  if (reasonHistory.length >= 3) {
+    const byReason = {};
+    reasonHistory.forEach(h => {
+      const r = h.mistakeReason;
+      if (!byReason[r]) byReason[r] = 0;
+      byReason[r]++;
+    });
+    const sorted = Object.entries(byReason).sort((a,b) => b[1]-a[1]);
+    const totalReasons = sorted.reduce((s,e) => s+e[1], 0);
+    const bars = sorted.map(([r, count]) => {
+      const info = MISTAKE_REASONS.find(m=>m.id===r) || {icon:"?",label:r};
+      const pctR = Math.round(count/totalReasons*100);
+      return `<div style="margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
+          <span style="color:#dce6f0">${info.icon} ${info.label}</span>
+          <span style="color:#a0b4c8">${count}回 (${pctR}%)</span>
+        </div>
+        <div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pctR}%;background:${r==="knowledge"?"#818cf8":r==="oversight"?"#fbbf24":r==="timeout"?"#f87171":"#f472b6"}"></div>
+        </div>
+      </div>`;
+    }).join("");
+    mistakeAnalysisHtml = `<div style="margin-top:14px;padding:14px;background:rgba(244,114,182,0.06);border:1px solid rgba(244,114,182,0.12);border-radius:12px">
+      <div style="font-size:15px;font-weight:700;color:#f472b6;margin-bottom:10px">🔍 間違いパターン分析 (${totalReasons}回)</div>
+      ${bars}
+      <div style="font-size:11px;color:#7a8ea5;margin-top:8px">${sorted[0]?`最多: ${(MISTAKE_REASONS.find(m=>m.id===sorted[0][0])||{}).desc||""}`:""}</div>
+    </div>`;
+  }
+
   // 改善アドバイス生成
   let adviceItems = [];
   if (weakTypes.length > 0) {
@@ -4808,6 +4855,8 @@ async function renderDiagnosis() {
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">📈 今週 vs 先週</div>
       ${weeklyComparison}
     </div>
+
+    ${mistakeAnalysisHtml}
 
     <div style="margin-top:16px">
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">💡 改善アドバイス</div>
@@ -5021,7 +5070,10 @@ async function renderVocab() {
     ${words.length>=4?`<div style="display:flex;gap:6px;padding:6px 0;flex-wrap:wrap"><button class="btn-s" id="vocabQuizEnJa" style="flex:1;background:rgba(129,140,248,0.15);color:#7b9cf7">🧠 英→日</button><button class="btn-s" id="vocabQuizJaEn" style="flex:1;background:rgba(244,114,182,0.15);color:#f472b6">🧠 日→英</button><button class="btn-s" id="vocabQuizPos" style="flex:1;background:rgba(251,191,36,0.15);color:#fbbf24">📝 品詞あて</button></div>
     <div style="display:flex;gap:6px;padding:0 0 4px">
       <button class="btn-s" id="vocabFlashcard" style="flex:1;background:rgba(52,211,153,0.12);color:#34d399;font-size:12px">🃏 フラッシュカード</button>
-      ${weakWords.length>=4?`<button class="btn-s" id="vocabQuizWeak" style="flex:1;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button>`:""}</div>`:""}    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button></div><div style="display:flex;gap:4px;justify-content:center;padding:0 0 4px"><button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24">🏷️ 未判定を判定 (${words.filter(w=>!["A1","A2","B1","B2","C"].includes(w.level)).length}語)</button><button class="btn-s" id="vocabLevelAllBtn" style="font-size:11px;color:#7a8ea5">🔄 全再判定</button></div><div style="text-align:center;padding:0 0 4px"><button class="btn-s" id="phraseCleanBtn" style="font-size:11px;color:#f472b6">🧹 非フレーズを削除 (${words.filter(w=>w.pos==="phrase").length}語を判定)</button><div id="phraseCleanProgress" style="font-size:10px;color:#7a8ea5;margin-top:2px"></div></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
+      ${weakWords.length>=4?`<button class="btn-s" id="vocabQuizWeak" style="flex:1;background:rgba(248,113,113,0.12);color:#f87171;font-size:12px">❌ 苦手語のみ (${weakWords.length}語)</button>`:""}</div>
+    <div style="display:flex;gap:6px;padding:0 0 4px">
+      <button class="btn-s" id="vocabColloQuiz" style="flex:1;background:rgba(52,211,153,0.12);color:#34d399;font-size:12px">📎 コロケーション</button>
+    </div>`:""}    ${words.length>0?`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabDedupeBtn" style="font-size:11px;color:#7a8ea5">🧹 重複を整理</button> <button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7a8ea5;margin-left:4px">🔄 ストックから再構築</button></div><div style="display:flex;gap:4px;justify-content:center;padding:0 0 4px"><button class="btn-s" id="vocabLevelBtn" style="font-size:11px;color:#fbbf24">🏷️ 未判定を判定 (${words.filter(w=>!["A1","A2","B1","B2","C"].includes(w.level)).length}語)</button><button class="btn-s" id="vocabLevelAllBtn" style="font-size:11px;color:#7a8ea5">🔄 全再判定</button></div><div style="text-align:center;padding:0 0 4px"><button class="btn-s" id="phraseCleanBtn" style="font-size:11px;color:#f472b6">🧹 非フレーズを削除 (${words.filter(w=>w.pos==="phrase").length}語を判定)</button><div id="phraseCleanProgress" style="font-size:10px;color:#7a8ea5;margin-top:2px"></div></div>`:`<div style="text-align:center;padding:4px 0"><button class="btn-s" id="vocabRebuildBtn" style="font-size:11px;color:#7b9cf7">🔄 ストックから単語帳を構築</button></div>`}
     <div style="display:flex;gap:4px;overflow-x:auto;padding:6px 0;flex-wrap:wrap">${filterBtns}</div>
     <div style="display:flex;gap:4px;overflow-x:auto;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.1)">${tabBtns}</div>
     <style>.pos-tab,.filter-tab{padding:4px 10px;border-radius:12px;font-size:11px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#a0b4c8;cursor:pointer;white-space:nowrap}
@@ -5394,6 +5446,7 @@ Return JSON: {"results":[{"word":"...","action":"KEEP"},{"word":"...","action":"
     releaseWakeLock();
     pcb.disabled=false;
   };
+  const cqb=$("vocabColloQuiz"); if(cqb) cqb.onclick=()=>startCollocationQuiz();
   const qej=$("vocabQuizEnJa"); if(qej)qej.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="en_ja";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
   const qje=$("vocabQuizJaEn"); if(qje)qje.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="ja_en";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
   const qpos=$("vocabQuizPos"); if(qpos)qpos.onclick=()=>{S.screen="vocabQuiz";S.vocabQuizMode="pos_quiz";S.vocabQuizScore={correct:0,total:0};S.vocabQuizQ=null;S._vocabQuizQueue=null;S.vocabQuizWeakOnly=false;render();};
@@ -6735,7 +6788,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02c · code review fixes (XSS/timer/perf/constants) · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02d · shadow/speed-drill/WPM/mistake-reason/collocation/writing · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6765,6 +6818,11 @@ function renderHome() {
         ${S.timeAttackMode?"⏱ タイムアタック ON":"⏱ タイムアタック OFF"}
       </span>
     </div>
+    ${S.timeAttackMode?`<div id="speedDrillToggle" style="text-align:center;margin-top:4px;cursor:pointer">
+      <span style="display:inline-block;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:600;background:${S.speedDrillMode?"rgba(244,114,182,0.12)":"rgba(100,116,139,0.06)"};color:${S.speedDrillMode?"#f472b6":"#64748b"};border:1px solid ${S.speedDrillMode?"rgba(244,114,182,0.3)":"rgba(100,116,139,0.1)"}">
+        ${S.speedDrillMode?"⚡ P5速度ドリル ON (${SPEED_DRILL_TIME}秒)":"⚡ P5速度ドリル OFF"}
+      </span>
+    </div>`:""}
     <div style="display:flex;gap:8px;justify-content:center;margin-top:12px">
       <button class="btn-s" id="stockManageBtn" style="color:#60a5fa">📦+ 問題生成・管理</button>
       <button class="btn-s" id="listenModeBtn" style="color:#7b9cf7">🎧 流し聞き</button>
@@ -7013,6 +7071,7 @@ function renderHome() {
     localStorage.setItem("timeAttackMode",JSON.stringify(S.timeAttackMode));
     render();
   };
+  const sdt=$("speedDrillToggle"); if(sdt)sdt.onclick=()=>{S.speedDrillMode=!S.speedDrillMode;localStorage.setItem("speedDrillMode",JSON.stringify(S.speedDrillMode));render();};
   const ck=$("changeKey"); if(ck)ck.onclick=()=>{ localStorage.removeItem("gemini_api_key"); S.apiKey=""; S.screen="apikey"; render(); };
   const nb=$("notifBtn"); if(nb)nb.onclick=async()=>{
     if (!("Notification" in window)) { alert("このブラウザは通知に対応していません"); return; }
@@ -7115,7 +7174,8 @@ function renderStudy() {
       inner+=`<div class="ctx-block"><div class="ctx-lbl">📄 ${esc(qs.doc_type||"文書")}</div>${hdr}${txt}</div>`;
     }
 
-    // ── Part 7: Single or Double passage ──
+    // ── Part 7: Single or Double passage ── (WPM tracking: mark reading start)
+    if (S.part==="part7" && !S._readingStartTime && !answered) { S._readingStartTime = Date.now(); }
     if (S.part==="part7") {
       if (qs.isTriple) {
         // Triple passage
@@ -7144,7 +7204,7 @@ function renderStudy() {
     }
 
     // ── Per-question timer (time attack mode) ──
-    const PART_TIME_LIMITS = {part1:8,part2:8,part3:15,part4:15,part5:25,part6:45,part7:60};
+    const PART_TIME_LIMITS = {part1:8,part2:8,part3:15,part4:15,part5:(S.speedDrillMode?SPEED_DRILL_TIME:25),part6:45,part7:60};
     const timeAttack = S.timeAttackMode;
     let timerHtml = "";
     if (timeAttack && !answered) {
@@ -7213,6 +7273,23 @@ function renderStudy() {
         <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":ans.timeUp?"⏱ 時間切れ！":"😥 不正解..."}</div>
         ${q.explanation_en?`<details style="margin-bottom:8px"><summary style="font-size:13px;color:#60a5fa;cursor:pointer;user-select:none">💡 English Explanation</summary><div style="font-size:14px;line-height:1.9;color:#a0b4c8;margin-top:4px;padding:8px;background:rgba(96,165,250,0.06);border-radius:6px">${esc(q.explanation_en)}</div></details>`:""}
         <div class="det">${esc(q.explanation_ja||"")}</div>
+        ${(!isOk && isLastQ && S.judgeMode && !S._mistakeReasonPending)?`<div style="margin-top:10px;padding:10px;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.15);border-radius:8px">
+          <div style="font-size:11px;color:#f87171;margin-bottom:6px">なぜ間違えた？（分析用）</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">${MISTAKE_REASONS.map(r=>`<button class="btn-s mistake-reason-btn" data-reason="${r.id}" style="flex:1;font-size:11px;padding:6px;color:#dce6f0" title="${esc(r.desc)}">${r.icon} ${r.label}</button>`).join("")}</div>
+        </div>`:""}
+        ${(S.part==="part7" && isLastQ && S._readingStartTime)?(() => {
+          const readSec = Math.round((S.timerFrozen ? (S.timerStart ? S.timerFrozen : 0) : (S.timerStart ? Math.round((Date.now()-S.timerStart)/1000) : 0)));
+          const wc = ((qs.text||"")+" "+(qs.text_1||"")+" "+(qs.text_2||"")+" "+(qs.text_3||"")).trim().split(/\s+/).length;
+          const readTime = Math.round((Date.now()-S._readingStartTime)/1000);
+          const wpm = readTime > 0 ? Math.round(wc / readTime * 60) : 0;
+          const wpmColor = wpm >= WPM_TARGET ? "#4ade80" : wpm >= 120 ? "#fbbf24" : "#f87171";
+          return `<div style="margin-top:8px;padding:8px;background:rgba(129,140,248,0.06);border-radius:6px;display:flex;justify-content:space-between;font-size:12px">
+            <span style="color:#7a8ea5">📖 読速: ${wc}語 / ${readTime}秒</span>
+            <span style="color:${wpmColor};font-weight:700">${wpm} WPM ${wpm>=WPM_TARGET?"✅":""}${wpm<120?"(目標:${WPM_TARGET})":""}</span>
+          </div>`;
+        })():""}
+        ${(["part3","part4"].includes(S.part) && isLastQ)?`<button class="btn-s" id="shadowingBtn" style="margin-top:8px;width:100%;padding:10px;font-size:13px;color:#34d399;background:rgba(52,211,153,0.08);border-color:rgba(52,211,153,0.2)">🎙️ シャドーイング練習</button>`:""}
+        ${(S.part==="part5" && S.apiKey)?`<button class="btn-s" id="writingBtn" style="margin-top:8px;width:100%;padding:10px;font-size:13px;color:#818cf8;background:rgba(129,140,248,0.08);border-color:rgba(129,140,248,0.2)">✍️ 英作文練習</button>`:""}
       </div>`;
       // 和訳トグル（解説の直後に表示 — Part 3,4,5,6,7）
       if (["part3","part4","part5","part6","part7"].includes(S.part)) {
@@ -7425,6 +7502,38 @@ function renderStudy() {
     };
   }
 
+  // Mistake reason buttons
+  document.querySelectorAll(".mistake-reason-btn").forEach(btn=>{
+    btn.onclick=()=>{
+      const reason = btn.dataset.reason;
+      // Save the last wrong answer with reason
+      const qi2=S.qIdx, q2=S.qSet.questions[qi2], ans2=S.answers[qi2];
+      if (ans2 && !ans2.answered) return;
+      const elapsed2=S.timerFrozen||0;
+      let qType2 = S.qSet._questionType || S.qSet.talk_type || S.qSet.doc_type || "unknown";
+      const diff2 = S.stockMode && S.stockId ? (S._stockDifficulty||0) : 0;
+      judgeSave(S.part, S.level||"intermediate", qType2, qi2, false, (q2.question||"").slice(0,100), elapsed2, diff2, reason).catch(e=>console.warn("mistakeReason save:", e));
+      btn.parentElement.parentElement.innerHTML = `<div style="font-size:11px;color:#7a8ea5;text-align:center">✅ ${MISTAKE_REASONS.find(r=>r.id===reason)?.icon||""} ${MISTAKE_REASONS.find(r=>r.id===reason)?.label||reason} を記録</div>`;
+    };
+  });
+  // Shadowing button
+  const shBtn=$("shadowingBtn"); if(shBtn) shBtn.onclick=()=>{
+    S._shadowQSet = S.qSet;
+    S._shadowIdx = 0;
+    S._shadowPlaying = false;
+    S.screen = "shadowing";
+    render();
+  };
+  // Writing practice button
+  const wrBtn=$("writingBtn"); if(wrBtn) wrBtn.onclick=()=>{
+    S._writingQSet = S.qSet;
+    S._writingResult = null;
+    S._writingInput = "";
+    S.screen = "writing";
+    render();
+  };
+  // Reset WPM tracking on new set
+  if (S.part==="part7" && S.qIdx===0 && !S.answers[0]?.answered) S._readingStartTime = 0;
   const vsb=$("vocabSaveBtn"); if(vsb) vsb.onclick=()=>{
     const word=prompt("保存する単語または表現を入力:");
     if(!word)return;
@@ -7480,7 +7589,7 @@ function renderStudy() {
   // Time attack timer tick
   if (S._timerInterval) clearInterval(S._timerInterval);
   if (S.timeAttackMode && S.qSet && !S.answers?.[S.qIdx]?.answered) {
-    const PART_TIME = {part1:8,part2:8,part3:15,part4:15,part5:25,part6:45,part7:60};
+    const PART_TIME = {part1:8,part2:8,part3:15,part4:15,part5:(S.speedDrillMode?SPEED_DRILL_TIME:25),part6:45,part7:60};
     const limit = PART_TIME[S.part] || 30;
     S._timerInterval = setInterval(() => {
       if (!S._qTimerStart || S.answers?.[S.qIdx]?.answered) { clearInterval(S._timerInterval); return; }
@@ -7492,6 +7601,258 @@ function renderStudy() {
       }
     }, 500);
   }
+}
+
+/* ── シャドーイング画面 ── */
+function renderShadowing() {
+  const qs = S._shadowQSet;
+  if (!qs) { S.screen = "home"; render(); return; }
+  const script = (qs.conversation || qs.talk || "").replace(/\\n/g, "\n");
+  const sentences = script.split(/\n/).map(s=>s.trim()).filter(Boolean);
+  const idx = S._shadowIdx || 0;
+  const total = sentences.length;
+  const current = sentences[idx] || "";
+  const pct = total > 0 ? Math.round((idx) / total * 100) : 0;
+
+  app.innerHTML = `
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:20px;margin:0">🎙️ シャドーイング</h1>
+      <div class="sub">${idx+1} / ${total}文</div></div>
+      <button class="btn-s" id="shBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
+    <div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:16px">
+      <div style="height:100%;width:${pct}%;background:#34d399;transition:width 0.3s"></div>
+    </div>
+    ${idx >= total ? `
+      <div style="text-align:center;padding:40px 20px">
+        <div style="font-size:48px;margin-bottom:12px">🎉</div>
+        <div style="font-size:18px;font-weight:700;color:#dce6f0;margin-bottom:8px">シャドーイング完了！</div>
+        <div style="font-size:13px;color:#7a8ea5">${total}文を練習しました</div>
+        <button class="btn-p" id="shDoneBtn" style="margin-top:20px">← 問題に戻る</button>
+      </div>
+    ` : `
+      <div style="padding:20px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:12px;margin-bottom:16px">
+        <div style="font-size:11px;color:#34d399;margin-bottom:8px;letter-spacing:1px">STEP 1: 聴く → STEP 2: 真似る → STEP 3: 確認</div>
+        <div id="shSentence" style="font-size:16px;line-height:1.8;color:#dce6f0;min-height:48px;${S._shadowRevealed?"":"filter:blur(6px);user-select:none"}">${esc(current)}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn-s" id="shPlayBtn" style="flex:1;padding:12px;font-size:14px;color:#34d399;background:rgba(52,211,153,0.1)">🔊 再生</button>
+        <button class="btn-s" id="shRevealBtn" style="flex:1;padding:12px;font-size:14px;color:#60a5fa;background:rgba(96,165,250,0.1)">${S._shadowRevealed?"🙈 隠す":"👁️ テキスト表示"}</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        ${idx > 0 ? '<button class="btn-s" id="shPrevBtn" style="flex:1;padding:12px;font-size:14px;color:#7a8ea5">← 前</button>' : '<div style="flex:1"></div>'}
+        <button class="btn-s" id="shNextBtn" style="flex:1;padding:12px;font-size:14px;color:#dce6f0;background:rgba(129,140,248,0.15)">次 →</button>
+      </div>
+      <div style="margin-top:16px;text-align:center">
+        <button class="btn-s" id="shPlayAllBtn" style="font-size:12px;color:#7a8ea5">🔁 全文を通して再生</button>
+      </div>
+    `}`;
+
+  const bb=$("shBackBtn"); if(bb) bb.onclick=()=>{speechSynthesis.cancel();S.screen="study";render();};
+  const done=$("shDoneBtn"); if(done) done.onclick=()=>{S.screen="study";render();};
+  const playBtn=$("shPlayBtn"); if(playBtn) playBtn.onclick=()=>{
+    speechSynthesis.cancel();
+    const clean = current.replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i, "");
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = "en-US"; u.rate = 0.9;
+    speechSynthesis.speak(u);
+  };
+  const revBtn=$("shRevealBtn"); if(revBtn) revBtn.onclick=()=>{S._shadowRevealed=!S._shadowRevealed;render();};
+  const nextBtn=$("shNextBtn"); if(nextBtn) nextBtn.onclick=()=>{speechSynthesis.cancel();S._shadowIdx++;S._shadowRevealed=false;render();};
+  const prevBtn=$("shPrevBtn"); if(prevBtn) prevBtn.onclick=()=>{speechSynthesis.cancel();S._shadowIdx=Math.max(0,S._shadowIdx-1);S._shadowRevealed=false;render();};
+  const allBtn=$("shPlayAllBtn"); if(allBtn) allBtn.onclick=()=>{
+    speechSynthesis.cancel();
+    let si=0;
+    function speakNext(){
+      if(si>=sentences.length)return;
+      const clean=sentences[si].replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i,"");
+      const u=new SpeechSynthesisUtterance(clean);
+      u.lang="en-US";u.rate=0.9;
+      u.onend=()=>{si++;setTimeout(speakNext,500);};
+      speechSynthesis.speak(u);
+    }
+    speakNext();
+  };
+}
+
+/* ── 英作文練習画面 ── */
+function renderWriting() {
+  const qs = S._writingQSet;
+  if (!qs) { S.screen = "home"; render(); return; }
+  const q = qs.questions?.[0] || {};
+  const sentence = q.question || "";
+  const expl = q.explanation_ja || "";
+  // Extract grammar point from explanation
+  const grammarHint = expl.match(/正解は.*?。(.{0,50})/)?.[1] || "";
+
+  app.innerHTML = `
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:20px;margin:0">✍️ 英作文練習</h1>
+      <div class="sub">同じ文法ポイントで自分の文を作ろう</div></div>
+      <button class="btn-s" id="wrBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
+    <div style="padding:12px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.15);border-radius:10px;margin-bottom:12px">
+      <div style="font-size:11px;color:#7a8ea5;margin-bottom:4px">📝 元の問題</div>
+      <div style="font-size:14px;color:#dce6f0;line-height:1.6">${esc(sentence.replace("-------","____"))}</div>
+      ${grammarHint?`<div style="font-size:11px;color:#818cf8;margin-top:6px">💡 ${esc(grammarHint)}</div>`:""}
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;color:#a0b4c8;margin-bottom:4px">同じ文法を使って英文を書いてください：</div>
+      <textarea id="wrInput" rows="3" style="width:100%;padding:12px;background:#243040;border:1px solid #3a4d63;border-radius:10px;color:#dce6f0;font-size:14px;line-height:1.6;resize:vertical;outline:none;font-family:'Noto Sans JP',sans-serif" placeholder="Type your sentence here...">${esc(S._writingInput||"")}</textarea>
+    </div>
+    <button class="btn-p" id="wrSubmitBtn" ${S._writingInput?"":"disabled"}>📤 添削を受ける</button>
+    ${S._writingResult ? `
+      <div style="margin-top:14px;padding:14px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:10px">
+        <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">📝 添削結果</div>
+        <div style="font-size:14px;line-height:1.8;color:#dce6f0;white-space:pre-wrap">${esc(S._writingResult)}</div>
+      </div>
+    ` : ""}
+    ${S._writingLoading ? `<div class="loading" style="padding:20px"><div class="spin"></div>添削中...</div>` : ""}`;
+
+  $("wrBackBtn").onclick = () => { S.screen = "study"; render(); };
+  const inp = $("wrInput");
+  const sub = $("wrSubmitBtn");
+  if (inp) {
+    inp.oninput = () => { S._writingInput = inp.value; sub.disabled = !inp.value.trim(); };
+    inp.focus();
+  }
+  if (sub) sub.onclick = async () => {
+    if (!S._writingInput?.trim() || !S.apiKey) return;
+    S._writingLoading = true; render();
+    try {
+      const prompt = `You are an English teacher. The student studied this TOEIC sentence:
+"${sentence.replace("-------","____")}"
+Grammar point: ${grammarHint}
+
+The student wrote: "${S._writingInput}"
+
+Please:
+1. Check if the grammar point is used correctly
+2. Fix any errors (show corrected version)
+3. Rate: ◎ Perfect / ○ Minor issues / △ Needs work
+4. Give a brief tip in Japanese (2-3 sentences max)
+
+Format: Rating + corrected sentence + tip. Keep it concise.`;
+      const result = await geminiText(prompt, GEMINI_FLASH);
+      S._writingResult = result;
+    } catch(e) {
+      S._writingResult = "⚠️ エラー: " + e.message;
+    }
+    S._writingLoading = false;
+    render();
+  };
+}
+
+/* ── コロケーションクイズ ── */
+async function startCollocationQuiz() {
+  const words = await vocabGetAll();
+  // Find words with example sentences
+  const withEx = words.filter(w => w.context && w.word && w.word.length > 2 && w.pos !== "phrase");
+  if (withEx.length < 4) { alert("コロケーションクイズには例文付き単語が4語以上必要です"); return; }
+  // Shuffle and pick
+  for (let i=withEx.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[withEx[i],withEx[j]]=[withEx[j],withEx[i]];}
+  S._colloQ = null;
+  S._colloWords = withEx;
+  S._colloIdx = 0;
+  S._colloScore = {correct:0, total:0};
+  S.screen = "colloQuiz";
+  render();
+}
+
+function renderColloQuiz() {
+  const words = S._colloWords || [];
+  const score = S._colloScore || {correct:0, total:0};
+  if (!words.length) { S.screen = "vocab"; render(); return; }
+  const idx = S._colloIdx || 0;
+
+  if (idx >= words.length || idx >= 20) {
+    // Quiz complete
+    const pct = score.total > 0 ? Math.round(score.correct/score.total*100) : 0;
+    app.innerHTML = `
+      <div class="header"><h1 style="font-size:20px">📎 コロケーションクイズ 結果</h1></div>
+      <div style="text-align:center;padding:24px">
+        <div style="font-size:42px;font-weight:800;color:${pct>=80?"#4ade80":pct>=60?"#fbbf24":"#f87171"}">${pct}%</div>
+        <div style="font-size:13px;color:#7a8ea5">${score.correct} / ${score.total}問正解</div>
+      </div>
+      <button class="btn-p" id="colloBackBtn">← 単語帳に戻る</button>`;
+    $("colloBackBtn").onclick = () => { S.screen = "vocab"; render(); };
+    return;
+  }
+
+  // Build question if not cached
+  if (!S._colloQ || S._colloQ._idx !== idx) {
+    const target = words[idx];
+    const examples = (target.context||"").split("\n").filter(Boolean);
+    const ex = examples[0] || "";
+    if (!ex) { S._colloIdx++; render(); return; }
+    // Create blank: replace the target word in the example
+    const wordRe = new RegExp("\\b" + target.word.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "\\b", "i");
+    let blanked = ex.replace(wordRe, "________");
+    if (blanked === ex) {
+      // Word not found in example (different form), try lemmatized
+      blanked = ex.replace(/\b\w+\b/g, (w) => {
+        if (lemmatize(w) === lemmatize(target.word)) return "________";
+        return w;
+      });
+    }
+    if (!blanked.includes("________")) { S._colloIdx++; render(); return; }
+    // Build choices: correct + 3 random words of same POS
+    const samePOS = words.filter(w => w.pos === target.pos && w.word !== target.word);
+    for(let i=samePOS.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[samePOS[i],samePOS[j]]=[samePOS[j],samePOS[i]];}
+    const distractors = samePOS.slice(0, 3).map(w => w.word);
+    while (distractors.length < 3) distractors.push("---");
+    const choices = [target.word, ...distractors];
+    for(let i=choices.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[choices[i],choices[j]]=[choices[j],choices[i]];}
+    const correct = choices.indexOf(target.word);
+    S._colloQ = {target, blanked, choices, correct, answered: null, _idx: idx};
+  }
+
+  const q = S._colloQ;
+  const pct = score.total > 0 ? Math.round(score.correct/score.total*100) : 0;
+
+  let html = `
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:18px">📎 コロケーション</h1><div class="sub">${score.correct}/${score.total} (${pct}%)</div></div>
+      <button class="btn-s" id="colloBackBtn2" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
+    <div style="padding:16px;background:rgba(15,23,42,0.8);border-radius:12px;margin:12px 0;border:1px solid rgba(255,255,255,0.06)">
+      <div style="font-size:15px;color:#dce6f0;line-height:1.8">${esc(q.blanked)}</div>
+    </div>
+    <div style="font-size:12px;color:#7a8ea5;text-align:center;margin-bottom:8px">空欄に入る単語は？</div>`;
+
+  q.choices.forEach((c, i) => {
+    let style = "padding:10px;border-radius:8px;margin:4px 0;text-align:center;font-size:14px;cursor:pointer;border:1px solid rgba(255,255,255,0.1);";
+    let disabled = "";
+    if (q.answered !== null) {
+      disabled = "pointer-events:none;opacity:0.7;";
+      if (i === q.correct) style += "background:rgba(74,222,128,0.2);border-color:#4ade80;color:#4ade80;";
+      else if (i === q.answered) style += "background:rgba(248,113,113,0.2);border-color:#f87171;color:#f87171;";
+      else style += "color:#7a8ea5;";
+    } else style += "background:rgba(255,255,255,0.03);color:#dce6f0;";
+    html += `<div class="collo-choice" data-ci="${i}" style="${style}${disabled}">${esc(c)}</div>`;
+  });
+
+  if (q.answered !== null) {
+    html += `<div style="margin-top:10px;padding:10px;background:rgba(129,140,248,0.06);border-radius:8px">
+      <div style="font-size:13px;color:#dce6f0">${esc(q.target.word)} — <span style="color:#7b9cf7">${esc(q.target.meaning?.split("\n")[0]||"")}</span></div>
+      <div style="font-size:12px;color:#a0b4c8;margin-top:4px">💬 ${esc((q.target.context||"").split("\n")[0])}</div>
+    </div>
+    <button class="btn-s" id="colloNext" style="margin:12px auto;display:block;padding:8px 24px;color:#7b9cf7;font-size:13px">➡️ Next</button>`;
+  }
+
+  app.innerHTML = html;
+  $("colloBackBtn2").onclick = () => { S.screen = "vocab"; render(); };
+  document.querySelectorAll(".collo-choice").forEach(el => {
+    el.onclick = () => {
+      if (q.answered !== null) return;
+      const sel = parseInt(el.dataset.ci);
+      q.answered = sel;
+      S._colloScore.total++;
+      if (sel === q.correct) S._colloScore.correct++;
+      render();
+    };
+  });
+  const nxt = $("colloNext"); if(nxt) nxt.onclick = () => { S._colloIdx++; S._colloQ = null; render(); };
 }
 
 function ctxBlock(icon, label, text) {
