@@ -4071,6 +4071,13 @@ ${texts.join("\n")}`, GEMINI_FLASH);
         const total=grades.A+grades.B+grades.C;
         const aPct=total?Math.round(grades.A/total*100):0;
         const cItems=results.filter(r=>r.grade==="C");
+        // Per-part breakdown
+        const byPart={};
+        results.forEach(r=>{
+          const p=r.part||"?";
+          if(!byPart[p])byPart[p]={A:0,B:0,C:0,total:0};
+          byPart[p][r.grade]++;byPart[p].total++;
+        });
         // Save grades to DB
         const gradeByIdx={};
         results.forEach(r=>{ if(!gradeByIdx[r.idx] || r.grade==="C") gradeByIdx[r.idx]=r.grade; });
@@ -4079,7 +4086,17 @@ ${texts.join("\n")}`, GEMINI_FLASH);
           const it=items[parseInt(idxStr)];
           if(it?.id) { await stockUpdateField(it.id,{distractorGrade:grade}).catch(()=>{}); savedCount++; }
         }
-        let msg=`✅ チェック完了: ${total}問 (${savedCount}問に評価を保存)\n\n🟢 A (高品質): ${grades.A}問 (${aPct}%)\n🟡 B (普通): ${grades.B}問\n🔴 C (要改善): ${grades.C}問`;
+        // Build per-part summary
+        let partBreakdown = "\n\n📊 パート別内訳:";
+        const partOrder=["part1","part2","part3","part4","part5","part6","part7"];
+        for(const p of partOrder){
+          if(!byPart[p])continue;
+          const d=byPart[p];
+          const cPct=d.total?Math.round(d.C/d.total*100):0;
+          const flag=cPct>=15?"🔴":cPct>=5?"🟡":"🟢";
+          partBreakdown+=`\n  ${flag} ${p.replace("part","P")}: A:${d.A} B:${d.B} C:${d.C} (${d.total}問, C率${cPct}%)`;
+        }
+        let msg=`✅ チェック完了: ${total}問 (${savedCount}問に評価を保存)\n\n🟢 A (高品質): ${grades.A}問 (${aPct}%)\n🟡 B (普通): ${grades.B}問\n🔴 C (要改善): ${grades.C}問${partBreakdown}`;
         if(cItems.length>0){
           msg+=`\n\n⚠️ 品質Cの問題:`;
           for(const ci of cItems.slice(0,10)){
@@ -4111,7 +4128,10 @@ ${texts.join("\n")}`, GEMINI_FLASH);
           alert(msg);
         }
         dcb.textContent=`✅ A:${grades.A} B:${grades.B} C:${grades.C}`;
-        if(dp)dp.textContent=`高品質率: ${aPct}% (${total}問中)`;
+        if(dp){
+          const worstParts=partOrder.filter(p=>byPart[p]&&byPart[p].C>0).sort((a,b)=>byPart[b].C-byPart[a].C);
+          dp.textContent=`高品質率: ${aPct}%` + (worstParts.length?` | C多: ${worstParts.map(p=>`${p.replace("part","P")}:${byPart[p].C}`).join(" ")}`:"");
+        }
       }catch(e){
         dcb.textContent="❌ エラー";
         if(dp)dp.textContent=e.message;
@@ -6959,7 +6979,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02f · part-aware distractor check + quality priority + delete C · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02g · distractor check per-part breakdown · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
