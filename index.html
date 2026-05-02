@@ -5470,7 +5470,7 @@ async function renderFlashcard() {
     </div>
     <div id="fcCard" style="min-height:240px;padding:36px 24px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:16px;text-align:center;cursor:pointer;transition:all 0.2s;user-select:none">
       <div style="font-size:32px;font-weight:700;color:#dce6f0;margin-bottom:10px">${esc(w.word)}</div>
-      <div style="margin-bottom:10px"><span style="font-size:15px;color:${POS_COLORS[w.pos]||'#94a3b8'}">${POS_LABELS[w.pos]||""}</span> <span style="font-size:13px;background:${VL[w.level]?.bg||'rgba(100,116,139,0.1)'};color:${vlColor(w.level)};padding:3px 8px;border-radius:4px">${VL[w.level]?.label||w.level||""}</span></div>
+      <div style="margin-bottom:10px"><span style="font-size:15px;color:${POS_COLORS[w.pos]||'#94a3b8'}">${POS_LABELS[w.pos]||""}</span> <span style="font-size:13px;background:${VL[w.level]?.bg||'rgba(100,116,139,0.1)'};color:${vlColor(w.level)};padding:3px 8px;border-radius:4px">${VL[w.level]?.label||esc(w.level)||""}</span></div>
       ${flipped ? `
         <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:18px;margin-top:10px">
           ${meanings.map((m,i)=>`<div style="font-size:20px;color:#7b9cf7;margin-bottom:6px">${meanings.length>1?("❶❷❸❹❺"[i]||"•")+" ":""}${esc(m)}</div>`).join("")}
@@ -5645,7 +5645,7 @@ async function renderVocabQuiz() {
   // After answer: show example + level badge + POS info + next
   if (q.answered !== null) {
     const ex = (q.target.context||"").split("\n")[0] || "";
-    const posInfo = mode==="pos_quiz" ? ` <span style="font-size:11px;background:rgba(96,165,250,0.15);color:#60a5fa;padding:1px 6px;border-radius:4px">${({"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ"}[(q.target.pos||"").toLowerCase()]||q.target.pos||"")}</span>` : "";
+    const posInfo = mode==="pos_quiz" ? ` <span style="font-size:11px;background:rgba(96,165,250,0.15);color:#60a5fa;padding:1px 6px;border-radius:4px">${({"noun":"名詞","verb":"動詞","adjective":"形容詞","adverb":"副詞","phrase":"フレーズ"}[(q.target.pos||"").toLowerCase()]||esc(q.target.pos)||"")}</span>` : "";
     html += `<div style="margin-top:12px;padding:12px;background:rgba(129,140,248,0.08);border-radius:10px">`;
     html += `<div style="font-size:14px;font-weight:600;color:#dce6f0;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><button class="btn-s" id="quizPlayWord2" style="font-size:11px;padding:2px 8px">🔊</button>${esc(q.target.word)}${posInfo} — <span style="color:#7b9cf7">${esc(q.tMeaning)}</span>${lvBadge}</div>`;
     if (ex) html += `<div style="font-size:12px;color:#a0b4c8;margin-top:4px">💬 ${esc(ex)}</div>`;
@@ -7495,7 +7495,7 @@ function renderStudy() {
 }
 
 function ctxBlock(icon, label, text) {
-  return `<div class="ctx-block"><div class="ctx-lbl">${icon} ${label}</div><div class="ctx-txt">${esc(normText(text))}</div></div>`;
+  return `<div class="ctx-block"><div class="ctx-lbl">${icon} ${esc(label)}</div><div class="ctx-txt">${esc(normText(text))}</div></div>`;
 }
 
 function renderGraphic(g) {
