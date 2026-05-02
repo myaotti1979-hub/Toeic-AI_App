@@ -145,6 +145,11 @@ const MISTAKE_REASONS = [
   {id:"timeout",   label:"時間切れ", icon:"⏱️", desc:"解けたはずだが遅かった"},
   {id:"trap",      label:"引っかけ", icon:"🪤", desc:"選択肢のトラップに嵌った"},
 ];
+const CONFIDENCE_LEVELS = [
+  {id:"A", label:"自信あり", icon:"💪", color:"#4ade80", bg:"rgba(74,222,128,0.12)"},
+  {id:"B", label:"たぶん",  icon:"🤔", color:"#fbbf24", bg:"rgba(251,191,36,0.12)"},
+  {id:"C", label:"カン",    icon:"🎲", color:"#f87171", bg:"rgba(248,113,113,0.12)"},
+];
 
 // 3-Flash = 高性能+低コスト (2.5 Pro超え、料金1/3)
 const PART_MODEL = {
@@ -217,6 +222,7 @@ let S = {
   azureSpeechRegion: localStorage.getItem("azure_speech_region")||"eastus",
   _readingStartTime: 0,  // WPM tracking for Part 7
   _mistakeReasonPending: null, // {part, level, type, qi, qText, elapsed, diff} waiting for reason
+  _confidences: {}, // qi → "A"/"B"/"C" confidence before answering
 };
 
 if (S.apiKey) S.screen = "home";
@@ -1320,7 +1326,7 @@ function openJudgeDB() {
   });
 }
 
-async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed, difficulty, mistakeReason) {
+async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed, difficulty, mistakeReason, confidence) {
   // Increment daily goal counter
   try {
     const today = localDateStr();
@@ -1346,6 +1352,7 @@ async function judgeSave(part, level, type, questionIdx, correct, questionText, 
       elapsed: elapsed||0,
       difficulty: difficulty||0,
       mistakeReason: mistakeReason||null,
+      confidence: confidence||null,
       timestamp: Date.now(),
     });
     tx.oncomplete = () => resolve();
@@ -3013,7 +3020,7 @@ function prefetchNext() {
 
 async function loadNewSet() {
   stopSpeak();
-  S.answers=[]; S.qIdx=0; S.error=null; S.sceneImgUrl=null; S.imageError=null; S._mistakeReasons={};
+  S.answers=[]; S.qIdx=0; S.error=null; S.sceneImgUrl=null; S.imageError=null; S._mistakeReasons={}; S._confidences={};
 
   // ストック作成モードはセッション制限なし
   if (S.stockCreateMode && S.sessionNum >= SESSION_SIZE) {
@@ -3159,7 +3166,7 @@ function handleAnswer(idx) {
   const qi=S.qIdx, q=S.qSet.questions[qi];
   const timeUp = (idx === -1);
   if (timeUp) idx = -1; // No selection — always wrong
-  S.answers[qi]={selected:idx, answered:true, timeUp};
+  S.answers[qi]={selected:idx, answered:true, timeUp, confidence: S._confidences[qi]||null};
   const isCorrect = idx===q.correct;
   if (isCorrect) { S.stats.correct++; S.streak++; }
   else           { S.stats.wrong++;   S.streak=0;  }
@@ -3219,7 +3226,7 @@ function handleAnswer(idx) {
       }
       if (qType === "unknown") qType = "office_general";
     }
-    judgeSave(S.part, S.level, qType, qi, isCorrect, q.question, elapsed, S.stockDifficulty||0).catch(e=>console.warn('judge save failed:', e));
+    judgeSave(S.part, S.level, qType, qi, isCorrect, q.question, elapsed, S.stockDifficulty||0, null, S._confidences[qi]||null).catch(e=>console.warn('judge save failed:', e));
     // 不正解 → 苦手問題として自動ストック（同一qSetで1回だけ）
     if (!isCorrect && S.qSet && !S.qSet._weakStocked) {
       S.qSet._weakStocked = true;
@@ -4201,6 +4208,7 @@ ${texts.join("\n")}`, GEMINI_FLASH);
       if (extra) {
         let h = "";
         if (mastered > 0) h += `<button class="btn-s" data-del-mastered="${p.id}" style="font-size:10px;color:#f87171;padding:3px 8px;opacity:0.7">🗑️ 卒業${mastered}</button>`;
+        h += `<button class="btn-s" data-del-part="${p.id}" style="font-size:10px;color:#94a3b8;padding:3px 8px;opacity:0.5">🗑️ 全削除</button>`;
         extra.innerHTML = h;
         extra.querySelectorAll("[data-del-mastered]").forEach(btn => {
           btn.onclick = async () => {
@@ -4212,6 +4220,29 @@ ${texts.join("\n")}`, GEMINI_FLASH);
             btn.textContent="⏳ 削除中...";
             for (const item of mst) { await stockDelete(item.id); }
             alert(`✅ ${mst.length}問を削除しました`); render();
+          };
+        });
+        extra.querySelectorAll("[data-del-part]").forEach(btn => {
+          btn.onclick = async () => {
+            const partId = btn.dataset.delPart;
+            const partLabel = PARTS.find(p=>p.id===partId)?.label || partId;
+            btn.textContent="⏳ 読込中...";
+            const items = await stockGetAllLight(partId);
+            if(!items.length) { btn.textContent="0問"; return; }
+            if(!confirm(`⚠️ ${partLabel} の全${items.length}問を削除しますか？\n\nこの操作は元に戻せません。\n判定履歴・単語帳は影響しません。\n模試データも影響しません。`)) { render(); return; }
+            btn.textContent=`⏳ 削除中... 0/${items.length}`;
+            const db = await openStockDB();
+            let deleted = 0;
+            for (const item of items) {
+              await new Promise((resolve, reject) => {
+                const tx = db.transaction("questions","readwrite");
+                tx.objectStore("questions").delete(item.id);
+                tx.oncomplete = () => { deleted++; resolve(); };
+                tx.onerror = () => reject(tx.error);
+              });
+              if (deleted % 50 === 0) btn.textContent = `⏳ 削除中... ${deleted}/${items.length}`;
+            }
+            alert(`✅ ${partLabel} の${deleted}問を削除しました`); render();
           };
         });
       }
@@ -4945,6 +4976,67 @@ async function renderDiagnosis() {
 
   // 間違い理由分析
   const reasonHistory = history.filter(h => h.mistakeReason);
+
+  // 自信度分析
+  const confHistory = history.filter(h => h.confidence && h.part !== "vocab" && !h.speakingData);
+  let confidenceHtml = "";
+  if (confHistory.length >= 5) {
+    const matrix = {A:{c:0,w:0}, B:{c:0,w:0}, C:{c:0,w:0}};
+    confHistory.forEach(h => {
+      const k = h.confidence;
+      if (matrix[k]) { if(h.correct) matrix[k].c++; else matrix[k].w++; }
+    });
+    const totalConf = confHistory.length;
+    const labels = {
+      A_c: {name:"真の実力", desc:"自信を持って正解", color:"#4ade80"},
+      A_w: {name:"危険な誤解", desc:"自信があったのに不正解 — 最優先で復習", color:"#ef4444"},
+      B_c: {name:"定着途上", desc:"たぶん正解 — あと一歩で定着", color:"#60a5fa"},
+      B_w: {name:"要復習", desc:"曖昧で不正解 — 知識の穴", color:"#f59e0b"},
+      C_c: {name:"ラッキー", desc:"カンで正解 — 実力ではない", color:"#a78bfa"},
+      C_w: {name:"未学習", desc:"分からず不正解 — 新しい知識が必要", color:"#94a3b8"},
+    };
+    function confBar(key, count) {
+      const pct = totalConf ? Math.round(count/totalConf*100) : 0;
+      const L = labels[key];
+      return count > 0 ? `<div style="margin-bottom:5px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:1px">
+          <span style="color:${L.color}">${L.name}</span>
+          <span style="color:#a0b4c8">${count}回 (${pct}%)</span>
+        </div>
+        <div style="height:5px;background:#1e293b;border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${L.color}"></div>
+        </div>
+      </div>` : "";
+    }
+    // Key insights
+    const dangerPct = totalConf ? Math.round(matrix.A.w / totalConf * 100) : 0;
+    const luckyPct = totalConf ? Math.round(matrix.C.c / totalConf * 100) : 0;
+    const masteryPct = totalConf ? Math.round(matrix.A.c / totalConf * 100) : 0;
+    let insight = "";
+    if (dangerPct >= 10) insight = `<div style="font-size:11px;color:#ef4444;margin-top:6px">⚠️ 「自信あり→不正解」が${dangerPct}%。思い込みによる失点が多いので、基本ルールの確認を。</div>`;
+    else if (luckyPct >= 15) insight = `<div style="font-size:11px;color:#a78bfa;margin-top:6px">🎲 「カン→正解」が${luckyPct}%。運に頼った正解が多く、実際のスコアより実力は低い可能性。</div>`;
+    else if (masteryPct >= 60) insight = `<div style="font-size:11px;color:#4ade80;margin-top:6px">💪 「自信あり→正解」が${masteryPct}%。知識が定着しています！</div>`;
+
+    confidenceHtml = `<div style="margin-top:14px;padding:14px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.12);border-radius:12px">
+      <div style="font-size:15px;font-weight:700;color:#818cf8;margin-bottom:10px">🎯 自信度分析 (${totalConf}問)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div style="text-align:center;padding:8px;background:rgba(74,222,128,0.06);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">✅ 正解</div>
+          <div style="font-size:10px;color:#4ade80;margin-top:2px">💪${matrix.A.c}</div>
+          <div style="font-size:10px;color:#60a5fa">🤔${matrix.B.c}</div>
+          <div style="font-size:10px;color:#a78bfa">🎲${matrix.C.c}</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:rgba(248,113,113,0.06);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">❌ 不正解</div>
+          <div style="font-size:10px;color:#ef4444;margin-top:2px">💪${matrix.A.w}</div>
+          <div style="font-size:10px;color:#f59e0b">🤔${matrix.B.w}</div>
+          <div style="font-size:10px;color:#94a3b8">🎲${matrix.C.w}</div>
+        </div>
+      </div>
+      ${confBar("A_c",matrix.A.c)}${confBar("A_w",matrix.A.w)}${confBar("B_c",matrix.B.c)}${confBar("B_w",matrix.B.w)}${confBar("C_c",matrix.C.c)}${confBar("C_w",matrix.C.w)}
+      ${insight}
+    </div>`;
+  }
   let mistakeAnalysisHtml = "";
   if (reasonHistory.length >= 3) {
     const byReason = {};
@@ -5162,6 +5254,8 @@ async function renderDiagnosis() {
     </div>
 
     ${mistakeAnalysisHtml}
+
+    ${confidenceHtml}
 
     <div style="margin-top:16px">
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">💡 改善アドバイス</div>
@@ -7095,7 +7189,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02r · speaking chart collapsible + wider radar + text visible · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03b · P5 prompt fix + per-part delete + confidence · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7578,8 +7672,15 @@ function renderStudy() {
       inner+=`<button class="btn-au" id="playChoices" data-label="🔊 選択肢を読み上げ">🔊 選択肢を読み上げ</button>`;
     }
 
-    // ── Choices ──
+    // ── Confidence selector + Choices ──
+    const curConf = S._confidences[qi] || null;
     const isAudioOnly = (S.part==="part1"||S.part==="part2") && !answered;
+    if (!answered) {
+      inner+=`<div style="display:flex;gap:4px;margin-bottom:8px;justify-content:center">${CONFIDENCE_LEVELS.map(cl=>{
+        const active = curConf===cl.id;
+        return `<button class="btn-s conf-btn" data-conf="${cl.id}" style="flex:1;font-size:11px;padding:6px;color:${active?cl.color:"#64748b"};background:${active?cl.bg:"rgba(100,116,139,0.06)"};border-color:${active?"rgba(255,255,255,0.1)":"rgba(100,116,139,0.08)"};font-weight:${active?700:400}">${cl.icon} ${cl.label}</button>`;
+      }).join("")}</div>`;
+    }
     if (isAudioOnly) {
       inner+=`<div style="font-size:12px;color:#7a8ea5;margin-bottom:10px">🎧 音声を聴いてから選択してください（本番と同じ形式）</div>`;
     }
@@ -7595,7 +7696,7 @@ function renderStudy() {
     // ── Explanation ──
     if (answered) {
       inner+=`<div class="expl ${isOk?"ok":"ng"}">
-        <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":ans.timeUp?"⏱ 時間切れ！":"😥 不正解..."}</div>
+        <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":ans.timeUp?"⏱ 時間切れ！":"😥 不正解..."}${ans.confidence?` <span style="font-size:11px;color:${CONFIDENCE_LEVELS.find(c=>c.id===ans.confidence)?.color||'#94a3b8'}">${CONFIDENCE_LEVELS.find(c=>c.id===ans.confidence)?.icon||""} ${CONFIDENCE_LEVELS.find(c=>c.id===ans.confidence)?.label||""}</span>`:""}</div>
         ${q.explanation_en?`<details style="margin-bottom:8px"><summary style="font-size:13px;color:#60a5fa;cursor:pointer;user-select:none">💡 English Explanation</summary><div style="font-size:14px;line-height:1.9;color:#a0b4c8;margin-top:4px;padding:8px;background:rgba(96,165,250,0.06);border-radius:6px">${esc(q.explanation_en)}</div></details>`:""}
         <div class="det">${esc(q.explanation_ja||"")}</div>
         ${(!isOk && S.judgeMode && !(S._mistakeReasons||{})[qi])?`<div style="margin-top:10px;padding:10px;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.15);border-radius:8px">
@@ -7804,8 +7905,29 @@ function renderStudy() {
       usb.textContent="✅ 削除済み"; usb.disabled=true; usb.style.color="#64748b";
     } catch(e) { usb.textContent="❌ 削除失敗"; console.error(e); }
   };
+  document.querySelectorAll(".conf-btn").forEach(el=>{
+    el.onclick=()=>{
+      S._confidences[S.qIdx] = el.dataset.conf;
+      // Highlight selected, dim others
+      document.querySelectorAll(".conf-btn").forEach(b=>{
+        const cl = CONFIDENCE_LEVELS.find(c=>c.id===b.dataset.conf);
+        const active = b.dataset.conf===el.dataset.conf;
+        b.style.color = active ? cl.color : "#64748b";
+        b.style.background = active ? cl.bg : "rgba(100,116,139,0.06)";
+        b.style.fontWeight = active ? "700" : "400";
+      });
+      // Enable choice buttons
+      document.querySelectorAll("[data-c]").forEach(cb=>{ cb.style.opacity="1"; cb.style.pointerEvents="auto"; });
+    };
+  });
   document.querySelectorAll("[data-c]").forEach(el=>{
-    el.onclick=()=>{if(!S.answers[S.qIdx].answered)handleAnswer(parseInt(el.dataset.c));};
+    if (!S._confidences[S.qIdx] && !S.answers[S.qIdx]?.answered) {
+      el.style.opacity="0.4"; el.style.pointerEvents="none";
+    }
+    el.onclick=()=>{
+      if(!S._confidences[S.qIdx]){return;}
+      if(!S.answers[S.qIdx].answered)handleAnswer(parseInt(el.dataset.c));
+    };
   });
 
   // Audio buttons
