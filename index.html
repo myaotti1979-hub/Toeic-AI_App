@@ -1813,7 +1813,7 @@ async function stockGetAllLight(part) {
         // Strip heavy fields
         const light = {id:v.id, part:v.part, level:v.level, createdAt:v.createdAt,
           mastered:v.mastered, correctStreak:v.correctStreak, lastPracticed:v.lastPracticed,
-          difficulty:v.difficulty||0,
+          difficulty:v.difficulty||0, distractorGrade:v.distractorGrade||null,
           qSet:{...v.qSet}};
         // Strip audio from qSet.vocab and qSet.questions
         if (light.qSet.vocab) light.qSet.vocab = light.qSet.vocab.map(w=>({word:w.word,ja:w.ja,pos:w.pos,example:w.example}));
@@ -2116,6 +2116,13 @@ function diverseShuffle(items) {
     if (!added) break;
   }
   return result;
+}
+
+// Quality-aware shuffle: A/B (or unchecked) first, C last
+function qualityPriorityShuffle(items) {
+  const good = items.filter(it => it.distractorGrade !== "C");
+  const poor = items.filter(it => it.distractorGrade === "C");
+  return [...diverseShuffle(good), ...diverseShuffle(poor)];
 }
 
 function extractQuestionText(item) {
@@ -3483,6 +3490,9 @@ async function renderStockSelect() {
       <div id="transProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
       <button class="btn-s" id="phraseExtractBtn" style="width:100%;font-size:11px;color:#f472b6;margin-top:6px">💬 フレーズ抽出（既存問題）</button>
       <div id="phraseProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
+      <button class="btn-s" id="distractorCheckBtn" style="width:100%;font-size:11px;color:#34d399;margin-top:6px">🔍 不正解選択肢の品質チェック</button>
+      <div id="distractorProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
+      <button class="btn-s" id="deleteGradeCBtn" style="width:100%;font-size:11px;color:#f87171;margin-top:4px;display:none">🗑️ 品質Cの問題を一括削除</button>
     </div>
     ${total===0?`<div style="text-align:center;color:#7a8ea5;padding:40px 0">ストックされた問題がありません。<br>問題を解いた後「💾 ストック」ボタンで保存できます。</div>`:""}
     <div style="padding:10px 0">${partSections}</div>
@@ -3622,7 +3632,7 @@ async function renderStockSelect() {
       el.textContent="⏳ 読込中...";
       const items = await stockGetAllLight(el.dataset.stockRnd);
       if(items.length===0) { el.textContent="🔀 ランダム再生"; return; }
-      const shuffled2 = diverseShuffle(items);
+      const shuffled2 = qualityPriorityShuffle(items);
       S._stockReturnScreen = "stockSelect";
       S.stockPlaylist = shuffled2.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0;
@@ -3968,6 +3978,148 @@ ${texts}`, GEMINI_FLASH);
       peb.disabled=false;
     };
   }
+  // Distractor quality check
+  const dcb=$("distractorCheckBtn"); if(dcb) {
+    const partSel=$("difficultyPartSel");
+    const filterPart = partSel?.value || "";
+    stockGetAllLight(filterPart||undefined).then(async items => {
+      const withQ = items.filter(it => it.qSet?.questions?.length > 0);
+      const graded = withQ.filter(it => it.distractorGrade);
+      const ungraded = withQ.filter(it => !it.distractorGrade);
+      const cCount = withQ.filter(it => it.distractorGrade === "C").length;
+      let label = `🔍 品質チェック`;
+      if (graded.length > 0) label += ` (済${graded.length}/未${ungraded.length})`;
+      else label += ` (${withQ.length}問)`;
+      dcb.textContent = label;
+      const dp=$("distractorProgress");
+      if (dp && cCount > 0) dp.textContent = `⚠️ 品質C: ${cCount}問`;
+      const delCBtn=$("deleteGradeCBtn");
+      if (delCBtn && cCount > 0) { delCBtn.style.display = "block"; delCBtn.textContent = `🗑️ 品質Cの問題を一括削除 (${cCount}問)`; }
+    });
+    dcb.onclick=async()=>{
+      if(!S.apiKey){alert("APIキーが必要です");return;}
+      const fp = $("difficultyPartSel")?.value || "";
+      const allItems = await stockGetAllLight(fp||undefined);
+      const withQ = allItems.filter(it => it.qSet?.questions?.length > 0);
+      const ungraded = withQ.filter(it => !it.distractorGrade);
+      const items = ungraded.length > 0 ? ungraded : withQ; // Re-check all if all graded
+      const checkType = ungraded.length > 0 ? "未チェック" : "全問（再チェック）";
+      if(!items.length){alert("対象問題がありません");return;}
+      if(!confirm(`${fp?PARTS.find(p=>p.id===fp)?.label||fp:"全パート"}: ${checkType} ${items.length}問\n推定: 約${Math.ceil(items.length/10*2/60)}分\n\n開始しますか？`))return;
+      dcb.disabled=true;
+      const dp=$("distractorProgress");
+      const BATCH=10;
+      let results=[], errors=0;
+      try {
+        await requestWakeLock();
+        for(let i=0;i<items.length;i+=BATCH){
+          const batch=items.slice(i,i+BATCH);
+          const texts=[];
+          batch.forEach((item,bi)=>{
+            (item.qSet.questions||[]).forEach((q,qi)=>{
+              const correct=q.correct||0;
+              const choices=q.choices||[];
+              const question=(q.question||"").slice(0,120);
+              const wrong=choices.filter((_,ci)=>ci!==correct).map(c=>(c||"").slice(0,60));
+              texts.push(`${bi+1}-Q${qi+1}. ${question} | Wrong: ${wrong.join(" / ")}`);
+            });
+          });
+          if(!texts.length)continue;
+          try {
+            const raw=await geminiText(`Rate distractor quality for these TOEIC questions.
+A = All distractors are plausible (grammatically valid, could fool a student)
+B = Most distractors plausible, 1 is weak
+C = Multiple distractors are obviously wrong (grammatically broken or nonsensical)
+
+Return ONLY one letter per line: "1-Q1: A"
+
+${texts.join("\n")}`, GEMINI_FLASH);
+            for(const line of raw.split("\n")){
+              const m=line.match(/(\d+)-Q(\d+):\s*([ABC])/);
+              if(m){
+                const bi2=parseInt(m[1])-1, qi2=parseInt(m[2])-1, grade=m[3];
+                if(i+bi2<items.length) results.push({idx:i+bi2,qi:qi2,grade,part:items[i+bi2].part});
+              }
+            }
+          }catch(e){errors++;console.warn("distractor check batch error:",e);}
+          dcb.textContent=`⏳ ${Math.min(i+BATCH,items.length)}/${items.length}`;
+          if(dp)dp.textContent=`A:${results.filter(r=>r.grade==="A").length} B:${results.filter(r=>r.grade==="B").length} C:${results.filter(r=>r.grade==="C").length} ${errors?"err:"+errors:""}`;
+          if(i+BATCH<items.length)await new Promise(r=>setTimeout(r,1500));
+        }
+        // Show results
+        const grades={A:0,B:0,C:0};
+        results.forEach(r=>grades[r.grade]++);
+        const total=grades.A+grades.B+grades.C;
+        const aPct=total?Math.round(grades.A/total*100):0;
+        const cItems=results.filter(r=>r.grade==="C");
+        // Save grades to DB
+        const gradeByIdx={};
+        results.forEach(r=>{ if(!gradeByIdx[r.idx] || r.grade==="C") gradeByIdx[r.idx]=r.grade; });
+        let savedCount=0;
+        for(const [idxStr,grade] of Object.entries(gradeByIdx)){
+          const it=items[parseInt(idxStr)];
+          if(it?.id) { await stockUpdateField(it.id,{distractorGrade:grade}).catch(()=>{}); savedCount++; }
+        }
+        let msg=`✅ チェック完了: ${total}問 (${savedCount}問に評価を保存)\n\n🟢 A (高品質): ${grades.A}問 (${aPct}%)\n🟡 B (普通): ${grades.B}問\n🔴 C (要改善): ${grades.C}問`;
+        if(cItems.length>0){
+          msg+=`\n\n⚠️ 品質Cの問題:`;
+          for(const ci of cItems.slice(0,10)){
+            const it=items[ci.idx];
+            const q=(it.qSet.questions||[])[ci.qi];
+            msg+=`\n  ${it.part} Q${ci.qi+1}: ${(q?.question||"").slice(0,50)}`;
+          }
+          if(cItems.length>10) msg+=`\n  ...他${cItems.length-10}問`;
+          msg+=`\n\n品質Cの${cItems.length}問を削除しますか？`;
+          if(confirm(msg)){
+            let deleted=0;
+            const cIdxSet=new Set(cItems.map(r=>r.idx));
+            for(const idx of cIdxSet){
+              const it=items[idx];
+              if(it?.id){
+                const db=await openStockDB();
+                await new Promise((resolve,reject)=>{
+                  const tx=db.transaction("questions","readwrite");
+                  tx.objectStore("questions").delete(it.id);
+                  tx.oncomplete=()=>{deleted++;resolve();};
+                  tx.onerror=()=>reject(tx.error);
+                });
+              }
+            }
+            alert(`🗑️ ${deleted}問を削除しました`);
+            render(); return;
+          }
+        } else {
+          alert(msg);
+        }
+        dcb.textContent=`✅ A:${grades.A} B:${grades.B} C:${grades.C}`;
+        if(dp)dp.textContent=`高品質率: ${aPct}% (${total}問中)`;
+      }catch(e){
+        dcb.textContent="❌ エラー";
+        if(dp)dp.textContent=e.message;
+      }
+      releaseWakeLock();
+      dcb.disabled=false;
+    };
+  }
+  const delCBtn2=$("deleteGradeCBtn"); if(delCBtn2) delCBtn2.onclick=async()=>{
+    const fp=$("difficultyPartSel")?.value||"";
+    const allItems=await stockGetAllLight(fp||undefined);
+    const cItems=allItems.filter(it=>it.distractorGrade==="C");
+    if(!cItems.length){alert("品質Cの問題はありません");return;}
+    if(!confirm(`品質Cの${cItems.length}問を削除しますか？\n（この操作は元に戻せません）`))return;
+    let deleted=0;
+    const db=await openStockDB();
+    for(const it of cItems){
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction("questions","readwrite");
+        tx.objectStore("questions").delete(it.id);
+        tx.oncomplete=()=>{deleted++;resolve();};
+        tx.onerror=()=>reject(tx.error);
+      });
+    }
+    alert(`🗑️ ${deleted}問を削除しました`);
+    render();
+  };
   const pb=$("stockPurgeBtn"); if(pb)pb.onclick=async()=>{
     if(!confirm("音声や画像が欠損した問題を削除します。よろしいですか？")) return;
     try {
@@ -6920,7 +7072,7 @@ function renderHome() {
       el.textContent="⏳";
       const items = await stockGetAllLight(el.dataset.homeRnd);
       if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="▶";return;}
-      const shuffled = diverseShuffle(items);
+      const shuffled = qualityPriorityShuffle(items);
       S._stockReturnScreen = "home";
       S.stockPlaylist = shuffled.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
@@ -6934,7 +7086,7 @@ function renderHome() {
       if(!items.length){alert("このパートのストックがありません。");el.textContent="🆕";return;}
       const unplayed = items.filter(it=>!it.lastPracticed);
       if(!unplayed.length){alert("未回答の問題がありません。全問回答済みです。");el.textContent="🆕";return;}
-      const shuffled = diverseShuffle(unplayed);
+      const shuffled = qualityPriorityShuffle(unplayed);
       S._stockReturnScreen = "home";
       S.stockPlaylist = shuffled.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
@@ -6964,7 +7116,7 @@ function renderHome() {
         const items = await stockGetAllLight(partId);
         const weakItems = items.filter(it => weakTypes.includes(it.qSet?._questionType));
         if (!weakItems.length) { alert(`苦手タイプ（${weakTypes.join(", ")}）のストック問題がありません。\n問題を生成してストックしてください。`); el.textContent="🔥"; return; }
-        const shuffledWeak = diverseShuffle(weakItems);
+        const shuffledWeak = qualityPriorityShuffle(weakItems);
         S._stockReturnScreen = "home";
         S.stockPlaylist = shuffledWeak.map(it=>({id:it.id, part:it.part}));
         S.stockPlayIdx = 0; S._stockPlaylistActive = false;
@@ -7022,7 +7174,7 @@ function renderHome() {
       // Sort: priority range first (shuffled), then rest (shuffled)
       const priority = inRange.filter(it => Math.abs(it.difficulty - userScore) <= PRIORITY_RANGE);
       const rest = inRange.filter(it => Math.abs(it.difficulty - userScore) > PRIORITY_RANGE);
-      const sorted = diverseShuffle([...priority, ...rest]);
+      const sorted = qualityPriorityShuffle([...priority, ...rest]);
       S._stockReturnScreen = "home";
       S.stockPlaylist = sorted.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
