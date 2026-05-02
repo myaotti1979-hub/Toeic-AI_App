@@ -1453,20 +1453,30 @@ def check_distractor_quality(items, api_key, on_progress=None):
         texts = []
         for bi, item in enumerate(batch):
             qs = item.get("qSet", {})
+            part = item.get("part", "unknown")
             for qi, q in enumerate(qs.get("questions", [])):
                 correct = q.get("correct", 0)
                 choices = q.get("choices", [])
                 question = q.get("question", "") or qs.get("sentence", "") or ""
                 wrong = [c for ci, c in enumerate(choices) if ci != correct]
-                texts.append(f"{bi+1}-Q{qi+1}. {question[:100]} | Wrong: {' / '.join(wrong)}")
+                texts.append(f"{bi+1}-Q{qi+1}. [{part}] {question[:100]} | Wrong: {' / '.join(wrong)}")
         if not texts:
             continue
-        prompt = f"""Rate distractor quality for these TOEIC questions. For each, answer:
-A = All distractors are plausible (grammatically correct, could fool a student)
-B = Most distractors plausible, 1 is weak
-C = Multiple distractors are obviously wrong (grammatically broken or nonsensical)
+        prompt = f"""Rate distractor quality for these TOEIC questions.
+Each line is tagged with [partN]. Apply DIFFERENT criteria by part:
 
-Return one letter per line: "1-Q1: A", "1-Q2: B", etc.
+[part1] Photo description: All 4 choices must be grammatically correct sentences. Wrong answers describe things NOT in the photo. Rate C if a distractor is grammatically broken as a sentence.
+[part2] Q&A: All 3 responses must be grammatically correct sentences. Wrong answers are off-topic or answer a different question. Rate C if a response is not a valid English sentence.
+[part3][part4] Conversation/Talk comprehension: Distractors should be plausible based on context but factually wrong. Rate C if a distractor is nonsensical or unrelated to the topic.
+[part5] Grammar/Vocabulary fill-in: Distractors are INTENTIONALLY grammatically wrong in context (wrong tense, wrong form, wrong word). Rate C only if a distractor is not a real English word, or if multiple distractors are SO similar to the correct answer that the question has multiple valid answers.
+[part6][part7] Reading comprehension: Same as part3/part4. Rate C if distractors are obviously unrelated to the passage.
+
+Rating scale:
+A = All distractors are well-crafted for their part type
+B = Mostly good, 1 distractor is weak (too easy to eliminate)
+C = Multiple distractors are poorly crafted (broken, nonsensical, or make the question trivially easy)
+
+Return ONLY one letter per line: "1-Q1: A"
 
 {chr(10).join(texts)}"""
         try:

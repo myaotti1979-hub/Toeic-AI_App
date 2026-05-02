@@ -4021,15 +4021,24 @@ ${texts}`, GEMINI_FLASH);
               const choices=q.choices||[];
               const question=(q.question||"").slice(0,120);
               const wrong=choices.filter((_,ci)=>ci!==correct).map(c=>(c||"").slice(0,60));
-              texts.push(`${bi+1}-Q${qi+1}. ${question} | Wrong: ${wrong.join(" / ")}`);
+              texts.push(`${bi+1}-Q${qi+1}. [${item.part}] ${question} | Wrong: ${wrong.join(" / ")}`);
             });
           });
           if(!texts.length)continue;
           try {
             const raw=await geminiText(`Rate distractor quality for these TOEIC questions.
-A = All distractors are plausible (grammatically valid, could fool a student)
-B = Most distractors plausible, 1 is weak
-C = Multiple distractors are obviously wrong (grammatically broken or nonsensical)
+Each line is tagged with [partN]. Apply DIFFERENT criteria by part:
+
+[part1] Photo description: All 4 choices must be grammatically correct sentences. Wrong answers describe things NOT in the photo. Rate C if a distractor is grammatically broken as a sentence.
+[part2] Q&A: All 3 responses must be grammatically correct sentences. Wrong answers are off-topic or answer a different question. Rate C if a response is not a valid English sentence.
+[part3][part4] Conversation/Talk comprehension: Distractors should be plausible based on context but factually wrong. Rate C if a distractor is nonsensical or unrelated to the topic.
+[part5] Grammar/Vocabulary fill-in: Distractors are INTENTIONALLY grammatically wrong in context (wrong tense, wrong form, wrong word). Rate C only if a distractor is not a real English word, or if multiple distractors are SO similar to the correct answer that the question has multiple valid answers.
+[part6][part7] Reading comprehension: Same as part3/part4. Rate C if distractors are obviously unrelated to the passage.
+
+Rating scale:
+A = All distractors are well-crafted for their part type
+B = Mostly good, 1 distractor is weak (too easy to eliminate)
+C = Multiple distractors are poorly crafted (broken, nonsensical, or make the question trivially easy)
 
 Return ONLY one letter per line: "1-Q1: A"
 
