@@ -6801,12 +6801,12 @@ function renderHome() {
     el.onclick=async()=>{
       el.textContent="⏳";
       const items = await stockGetAllLight(el.dataset.homeRnd);
-      if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="🔀";return;}
-      items = diverseShuffle(items);
+      if(!items.length){alert("このパートのストックがありません。\n「問題生成・管理」からストックを作成してください。");el.textContent="▶";return;}
+      const shuffled = diverseShuffle(items);
       S._stockReturnScreen = "home";
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
+      S.stockPlaylist = shuffled.map(it=>({id:it.id, part:it.part}));
       S.stockPlayIdx = 0; S._stockPlaylistActive = false;
-      await loadStockItem(items[0].id);
+      await loadStockItem(shuffled[0].id);
     };
   });
   document.querySelectorAll("[data-home-new]").forEach(el=>{
@@ -7013,7 +7013,12 @@ function renderStudy() {
     if (isL && qs.audio) {
       const cached=qs._audioUrl?" ✓":"";
       const label=`🔊 音声を再生${cached}`;
-      inner+=`<button class="btn-au" id="playAudio" data-label="${label}">${label}</button>`;
+      inner+=`<div style="display:flex;gap:6px;align-items:center;justify-content:center">
+        <button class="btn-au" id="playAudio" data-label="${label}">${label}</button>
+        <select id="audioSpeed" style="background:#243040;color:#a0b4c8;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px;font-size:11px">
+          <option value="0.8">0.8x</option><option value="1">1.0x</option><option value="1.2">1.2x</option><option value="1.5">1.5x</option>
+        </select>
+      </div>`;
     }
 
     // ── Conversation (Part 3) ──
@@ -7342,6 +7347,7 @@ function renderStudy() {
 
   // Audio buttons
   const pa=$("playAudio");
+  const as2=$("audioSpeed"); if(as2) { as2.value=localStorage.getItem("audioSpeed")||"1"; as2.onchange=()=>{ localStorage.setItem("audioSpeed",as2.value); if(_curAudio) _curAudio.playbackRate=parseFloat(as2.value); }; }
   if (pa&&S.qSet?.audio) {
     pa.onclick=async()=>{
       if (_curAudio) { stopSpeak(); setAudioBtn(pa,"idle"); return; }
