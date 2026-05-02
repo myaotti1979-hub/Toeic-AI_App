@@ -4826,6 +4826,124 @@ async function renderDiagnosis() {
     weeklyComparison = `<div style="font-size:12px;color:#7a8ea5">今週のデータが不足（3問以上必要）</div>`;
   }
 
+  // スピーキング分析
+  const speakingHistory = history.filter(h => h.speakingData);
+  let speakingHtml = "";
+  if (speakingHistory.length >= 1) {
+    const recent = speakingHistory.sort((a,b)=>b.timestamp-a.timestamp).slice(0, 20);
+    const avgP = Math.round(recent.reduce((a,h)=>a+h.speakingData.pronScore,0)/recent.length);
+    const avgA = Math.round(recent.reduce((a,h)=>a+h.speakingData.accuracyScore,0)/recent.length);
+    const avgF = Math.round(recent.reduce((a,h)=>a+h.speakingData.fluencyScore,0)/recent.length);
+    const avgPr = Math.round(recent.reduce((a,h)=>a+(h.speakingData.prosodyScore||0),0)/recent.length);
+    const avgSh = Math.round(recent.reduce((a,h)=>a+(h.speakingData.shortWordAcc||0),0)/recent.length);
+    const avgLo = Math.round(recent.reduce((a,h)=>a+(h.speakingData.longWordAcc||0),0)/recent.length);
+
+    // 5-axis radar chart (SVG)
+    const axes = [
+      {label:"Accuracy", value:avgA},
+      {label:"Fluency", value:avgF},
+      {label:"Prosody", value:avgPr},
+      {label:"基礎語", value:avgSh},
+      {label:"ビジネス語", value:avgLo}
+    ];
+    const cx=110, cy=110, maxR=80;
+    const angleStep = (2*Math.PI)/5;
+    const gridLevels = [20,40,60,80,100];
+    let gridLines = "";
+    gridLevels.forEach(lv => {
+      const r = maxR * lv / 100;
+      const pts = Array.from({length:5},(_,i)=>{
+        const a = -Math.PI/2 + i*angleStep;
+        return `${cx+r*Math.cos(a)},${cy+r*Math.sin(a)}`;
+      }).join(" ");
+      gridLines += `<polygon points="${pts}" fill="none" stroke="rgba(129,140,248,${lv===60?0.2:0.08})" stroke-width="1"/>`;
+    });
+    // Axis lines + labels
+    let axisLines = "";
+    axes.forEach((ax,i) => {
+      const a = -Math.PI/2 + i*angleStep;
+      const x2 = cx + maxR*Math.cos(a), y2 = cy + maxR*Math.sin(a);
+      axisLines += `<line x1="${cx}" y1="${cy}" x2="${x2}" y2="${y2}" stroke="rgba(129,140,248,0.15)" stroke-width="1"/>`;
+      const lx = cx + (maxR+18)*Math.cos(a), ly = cy + (maxR+18)*Math.sin(a);
+      const anchor = Math.abs(Math.cos(a))<0.3 ? "middle" : Math.cos(a)>0 ? "start" : "end";
+      const valColor = ax.value >= 80 ? "#4ade80" : ax.value >= 60 ? "#fbbf24" : "#f87171";
+      axisLines += `<text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="central" fill="#7a8ea5" font-size="10">${ax.label}</text>`;
+      axisLines += `<text x="${lx}" y="${ly+13}" text-anchor="${anchor}" dominant-baseline="central" fill="${valColor}" font-size="11" font-weight="700">${ax.value}</text>`;
+    });
+    // Data polygon
+    const dataPts = axes.map((ax,i) => {
+      const a = -Math.PI/2 + i*angleStep;
+      const r = maxR * Math.min(ax.value,100) / 100;
+      return `${cx+r*Math.cos(a)},${cy+r*Math.sin(a)}`;
+    }).join(" ");
+
+    // Trend (last 10 sessions)
+    const trendData = speakingHistory.sort((a,b)=>a.timestamp-b.timestamp).slice(-10);
+    let trendSvg = "";
+    if (trendData.length >= 2) {
+      const tw=200, th=50, pad=4;
+      const minS = Math.min(...trendData.map(h=>h.speakingData.pronScore)) - 5;
+      const maxS = Math.max(...trendData.map(h=>h.speakingData.pronScore)) + 5;
+      const range = Math.max(maxS-minS, 10);
+      const pts = trendData.map((h,i) => {
+        const x = pad + i/(trendData.length-1)*(tw-pad*2);
+        const y = th-pad - (h.speakingData.pronScore-minS)/range*(th-pad*2);
+        return `${x},${y}`;
+      }).join(" ");
+      const first = trendData[0].speakingData.pronScore;
+      const last = trendData[trendData.length-1].speakingData.pronScore;
+      const trendDir = last > first ? "📈" : last < first ? "📉" : "→";
+      trendSvg = `<div style="margin-top:10px">
+        <div style="font-size:11px;color:#7a8ea5;margin-bottom:4px">${trendDir} 推移 (直近${trendData.length}回): ${first} → ${last}</div>
+        <svg viewBox="0 0 ${tw} ${th}" style="width:100%;height:50px">
+          <polyline points="${pts}" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          ${trendData.map((h,i) => {
+            const x = pad + i/(trendData.length-1)*(tw-pad*2);
+            const y = th-pad - (h.speakingData.pronScore-minS)/range*(th-pad*2);
+            return `<circle cx="${x}" cy="${y}" r="3" fill="#818cf8"/>`;
+          }).join("")}
+        </svg>
+      </div>`;
+    }
+
+    // Weak words (appear 2+ times with avg accuracy < 60)
+    const wordStats = {};
+    recent.forEach(h => {
+      (h.speakingData.words||[]).forEach(w => {
+        const key = w.word.toLowerCase();
+        if (!wordStats[key]) wordStats[key] = {word:w.word, total:0, count:0};
+        wordStats[key].total += w.accuracy;
+        wordStats[key].count++;
+      });
+    });
+    const weakWords = Object.values(wordStats)
+      .filter(w => w.count >= 2 && w.total/w.count < 60)
+      .sort((a,b) => (a.total/a.count) - (b.total/b.count))
+      .slice(0, 8);
+    let weakHtml = "";
+    if (weakWords.length > 0) {
+      weakHtml = `<div style="margin-top:10px"><div style="font-size:11px;color:#f87171;margin-bottom:4px">⚠️ 苦手な発音 (2回以上・平均60未満)</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">${weakWords.map(w => {
+          const avg = Math.round(w.total/w.count);
+          return `<span style="padding:3px 8px;border-radius:4px;font-size:12px;color:#f87171;background:rgba(248,113,113,0.1)">${w.word} <sub>${avg} (${w.count}回)</sub></span>`;
+        }).join("")}</div></div>`;
+    }
+
+    const pcol = avgP >= 80 ? "#4ade80" : avgP >= 60 ? "#fbbf24" : "#f87171";
+    speakingHtml = `<div style="margin-top:14px;padding:14px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.12);border-radius:12px">
+      <div style="font-size:15px;font-weight:700;color:#818cf8;margin-bottom:4px">🎭 スピーキング（直近${recent.length}回）</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <div style="font-size:36px;font-weight:800;color:${pcol}">${avgP}</div>
+        <div style="font-size:11px;color:#7a8ea5">Pronunciation<br>Score (平均)</div>
+      </div>
+      <svg viewBox="0 0 220 220" style="width:100%;max-width:280px;margin:0 auto;display:block">
+        ${gridLines}${axisLines}
+        <polygon points="${dataPts}" fill="rgba(129,140,248,0.15)" stroke="#818cf8" stroke-width="2"/>
+      </svg>
+      ${trendSvg}${weakHtml}
+    </div>`;
+  }
+
   // 間違い理由分析
   const reasonHistory = history.filter(h => h.mistakeReason);
   let mistakeAnalysisHtml = "";
@@ -5045,6 +5163,8 @@ async function renderDiagnosis() {
     </div>
 
     ${mistakeAnalysisHtml}
+
+    ${speakingHtml}
 
     <div style="margin-top:16px">
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">💡 改善アドバイス</div>
@@ -6976,7 +7096,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02p · session7 final: roleplay/shadow/speed-drill/WPM/mistake/collo/writing/quality · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02q · speaking diagnosis radar + weak words + trend · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8168,6 +8288,40 @@ function renderRolePlay() {
     const avgPron = myResults.length ? Math.round(myResults.reduce((a,r)=>a+r.pronScore,0)/myResults.length) : 0;
     const avgAcc = myResults.length ? Math.round(myResults.reduce((a,r)=>a+r.accuracyScore,0)/myResults.length) : 0;
     const avgFlu = myResults.length ? Math.round(myResults.reduce((a,r)=>a+r.fluencyScore,0)/myResults.length) : 0;
+    const avgComp = myResults.length ? Math.round(myResults.reduce((a,r)=>a+(r.completenessScore||0),0)/myResults.length) : 0;
+    const avgPros = myResults.length ? Math.round(myResults.reduce((a,r)=>a+(r.prosodyScore||0),0)/myResults.length) : 0;
+    // Collect all words for analysis
+    const allWords = myResults.flatMap(r => r.words || []);
+    const shortWords = allWords.filter(w => w.word.length <= 5);
+    const longWords = allWords.filter(w => w.word.length >= 6);
+    const avgShort = shortWords.length ? Math.round(shortWords.reduce((a,w)=>a+w.accuracy,0)/shortWords.length) : 0;
+    const avgLong = longWords.length ? Math.round(longWords.reduce((a,w)=>a+w.accuracy,0)/longWords.length) : 0;
+    // Save to judgeDB for diagnosis
+    if (myResults.length > 0 && !S._rpSaved) {
+      S._rpSaved = true;
+      (async () => {
+        try {
+          const speakData = {
+            part: S._rpQSet?.part || "part3", level: "speaking", type: "roleplay",
+            questionIdx: 0, correct: true,
+            questionText: "roleplay",
+            elapsed: 0, difficulty: 0, mistakeReason: null,
+            speakingData: {
+              pronScore: avgPron, accuracyScore: avgAcc, fluencyScore: avgFlu,
+              completenessScore: avgComp, prosodyScore: avgPros,
+              shortWordAcc: avgShort, longWordAcc: avgLong,
+              words: allWords.map(w => ({word: w.word, accuracy: w.accuracy})),
+              lineCount: myResults.length
+            },
+            timestamp: Date.now()
+          };
+          const db = await openJudgeDB();
+          const tx = db.transaction("history","readwrite");
+          tx.objectStore("history").add(speakData);
+          console.log("[ROLEPLAY] Saved speaking result:", avgPron);
+        } catch(e) { console.warn("roleplay save:", e); }
+      })();
+    }
     const scoreColor = avgPron >= 80 ? "#4ade80" : avgPron >= 60 ? "#fbbf24" : "#f87171";
     let wordReview = "";
     myResults.forEach((r,ri) => {
@@ -8185,9 +8339,12 @@ function renderRolePlay() {
       <div style="text-align:center;padding:20px">
         <div style="font-size:48px;font-weight:900;color:${scoreColor}">${avgPron}</div>
         <div style="font-size:13px;color:#7a8ea5">Pronunciation Score</div>
-        <div style="display:flex;justify-content:center;gap:16px;margin-top:12px">
+        <div style="display:flex;justify-content:center;gap:16px;margin-top:12px;flex-wrap:wrap">
           <div><div style="font-size:10px;color:#7a8ea5">Accuracy</div><div style="font-size:18px;color:#dce6f0">${avgAcc}</div></div>
           <div><div style="font-size:10px;color:#7a8ea5">Fluency</div><div style="font-size:18px;color:#dce6f0">${avgFlu}</div></div>
+          <div><div style="font-size:10px;color:#7a8ea5">Prosody</div><div style="font-size:18px;color:#dce6f0">${avgPros}</div></div>
+          <div><div style="font-size:10px;color:#7a8ea5">基礎語</div><div style="font-size:18px;color:${avgShort>=80?"#4ade80":avgShort>=60?"#fbbf24":"#f87171"}">${avgShort}</div></div>
+          <div><div style="font-size:10px;color:#7a8ea5">ビジネス語</div><div style="font-size:18px;color:${avgLong>=80?"#4ade80":avgLong>=60?"#fbbf24":"#f87171"}">${avgLong}</div></div>
         </div>
       </div>
       <div style="padding:0 16px">${wordReview}</div>
