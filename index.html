@@ -133,6 +133,10 @@ const LISTEN_AFTER_ANSWER_MS = 2000;  // Pause after answer announcement
 const LISTEN_AFTER_EXPL_MS = 2000;    // Pause after English explanation
 const LISTEN_BETWEEN_QUESTIONS_MS = 1500; // Pause between sub-questions (Part 3/4)
 const LISTEN_BETWEEN_ITEMS_MS = 2000;     // Pause before next stock item
+const MASTERY_STREAK = 3;          // correctStreak >= this → mastered
+const PART_RECENT_N = 50;          // Per-part recent questions for IRT estimation
+const BATCH_ERROR_LIMIT = 15;      // Max errors before aborting batch operations
+const DEFAULT_DAILY_GOAL = 30;     // Default daily goal (questions per day)
 
 // 3-Flash = 高性能+低コスト (2.5 Pro超え、料金1/3)
 const PART_MODEL = {
@@ -210,12 +214,12 @@ if (S.apiKey) S.screen = "home";
   const hour = parseInt(localStorage.getItem("reminderHour") || "20");
   const now = new Date();
   const lastNotif = localStorage.getItem("lastNotifDate") || "";
-  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const today = localDateStr(now);
   if (lastNotif === today) return;
   if (now.getHours() >= hour && "Notification" in window && Notification.permission === "granted") {
     const streak = JSON.parse(localStorage.getItem("studyStreak")||'{}');
     const todayCount = (streak.todayDate === today) ? streak.todayCount || 0 : 0;
-    const goal = parseInt(localStorage.getItem("dailyGoal")||"30");
+    const goal = parseInt(localStorage.getItem("dailyGoal")||String(DEFAULT_DAILY_GOAL));
     if (todayCount < goal) {
       new Notification("📝 TOEIC Trainer", {body: `今日はまだ${todayCount}問！目標${goal}問まであと${goal-todayCount}問`, icon: "📝"});
       localStorage.setItem("lastNotifDate", today);
@@ -226,6 +230,20 @@ if (S.apiKey) S.screen = "home";
 const $ = id => document.getElementById(id);
 const app = document.getElementById("app");
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+// Local date helpers (JST-safe: avoids UTC-based date boundary issues)
+function localDateStr(d) { d=d||new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function localYesterdayStr() { const d=new Date(); d.setDate(d.getDate()-1); return localDateStr(d); }
+
+// Security: sanitize imgUrl to prevent XSS via imported JSON
+function safeImgUrl(url) {
+  if (!url) return null;
+  if (typeof url !== "string") return null;
+  if (url.startsWith("data:image/")) return url;
+  if (url.startsWith("blob:")) return url;
+  console.warn("[SECURITY] rejected non-data imgUrl:", url.slice(0,80));
+  return null;
+}
 
 // Normalize text: convert literal \\n to real newlines, trim
 function normText(s) {
@@ -1292,11 +1310,11 @@ function openJudgeDB() {
 async function judgeSave(part, level, type, questionIdx, correct, questionText, elapsed, difficulty) {
   // Increment daily goal counter
   try {
-    const today = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
+    const today = localDateStr();
     const streak = JSON.parse(localStorage.getItem("studyStreak")||'{"count":0,"lastDate":"","todayCount":0,"todayDate":""}');
     if (streak.todayDate !== today) {
-      const _yd = new Date(Date.now()-86400000); const yesterday = `${_yd.getFullYear()}-${String(_yd.getMonth()+1).padStart(2,'0')}-${String(_yd.getDate()).padStart(2,'0')}`;
-      const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||"30");
+      const yesterday = localYesterdayStr();
+      const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||String(DEFAULT_DAILY_GOAL));
       if (streak.lastDate === yesterday && streak.todayCount >= DAILY_GOAL) streak.count++;
       else if (streak.lastDate !== yesterday) streak.count = streak.todayCount >= DAILY_GOAL ? streak.count : 0;
       streak.todayCount = 0; streak.todayDate = today; streak.lastDate = today;
@@ -1329,6 +1347,34 @@ async function judgeGetAll() {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+// Efficient: get recent N items per part using reverse cursor (avoids loading entire history)
+async function judgeGetRecentByParts(partIds, n) {
+  const db = await openJudgeDB();
+  const result = {};
+  const tx = db.transaction("history","readonly");
+  const store = tx.objectStore("history");
+  // Use timestamp index with reverse cursor for each part
+  await Promise.all(partIds.map(pid => new Promise((resolve) => {
+    result[pid] = [];
+    const req = store.index("timestamp").openCursor(null, "prev");
+    let count = 0;
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor && count < n * 10) { // scan up to n*10 records to find n per part
+        count++;
+        if (cursor.value.part === pid && result[pid].length < n) {
+          result[pid].push(cursor.value);
+        }
+        // Early exit if we have enough for this part
+        if (result[pid].length >= n) { resolve(); return; }
+        cursor.continue();
+      } else { resolve(); }
+    };
+    req.onerror = () => resolve();
+  })));
+  return result;
 }
 
 async function judgeClear() {
@@ -1894,7 +1940,7 @@ async function updateStockStreak(id, correct) {
       if (!item) { resolve(); return; }
       if (correct) {
         item.correctStreak = (item.correctStreak||0) + 1;
-        if (item.correctStreak >= 3 && !item.mastered) {
+        if (item.correctStreak >= MASTERY_STREAK && !item.mastered) {
           item.mastered = true;
           item.masteredAt = Date.now();
         }
@@ -1997,7 +2043,7 @@ ${lines}`;
       } catch(e) {
         console.warn("[TRANSLATE] Batch error:", e.message);
         errors++;
-        if (errors > 15) throw new Error(`エラー${errors}回: ${e.message}`);
+        if (errors > BATCH_ERROR_LIMIT) throw new Error(`エラー${errors}回: ${e.message}`);
       }
       if (onProgress) onProgress(done, total, errors);
       if (i + BATCH < needTr.length) await new Promise(r => setTimeout(r, 1000));
@@ -2148,7 +2194,7 @@ async function runDifficultyRating(onProgress, partFilter) {
       console.warn("[DIFFICULTY] Batch error:", e.message || e);
       errors++;
       S._lastDiffError = (e.message||String(e)).slice(0,200);
-      if (errors > 20) throw new Error(`エラー${errors}回で中断: ${e.message||e}`);
+      if (errors > BATCH_ERROR_LIMIT) throw new Error(`エラー${errors}回で中断: ${e.message||e}`);
     }
     if (onProgress) onProgress(rated, total, errors, S._lastDiffError);
     if (i + BATCH < unrated.length) await new Promise(r => setTimeout(r, 1000));
@@ -2369,7 +2415,7 @@ async function stockImportStream(file, onProgress) {
               if (existing.has(ts)) { skipped++; }
               else {
                 existing.add(ts);
-                const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts, difficulty:item.difficulty||0};
+                const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:safeImgUrl(item.imgUrl), createdAt:ts, difficulty:item.difficulty||0};
                 if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
                 else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
                 await new Promise((resolve, reject) => {
@@ -2382,7 +2428,7 @@ async function stockImportStream(file, onProgress) {
                 if (vocab && Array.isArray(vocab) && vocab.length > 0) {
                   withVocab++;
                   vocabTotal += vocab.length;
-                  await vocabAutoSave(vocab, item.part).catch(()=>{});
+                  await vocabAutoSave(vocab, item.part).catch(e=>console.warn("vocabAutoSave:", e));
                 }
               }
             }
@@ -2446,7 +2492,7 @@ async function stockImportClassic(file) {
       continue;
     }
     existingMap.set(ts, {id: null, difficulty: item.difficulty||0});
-    const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:item.imgUrl||null, createdAt:ts, difficulty:item.difficulty||0};
+    const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:safeImgUrl(item.imgUrl), createdAt:ts, difficulty:item.difficulty||0};
     if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
     else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
     await new Promise((resolve, reject) => {
@@ -2459,7 +2505,7 @@ async function stockImportClassic(file) {
     if (vocab && Array.isArray(vocab) && vocab.length > 0) {
       withVocab++;
       vocabTotal += vocab.length;
-      await vocabAutoSave(vocab, item.part).catch(()=>{});
+      await vocabAutoSave(vocab, item.part).catch(e=>console.warn("vocabAutoSave:", e));
     }
   }
   const vocabAfter = (await vocabGetAll()).length;
@@ -3158,7 +3204,7 @@ function handleAnswer(idx) {
       S.qSet._weakStocked = true;
       stockSave(S.part, S.level, S.qSet, S.sceneImgUrl).then(()=>{
         console.log("📕 苦手問題を自動ストック");
-      }).catch(()=>{});
+      }).catch(e=>console.warn("weak stock save:", e));
     }
   }
   // ストック学習中: 正解ストリーク+lastPracticed追跡（判定モードに関係なく常時記録）
@@ -3197,7 +3243,7 @@ function handleAnswer(idx) {
     S.qSet._vocabSaved = true;
     vocabAutoSave(S.qSet.vocab, S.part).then(()=>{
       console.log("📚 vocab auto-saved:", S.qSet.vocab.map(v=>v.word).join(", "));
-    }).catch(()=>{});
+    }).catch(e=>console.warn("vocab auto-save:", e));
   }
   render();
 }
@@ -3225,6 +3271,13 @@ function renderP6Text(text, activeBlank) {
    RENDER
 ────────────────────────────────────────────── */
 function render() {
+  // Screen transition cleanup
+  if (S.screen !== "mockTest" && S._mockTimerInterval) {
+    clearInterval(S._mockTimerInterval); S._mockTimerInterval = null;
+  }
+  if (S.screen !== "study" && S.screen !== "stockCreate" && S._timerInterval) {
+    clearInterval(S._timerInterval); S._timerInterval = null;
+  }
   if      (S.screen==="apikey") renderApiKey();
   else if (S.screen==="home")   renderHome();
   else if (S.screen==="stockSelect") renderStockSelect();
@@ -3876,7 +3929,7 @@ ${texts}`, GEMINI_FLASH);
                 if (ph && Array.isArray(ph)) {
                   for (const p of ph) {
                     if (p.word && p.ja) {
-                      await vocabAutoSave([{word:p.word, pos:"phrase", ja:p.ja, example:"", level:p.level||"B1"}], batch[j].part).catch(()=>{});
+                      await vocabAutoSave([{word:p.word, pos:"phrase", ja:p.ja, example:"", level:p.level||"B1"}], batch[j].part).catch(e=>console.warn("phrase vocabAutoSave:", e));
                       added++;
                     }
                   }
@@ -4109,7 +4162,7 @@ async function renderDiagnosis() {
   function diffToLevel(d) { return d >= 750 ? "advanced" : d >= 500 ? "intermediate" : "beginner"; }
 
   // 直近N問から判定（パート別に直近N問 → セクション合算）
-  const PART_RECENT_N = 50;  // パートあたり直近50問
+  // Uses global PART_RECENT_N constant
 
   const SCORE_TABLE = {
     beginner:     [[0,200],[0.50,300],[0.70,400],[0.78,500],[0.85,600],[0.92,700],[0.97,800],[0.99,900],[1.00,950]],
@@ -5622,7 +5675,7 @@ async function renderVocabQuiz() {
       }
       // Save to judgeDB for weakness analysis
       const vocabLevel = {"A":"beginner","B":"intermediate","C":"advanced"}[q.target.level||""]||"intermediate";
-      judgeSave("vocab", vocabLevel, mode, 0, isCorrect, q.target.word||"", 0).catch(()=>{});
+      judgeSave("vocab", vocabLevel, mode, 0, isCorrect, q.target.word||"", 0).catch(e=>console.warn("judgeSave:", e));
       render();
     };
   });
@@ -6276,7 +6329,7 @@ async function mockStockImport(items) {
     if (seen.has(ts)) { skipped++; continue; }
     seen.add(ts);
     const data = {part:item.part, level:item.level, qSet:item.qSet,
-                  imgUrl:item.imgUrl||null, audioOpus:item.audioOpus||null, audioPcm:item.audioPcm||null,
+                  imgUrl:safeImgUrl(item.imgUrl), audioOpus:item.audioOpus||null, audioPcm:item.audioPcm||null,
                   batchId:item.batchId||null, batchLabel:item.batchLabel||null,
                   createdAt: ts};
     await new Promise((resolve, reject) => {
@@ -6347,7 +6400,7 @@ function renderMockTest() {
         timerEl.textContent = `⏱️ ${String(Math.floor(elapsed/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
       }
     }
-    setTimeout(() => { if (S.screen === "mockTest") render(); }, 1000);
+    // Timer interval handles the next tick — no setTimeout needed
     return;
   }
 
@@ -6395,7 +6448,8 @@ function renderMockTest() {
 
   // Image
   if (item.imgUrl) {
-    html += `<div style="margin:8px 0"><img src="${item.imgUrl}" style="width:100%;border-radius:8px"></div>`;
+    const _safeImg = safeImgUrl(item.imgUrl);
+    if (_safeImg) html += `<div style="margin:8px 0"><img src="${_safeImg}" style="width:100%;border-radius:8px"></div>`;
   }
 
   // Graphic table (if available — shown alongside image for reference, or as fallback if no image)
@@ -6472,7 +6526,7 @@ function renderMockTest() {
       const elapsed = Math.floor((Date.now() - S.mockStartTime) / 1000);
       judgeSave(item.part, item.level||"intermediate",
         qs._questionType||qs.talk_type||qs.doc_type||"unknown",
-        S.mockQIdx, isCorrect, qText, elapsed, item.difficulty||0).catch(()=>{});
+        S.mockQIdx, isCorrect, qText, elapsed, item.difficulty||0).catch(e=>console.warn("mock judgeSave:", e));
       // Advance
       S.mockQIdx++;
       if (S.mockQIdx >= questions.length) {
@@ -6494,13 +6548,18 @@ function renderMockTest() {
   });
   $("mockAbortBtn").onclick = () => {
     if (confirm("模試を中断してホームに戻りますか？\n途中結果は破棄されます。")) {
+      if (S._mockTimerInterval) { clearInterval(S._mockTimerInterval); S._mockTimerInterval = null; }
       S.mockMode = null; S.mockItems = []; S.mockAnswers = [];
       S.screen = "home"; render();
     }
   };
 
-  // Auto-update timer
-  setTimeout(() => { if (S.screen === "mockTest") render(); }, 1000);
+  // Auto-update timer (managed interval — cleared on screen exit)
+  if (S._mockTimerInterval) clearInterval(S._mockTimerInterval);
+  S._mockTimerInterval = setInterval(() => {
+    if (S.screen !== "mockTest") { clearInterval(S._mockTimerInterval); S._mockTimerInterval = null; return; }
+    render();
+  }, 1000);
 }
 
 function renderMockResult() {
@@ -6631,12 +6690,12 @@ function renderMockResult() {
 
 function renderHome() {
   // Daily goal & streak calculation
-  const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||"30");
-  const today = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`;
+  const DAILY_GOAL = parseInt(localStorage.getItem("dailyGoal")||String(DEFAULT_DAILY_GOAL));
+  const today = localDateStr();
   const streak = JSON.parse(localStorage.getItem("studyStreak")||'{"count":0,"lastDate":"","todayCount":0,"todayDate":""}');
   if (streak.todayDate !== today) {
     // New day: check if yesterday was active
-    const _yd = new Date(Date.now()-86400000); const yesterday = `${_yd.getFullYear()}-${String(_yd.getMonth()+1).padStart(2,'0')}-${String(_yd.getDate()).padStart(2,'0')}`;
+    const yesterday = localYesterdayStr();
     if (streak.lastDate === yesterday && streak.todayCount >= DAILY_GOAL) {
       streak.count++;
     } else if (streak.lastDate !== yesterday) {
@@ -6676,7 +6735,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02b · swipe + bookmark + speed + streak + graph + drill + remind + diverse shuffle · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02c · code review fixes (XSS/timer/perf/constants) · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6733,17 +6792,22 @@ function renderHome() {
       if (el) el.textContent = counts[p.id] ? `${counts[p.id]}問` : "0";
     }
   });
-  judgeGetAll().then(history => {
-    const toeicH = history.filter(h => h.part !== "vocab");
+  const allPartIds = PARTS.map(p=>p.id);
+  judgeGetRecentByParts(allPartIds, PART_RECENT_N).then(recentByPart => {
     const el = $("homeLevel");
     if (!el) return;
-    if (toeicH.length < 5) {
+    // Count total recent items across all parts
+    let totalItems = 0;
+    for (const pid of allPartIds) totalItems += (recentByPart[pid]||[]).length;
+    if (totalItems < 5) {
       el.innerHTML = `<div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
-        <div style="font-size:15px;font-weight:700;color:#94a3b8;margin-top:2px">データ不足（${toeicH.length}/5問）</div>
+        <div style="font-size:15px;font-weight:700;color:#94a3b8;margin-top:2px">データ不足（${totalItems}/5問）</div>
         <div style="font-size:10px;color:#7a8ea5">学習を進めると実力レベルが表示されます</div>`;
       return;
     }
-    const rate = toeicH.filter(h=>h.correct).length / toeicH.length;
+    let allCorrect = 0;
+    for (const pid of allPartIds) { allCorrect += (recentByPart[pid]||[]).filter(h=>h.correct).length; }
+    const rate = allCorrect / totalItems;
     const estLevel = rate >= 0.75 ? "advanced" : rate >= 0.5 ? "intermediate" : "beginner";
     const lvInfo = LEVELS.find(l=>l.id===estLevel);
     // IRT推定（実力診断と同じロジック）
@@ -6761,15 +6825,12 @@ function renderHome() {
     function dToLv(d) { return d >= 750 ? "advanced" : d >= 500 ? "intermediate" : "beginner"; }
     const LV_FLOOR = {beginner: 0, intermediate: 450, advanced: 650};
     function effDiff(h) { return Math.max(h.difficulty||0, LV_FLOOR[h.level]||0); }
-    const HPART_N = 50;
     const hPartsL = ["part1","part2","part3","part4"];
     const hPartsR = ["part5","part6","part7"];
     function estimateHomeSection(partIds) {
       const byLv = {};
       for (const pid of partIds) {
-        const pItems = toeicH.filter(h=>h.part===pid);
-        pItems.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-        pItems.slice(0, HPART_N).forEach(h => {
+        (recentByPart[pid]||[]).forEach(h => {
           const lv = dToLv(effDiff(h));
           if (!byLv[lv]) byLv[lv]={c:0,t:0};
           byLv[lv].t++; if (h.correct) byLv[lv].c++;
@@ -6786,15 +6847,14 @@ function renderHome() {
     const lScore = estimateHomeSection(hPartsL);
     const rScore = estimateHomeSection(hPartsR);
     const estScore = lScore + rScore;
-    const recentTotal = toeicH.length;
     S.level = estLevel;
     el.innerHTML = `<div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
       <div style="display:flex;justify-content:center;align-items:baseline;gap:8px;margin-top:4px">
         <span style="font-size:22px;font-weight:800;color:${lvInfo?.color||'#94a3b8'}">${lvInfo?.label||'—'}</span>
         <span style="font-size:14px;color:#a0b4c8">推定 ${estScore}点</span>
       </div>
-      <div style="font-size:10px;color:#7a8ea5">L:${lScore} R:${rScore} ｜ 各パート直近${HPART_N}問（全${toeicH.length}問）</div>`;
-  }).catch(()=>{});
+      <div style="font-size:10px;color:#7a8ea5">L:${lScore} R:${rScore} ｜ 各パート直近${PART_RECENT_N}問（全${totalItems}問）</div>`;
+  }).catch(e=>console.warn("HOME IRT estimation failed:", e));
 
   // Stock play handlers
   document.querySelectorAll("[data-home-rnd]").forEach(el=>{
@@ -6998,7 +7058,7 @@ function renderStudy() {
 
     // ── Part 1: Scene image (photo ONLY — no text description in real TOEIC) ──
     if (S.part==="part1") {
-      if (S.sceneImgUrl) inner+=`<div class="scene-img"><img src="${S.sceneImgUrl}" alt="TOEIC Scene"></div>`;
+      if (S.sceneImgUrl && safeImgUrl(S.sceneImgUrl)) inner+=`<div class="scene-img"><img src="${safeImgUrl(S.sceneImgUrl)}" alt="TOEIC Scene"></div>`;
       else {
         // No image available — show placeholder, NOT the scene text (that would give away the answer)
         inner+=`<div style="padding:40px;text-align:center;background:#243040;border-radius:12px;margin-bottom:12px">
