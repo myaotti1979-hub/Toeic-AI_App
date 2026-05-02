@@ -213,6 +213,8 @@ let S = {
   timeAttackMode: JSON.parse(localStorage.getItem("timeAttackMode")||"false"), // 時間制限モード
   timerStart: 0, timerFrozen: 0, // 問題表示開始時刻 / 回答時の凍結時間
   speedDrillMode: JSON.parse(localStorage.getItem("speedDrillMode")||"false"),
+  azureSpeechKey: localStorage.getItem("azure_speech_key")||"",
+  azureSpeechRegion: localStorage.getItem("azure_speech_region")||"eastus",
   _readingStartTime: 0,  // WPM tracking for Part 7
   _mistakeReasonPending: null, // {part, level, type, qi, qText, elapsed, diff} waiting for reason
 };
@@ -3313,6 +3315,7 @@ function render() {
   else if (S.screen==="shadowing") renderShadowing();
   else if (S.screen==="writing") renderWriting();
   else if (S.screen==="colloQuiz") renderColloQuiz();
+  else if (S.screen==="rolePlay") renderRolePlay();
   else                          renderStudy();
 }
 
@@ -3330,6 +3333,15 @@ function renderApiKey() {
         <button class="btn-s" id="skipApiKey" style="width:100%;padding:12px;font-size:14px;color:#60a5fa">APIキーなしで始める →</button>
         <p style="font-size:11px;color:#475569;margin-top:8px">ストック問題の学習・単語帳・フラッシュカードが利用できます。<br>問題生成・難易度判定にはAPIキーが必要です。</p>
       </div>
+      <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px">
+        <p style="font-size:12px;color:#7a8ea5;margin-bottom:6px">🎭 ロールプレイ用（任意）</p>
+        <div style="display:flex;gap:4px;margin-bottom:6px">
+          <input id="azureRegion" type="text" placeholder="リージョン (例: eastus)" value="${S.azureSpeechRegion}" style="flex:1;padding:8px;background:#243040;border:1px solid #3a4d63;border-radius:6px;color:#dce6f0;font-size:12px">
+          <input id="azureKey" type="password" placeholder="Azure Speech Key" value="${S.azureSpeechKey?'••••••':''}" style="flex:2;padding:8px;background:#243040;border:1px solid #3a4d63;border-radius:6px;color:#dce6f0;font-size:12px">
+        </div>
+        <button class="btn-s" id="azureSaveBtn" style="width:100%;padding:8px;font-size:11px;color:#34d399">Azure Speech キーを保存</button>
+        <p style="font-size:10px;color:#475569;margin-top:4px">発音チェック付きロールプレイに使用。<a href="https://portal.azure.com" target="_blank" style="color:#7b9cf7">Azure Portal</a>で取得</p>
+      </div>
       <div style="margin-top:12px">
         <button class="btn-s" id="importOnSetup" style="width:100%;padding:10px;font-size:13px;color:#4ade80">📥 問題データをインポート</button>
         <input type="file" id="setupFileInput" accept=".json" multiple style="display:none">
@@ -3342,6 +3354,12 @@ function renderApiKey() {
     S.apiKey=k; S.screen="home"; render();
   };
   $("skipApiKey").onclick=()=>{ S.screen="home"; render(); };
+  const azSave=$("azureSaveBtn"); if(azSave) azSave.onclick=()=>{
+    const r=$("azureRegion").value.trim(); const k=$("azureKey").value.trim();
+    if(k && !k.startsWith("••")){localStorage.setItem("azure_speech_key",k);S.azureSpeechKey=k;}
+    if(r){localStorage.setItem("azure_speech_region",r);S.azureSpeechRegion=r;}
+    azSave.textContent="✅ 保存しました"; setTimeout(()=>{azSave.textContent="Azure Speech キーを保存";},2000);
+  };
   const isb=$("importOnSetup"); if(isb) isb.onclick=()=>$("setupFileInput").click();
   const sfi=$("setupFileInput"); if(sfi) sfi.onchange=async(e)=>{
     const files = Array.from(e.target.files);
@@ -6958,7 +6976,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02i · stock screen simplified (gen+manage only) · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02k · role-play rec 20s + Azure pron assessment · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7243,6 +7261,7 @@ function renderHome() {
   };
   const sdt=$("speedDrillToggle"); if(sdt)sdt.onclick=()=>{S.speedDrillMode=!S.speedDrillMode;localStorage.setItem("speedDrillMode",JSON.stringify(S.speedDrillMode));render();};
   const ck=$("changeKey"); if(ck)ck.onclick=()=>{ localStorage.removeItem("gemini_api_key"); S.apiKey=""; S.screen="apikey"; render(); };
+  const azk=$("changeAzureKey"); if(azk)azk.onclick=()=>{ S.screen="apikey"; render(); };
   const nb=$("notifBtn"); if(nb)nb.onclick=async()=>{
     if (!("Notification" in window)) { alert("このブラウザは通知に対応していません"); return; }
     const perm = await Notification.requestPermission();
@@ -7458,7 +7477,7 @@ function renderStudy() {
             <span style="color:${wpmColor};font-weight:700">${wpm} WPM ${wpm>=WPM_TARGET?"✅":""}${wpm<120?"(目標:${WPM_TARGET})":""}</span>
           </div>`;
         })():""}
-        ${(["part3","part4"].includes(S.part) && isLastQ)?`<button class="btn-s" id="shadowingBtn" style="margin-top:8px;width:100%;padding:10px;font-size:13px;color:#34d399;background:rgba(52,211,153,0.08);border-color:rgba(52,211,153,0.2)">🎙️ シャドーイング練習</button>`:""}
+        ${(["part3","part4"].includes(S.part) && isLastQ)?`<button class="btn-s" id="rolePlayBtn" style="margin-top:8px;width:100%;padding:10px;font-size:13px;color:#818cf8;background:rgba(129,140,248,0.08);border-color:rgba(129,140,248,0.2)">🎭 ロールプレイ（発音チェック）</button><button class="btn-s" id="shadowingBtn" style="margin-top:8px;width:100%;padding:10px;font-size:13px;color:#34d399;background:rgba(52,211,153,0.08);border-color:rgba(52,211,153,0.2)">🎙️ シャドーイング練習</button>`:""}
         ${(S.part==="part5" && S.apiKey)?`<button class="btn-s" id="writingBtn" style="margin-top:8px;width:100%;padding:10px;font-size:13px;color:#818cf8;background:rgba(129,140,248,0.08);border-color:rgba(129,140,248,0.2)">✍️ 英作文練習</button>`:""}
       </div>`;
       // 和訳トグル（解説の直後に表示 — Part 3,4,5,6,7）
@@ -7686,6 +7705,13 @@ function renderStudy() {
       btn.parentElement.parentElement.innerHTML = `<div style="font-size:11px;color:#7a8ea5;text-align:center">✅ ${MISTAKE_REASONS.find(r=>r.id===reason)?.icon||""} ${MISTAKE_REASONS.find(r=>r.id===reason)?.label||reason} を記録</div>`;
     };
   });
+  // Role-play button
+  const rpBtn=$("rolePlayBtn"); if(rpBtn) rpBtn.onclick=()=>{
+    S._rpQSet = S.qSet;
+    S._rpRole = null; S._rpIdx = 0; S._rpResults = []; S._rpCurrentResult = null; S._rpRevealed = false;
+    S.screen = "rolePlay";
+    render();
+  };
   // Shadowing button
   const shBtn=$("shadowingBtn"); if(shBtn) shBtn.onclick=()=>{
     S._shadowQSet = S.qSet;
@@ -8023,6 +8049,250 @@ function renderColloQuiz() {
     };
   });
   const nxt = $("colloNext"); if(nxt) nxt.onclick = () => { S._colloIdx++; S._colloQ = null; render(); };
+}
+
+/* ── WAV Recording Utility ── */
+async function recordWav(maxDurationMs=20000) {
+  const stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:16000}});
+  const ctx = new AudioContext({sampleRate:16000});
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks = [];
+  proc.onaudioprocess = e => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  src.connect(proc); proc.connect(ctx.destination);
+  return {
+    stop: async () => {
+      proc.disconnect(); src.disconnect(); stream.getTracks().forEach(t=>t.stop()); await ctx.close();
+      const samples = new Float32Array(chunks.reduce((a,c)=>a+c.length,0));
+      let offset=0; for(const c of chunks){samples.set(c,offset);offset+=c.length;}
+      // Convert to 16-bit PCM WAV
+      const buf = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buf);
+      const writeStr = (o,s) => { for(let i=0;i<s.length;i++) view.setUint8(o+i,s.charCodeAt(i)); };
+      writeStr(0,'RIFF'); view.setUint32(4,36+samples.length*2,true); writeStr(8,'WAVE');
+      writeStr(12,'fmt '); view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,1,true);
+      view.setUint32(24,16000,true); view.setUint32(28,32000,true); view.setUint16(32,2,true); view.setUint16(34,16,true);
+      writeStr(36,'data'); view.setUint32(40,samples.length*2,true);
+      for(let i=0;i<samples.length;i++){const s=Math.max(-1,Math.min(1,samples[i]));view.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);}
+      return new Blob([buf],{type:'audio/wav'});
+    },
+    cancel: () => { proc.disconnect(); src.disconnect(); stream.getTracks().forEach(t=>t.stop()); ctx.close(); }
+  };
+}
+
+/* ── Azure Pronunciation Assessment ── */
+async function azurePronAssess(wavBlob, referenceText) {
+  if (!S.azureSpeechKey || !S.azureSpeechRegion) throw new Error("Azure Speech キーが未設定です");
+  const params = JSON.stringify({ReferenceText:referenceText, GradingSystem:"HundredMark", Granularity:"Word", Dimension:"Comprehensive", EnableProsodyAssessment:"True"});
+  const pronHeader = btoa(unescape(encodeURIComponent(params)));
+  const url = `https://${S.azureSpeechRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US&format=detailed`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Ocp-Apim-Subscription-Key": S.azureSpeechKey,
+      "Content-Type": "audio/wav; codecs=audio/pcm; samplerate=16000",
+      "Pronunciation-Assessment": pronHeader,
+      "Accept": "application/json"
+    },
+    body: wavBlob
+  });
+  if (!resp.ok) throw new Error(`Azure API error: ${resp.status} ${resp.statusText}`);
+  const data = await resp.json();
+  if (data.RecognitionStatus !== "Success") throw new Error(`認識失敗: ${data.RecognitionStatus}`);
+  const best = data.NBest?.[0] || {};
+  return {
+    text: best.Display || "",
+    pronScore: best.PronScore || 0,
+    accuracyScore: best.AccuracyScore || 0,
+    fluencyScore: best.FluencyScore || 0,
+    completenessScore: best.CompletenessScore || 0,
+    prosodyScore: best.ProsodyScore || 0,
+    words: (best.Words || []).map(w => ({
+      word: w.Word, accuracy: w.AccuracyScore || 0, error: w.ErrorType || "None"
+    }))
+  };
+}
+
+/* ── ロールプレイ画面 ── */
+function renderRolePlay() {
+  const qs = S._rpQSet;
+  if (!qs || !qs.conversation) { S.screen = "study"; render(); return; }
+  const lines = qs.conversation.split("\n").map(l=>l.trim()).filter(Boolean);
+  const speakers = [...new Set(lines.map(l=>(l.match(/^((?:Man|Woman)\s*\d?)\s*:/i)||[])[1]).filter(Boolean))];
+  const myRole = S._rpRole || speakers[0] || "Man";
+  const idx = S._rpIdx || 0;
+  const results = S._rpResults || [];
+
+  // Role selection
+  if (!S._rpRole) {
+    app.innerHTML = `
+      <div class="header"><h1 style="font-size:20px">🎭 ロールプレイ</h1><div class="sub">役割を選んでください</div></div>
+      <div style="padding:20px">
+        ${speakers.map(sp => `<button class="btn-p rp-role-btn" data-role="${sp}" style="margin:8px 0;padding:16px;font-size:16px">${sp==="Man"||sp.startsWith("Man")?"🙋‍♂️":"🙋‍♀️"} ${sp} として参加</button>`).join("")}
+        <button class="btn-s" id="rpBackBtn" style="margin-top:16px;width:100%;padding:10px;color:#7a8ea5">← 戻る</button>
+      </div>
+      ${!S.azureSpeechKey?`<div style="padding:12px;margin:0 20px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);border-radius:8px">
+        <div style="font-size:12px;color:#fbbf24">⚠️ Azure Speech APIキーが未設定です</div>
+        <div style="font-size:11px;color:#7a8ea5;margin-top:4px">発音チェックにはAzure Speechキーが必要です。APIキー設定画面から設定してください。</div>
+      </div>`:""}`;
+    document.querySelectorAll(".rp-role-btn").forEach(btn => {
+      btn.onclick = () => { S._rpRole = btn.dataset.role; S._rpIdx = 0; S._rpResults = []; render(); };
+    });
+    $("rpBackBtn").onclick = () => { S.screen = "study"; render(); };
+    return;
+  }
+
+  // Conversation complete
+  if (idx >= lines.length) {
+    const myResults = results.filter(r => r);
+    const avgPron = myResults.length ? Math.round(myResults.reduce((a,r)=>a+r.pronScore,0)/myResults.length) : 0;
+    const avgAcc = myResults.length ? Math.round(myResults.reduce((a,r)=>a+r.accuracyScore,0)/myResults.length) : 0;
+    const avgFlu = myResults.length ? Math.round(myResults.reduce((a,r)=>a+r.fluencyScore,0)/myResults.length) : 0;
+    const scoreColor = avgPron >= 80 ? "#4ade80" : avgPron >= 60 ? "#fbbf24" : "#f87171";
+    let wordReview = "";
+    myResults.forEach((r,ri) => {
+      if (r.words) {
+        wordReview += `<div style="margin-top:8px;font-size:11px;color:#7a8ea5">Line ${ri+1}:</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">`;
+        r.words.forEach(w => {
+          const c = w.accuracy >= 80 ? "#4ade80" : w.accuracy >= 50 ? "#fbbf24" : "#f87171";
+          wordReview += `<span style="padding:2px 6px;border-radius:4px;font-size:13px;color:${c};background:rgba(${w.accuracy>=80?"74,222,128":w.accuracy>=50?"251,191,36":"248,113,113"},0.1)">${esc(w.word)}<sub style="font-size:9px">${Math.round(w.accuracy)}</sub></span>`;
+        });
+        wordReview += `</div>`;
+      }
+    });
+    app.innerHTML = `
+      <div class="header"><h1 style="font-size:20px">🎭 ロールプレイ完了</h1></div>
+      <div style="text-align:center;padding:20px">
+        <div style="font-size:48px;font-weight:900;color:${scoreColor}">${avgPron}</div>
+        <div style="font-size:13px;color:#7a8ea5">Pronunciation Score</div>
+        <div style="display:flex;justify-content:center;gap:16px;margin-top:12px">
+          <div><div style="font-size:10px;color:#7a8ea5">Accuracy</div><div style="font-size:18px;color:#dce6f0">${avgAcc}</div></div>
+          <div><div style="font-size:10px;color:#7a8ea5">Fluency</div><div style="font-size:18px;color:#dce6f0">${avgFlu}</div></div>
+        </div>
+      </div>
+      <div style="padding:0 16px">${wordReview}</div>
+      <button class="btn-s" id="rpRetryBtn" style="margin:16px auto;display:block;padding:10px 24px;color:#818cf8">🔁 もう一度</button>
+      <button class="btn-p" id="rpDoneBtn" style="margin:8px 20px">← 問題に戻る</button>`;
+    $("rpRetryBtn").onclick = () => { S._rpIdx = 0; S._rpResults = []; render(); };
+    $("rpDoneBtn").onclick = () => { S._rpRole = null; S.screen = "study"; render(); };
+    return;
+  }
+
+  // Current line
+  const line = lines[idx];
+  const speakerMatch = line.match(/^((?:Man|Woman)\s*\d?)\s*:\s*(.*)/i);
+  const speaker = speakerMatch ? speakerMatch[1] : "";
+  const text = speakerMatch ? speakerMatch[2] : line;
+  const isMyTurn = speaker.toLowerCase().replace(/\s/g,"") === myRole.toLowerCase().replace(/\s/g,"");
+  const pct = Math.round(idx / lines.length * 100);
+
+  let resultHtml = "";
+  if (S._rpCurrentResult) {
+    const r = S._rpCurrentResult;
+    const sc = r.pronScore >= 80 ? "#4ade80" : r.pronScore >= 60 ? "#fbbf24" : "#f87171";
+    resultHtml = `<div style="margin-top:12px;padding:12px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:14px;font-weight:700;color:${sc}">Score: ${Math.round(r.pronScore)}</span>
+        <span style="font-size:11px;color:#7a8ea5">Acc:${Math.round(r.accuracyScore)} Flu:${Math.round(r.fluencyScore)}</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px">${r.words.map(w=>{
+        const c=w.accuracy>=80?"#4ade80":w.accuracy>=50?"#fbbf24":"#f87171";
+        return `<span style="padding:2px 5px;border-radius:4px;font-size:13px;color:${c};background:rgba(${w.accuracy>=80?"74,222,128":w.accuracy>=50?"251,191,36":"248,113,113"},0.08)">${esc(w.word)}<sub style="font-size:8px">${Math.round(w.accuracy)}</sub></span>`;
+      }).join("")}</div>
+    </div>`;
+  }
+
+  app.innerHTML = `
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:18px;margin:0">🎭 ロールプレイ</h1><div class="sub">${idx+1}/${lines.length} | ${myRole}役</div></div>
+      <button class="btn-s" id="rpQuitBtn" style="font-size:12px;padding:6px 14px">✕ 終了</button>
+    </div>
+    <div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:12px">
+      <div style="height:100%;width:${pct}%;background:#818cf8;transition:width 0.3s"></div>
+    </div>
+    <div style="padding:12px;background:rgba(${isMyTurn?"129,140,248":"52,211,153"},0.06);border:1px solid rgba(${isMyTurn?"129,140,248":"52,211,153"},0.15);border-radius:12px;margin-bottom:12px">
+      <div style="font-size:11px;color:${isMyTurn?"#818cf8":"#34d399"};margin-bottom:6px;font-weight:600">${isMyTurn?"🎤 あなたの番 ("+myRole+")":"🔊 "+speaker}</div>
+      ${isMyTurn ? `
+        <div id="rpRefText" style="font-size:15px;line-height:1.7;color:#dce6f0;${S._rpRevealed?"":"filter:blur(5px);user-select:none"}">${esc(text)}</div>
+      ` : `
+        <div style="font-size:15px;line-height:1.7;color:#dce6f0">${esc(text)}</div>
+      `}
+    </div>
+    ${isMyTurn ? `
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button class="btn-s" id="rpRecordBtn" style="flex:1;padding:14px;font-size:15px;color:#ef4444;background:rgba(239,68,68,0.1)">🎤 録音開始</button>
+        <button class="btn-s" id="rpRevealBtn" style="padding:14px;font-size:13px;color:#60a5fa">${S._rpRevealed?"🙈":"👁️"}</button>
+      </div>
+      <div id="rpRecStatus" style="font-size:12px;color:#7a8ea5;text-align:center;min-height:20px">${S.azureSpeechKey?"タップして話してください":"⚠️ Azure Speechキー未設定"}</div>
+      ${resultHtml}
+      ${S._rpCurrentResult?`<button class="btn-p" id="rpNextBtn" style="margin-top:12px">次へ →</button>`:""}
+    ` : `
+      <button class="btn-s" id="rpListenBtn" style="width:100%;padding:14px;font-size:14px;color:#34d399;background:rgba(52,211,153,0.1)">🔊 再生する</button>
+      <div id="rpListenStatus" style="font-size:12px;color:#7a8ea5;text-align:center;margin-top:6px"></div>
+      <button class="btn-p" id="rpNextBtn" style="margin-top:12px">次へ →</button>
+    `}`;
+
+  $("rpQuitBtn").onclick = () => { speechSynthesis.cancel(); S._rpRole = null; S.screen = "study"; render(); };
+  const nextBtn = $("rpNextBtn");
+  if (nextBtn) nextBtn.onclick = () => {
+    if (isMyTurn && S._rpCurrentResult) { S._rpResults.push(S._rpCurrentResult); }
+    else if (!isMyTurn) { S._rpResults.push(null); }
+    S._rpIdx++; S._rpCurrentResult = null; S._rpRevealed = false; render();
+  };
+
+  if (!isMyTurn) {
+    const listenBtn = $("rpListenBtn");
+    if (listenBtn) listenBtn.onclick = () => {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-US"; u.rate = 0.9;
+      const st = $("rpListenStatus");
+      if(st) st.textContent = "再生中...";
+      u.onend = () => { if(st) st.textContent = ""; };
+      speechSynthesis.speak(u);
+    };
+  } else {
+    const revBtn = $("rpRevealBtn");
+    if (revBtn) revBtn.onclick = () => { S._rpRevealed = !S._rpRevealed; render(); };
+
+    const recBtn = $("rpRecordBtn");
+    if (recBtn) recBtn.onclick = async () => {
+      if (!S.azureSpeechKey) { alert("Azure Speech APIキーが設定されていません。\nAPIキー設定画面から設定してください。"); return; }
+      const statusEl = $("rpRecStatus");
+      try {
+        recBtn.disabled = true;
+        recBtn.textContent = "⏳ マイク準備中...";
+        const recorder = await recordWav(20000);
+        recBtn.textContent = "⏺️ 録音中... (タップで停止)";
+        recBtn.style.color = "#ef4444";
+        recBtn.style.background = "rgba(239,68,68,0.2)";
+        if (statusEl) statusEl.textContent = "話してください...";
+        // Auto-stop after 20 seconds
+        const autoStop = setTimeout(async () => { recBtn.click(); }, 20000);
+        recBtn.onclick = async () => {
+          clearTimeout(autoStop);
+          recBtn.disabled = true;
+          recBtn.textContent = "⏳ 分析中...";
+          if (statusEl) statusEl.textContent = "Azure に送信中...";
+          try {
+            const wav = await recorder.stop();
+            const cleanRef = text.replace(/^(?:Man|Woman)\s*\d?\s*:\s*/i, "").trim();
+            const result = await azurePronAssess(wav, cleanRef);
+            S._rpCurrentResult = result;
+            render();
+          } catch(e) {
+            if (statusEl) statusEl.textContent = "❌ " + e.message;
+            recBtn.disabled = false;
+            recBtn.textContent = "🎤 もう一度録音";
+            recBtn.onclick = arguments.callee;
+          }
+        };
+      } catch(e) {
+        if (statusEl) statusEl.textContent = "❌ マイクにアクセスできません: " + e.message;
+        recBtn.disabled = false; recBtn.textContent = "🎤 録音開始";
+      }
+    };
+  }
 }
 
 function ctxBlock(icon, label, text) {
