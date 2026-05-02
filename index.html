@@ -4026,19 +4026,29 @@ ${texts}`, GEMINI_FLASH);
           });
           if(!texts.length)continue;
           try {
-            const raw=await geminiText(`Rate distractor quality for these TOEIC questions.
-Each line is tagged with [partN]. Apply DIFFERENT criteria by part:
+            const raw=await geminiText(`You are a TOEIC test quality reviewer. Rate distractor (wrong answer) quality for these questions.
+Each line is tagged with [partN]. Apply the correct criteria for each part:
 
-[part1] Photo description: All 4 choices must be grammatically correct sentences. Wrong answers describe things NOT in the photo. Rate C if a distractor is grammatically broken as a sentence.
-[part2] Q&A: All 3 responses must be grammatically correct sentences. Wrong answers are off-topic or answer a different question. Rate C if a response is not a valid English sentence.
-[part3][part4] Conversation/Talk comprehension: Distractors should be plausible based on context but factually wrong. Rate C if a distractor is nonsensical or unrelated to the topic.
-[part5] Grammar/Vocabulary fill-in: Distractors are INTENTIONALLY grammatically wrong in context (wrong tense, wrong form, wrong word). Rate C only if a distractor is not a real English word, or if multiple distractors are SO similar to the correct answer that the question has multiple valid answers.
-[part6][part7] Reading comprehension: Same as part3/part4. Rate C if distractors are obviously unrelated to the passage.
+[part1] Photo description: 4 spoken statements about a photo. All 4 MUST be grammatically correct, complete sentences. Distractors describe things not in the photo (wrong subject, wrong action, wrong state, wrong location). Rate C if any distractor is not a valid English sentence.
+
+[part2] Question-Response: 1 question + 3 spoken responses. Responses CAN be sentence fragments (e.g. "Down the hall", "Not until Friday", "Sure, go ahead") — this is normal conversational English, NOT a defect. Distractors use traps: repeated keywords with different meaning, similar-sounding words, related topic but wrong answer. Rate C only if a response is gibberish or completely unrelated to any possible question.
+
+[part3][part4] Conversation/Talk comprehension: 4 written choices per question. Good distractors use information from the conversation but answer a DIFFERENT question, or paraphrase incorrectly. Rate C if a distractor is completely unrelated to the conversation topic or is nonsensical.
+
+[part5] Incomplete Sentences — THREE question sub-types exist:
+  - Word form (apply/applicant/application/applicable): distractors are INTENTIONALLY the wrong part of speech. This is correct design — do NOT rate C for this.
+  - Grammar (tense/preposition/conjunction): distractors are INTENTIONALLY grammatically wrong in context. This is correct design — do NOT rate C for this.
+  - Vocabulary (4 different words, same part of speech): all 4 should be real words that are grammatically valid in the blank, but only one has the right meaning/collocation.
+  Rate C only if: a distractor is not a real English word, OR a vocabulary question has distractors that are obviously the wrong part of speech (making it trivially easy).
+
+[part6] Text Completion — similar to Part 5, plus "insert sentence" questions where all 4 choices are complete sentences and only one fits the passage flow. Rate C only if choices are obviously unrelated to the passage topic.
+
+[part7] Reading Comprehension: Good distractors use details FROM the passage but answer incorrectly (e.g. true statement that doesn't answer the specific question, or a detail from a different part of the passage). Rate C if distractors are completely unrelated to the passage content.
 
 Rating scale:
-A = All distractors are well-crafted for their part type
-B = Mostly good, 1 distractor is weak (too easy to eliminate)
-C = Multiple distractors are poorly crafted (broken, nonsensical, or make the question trivially easy)
+A = All distractors are well-crafted for their part type (would challenge a real test-taker)
+B = Mostly good, but 1 distractor is too easy to eliminate
+C = Multiple distractors are poorly crafted (gibberish, wrong language, or make the question trivially easy by elimination)
 
 Return ONLY one letter per line: "1-Q1: A"
 

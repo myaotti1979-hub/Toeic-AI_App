@@ -1462,19 +1462,27 @@ def check_distractor_quality(items, api_key, on_progress=None):
                 texts.append(f"{bi+1}-Q{qi+1}. [{part}] {question[:100]} | Wrong: {' / '.join(wrong)}")
         if not texts:
             continue
-        prompt = f"""Rate distractor quality for these TOEIC questions.
-Each line is tagged with [partN]. Apply DIFFERENT criteria by part:
+        prompt = f"""You are a TOEIC test quality reviewer. Rate distractor (wrong answer) quality for these questions.
+Each line is tagged with [partN]. Apply the correct criteria for each part:
 
-[part1] Photo description: All 4 choices must be grammatically correct sentences. Wrong answers describe things NOT in the photo. Rate C if a distractor is grammatically broken as a sentence.
-[part2] Q&A: All 3 responses must be grammatically correct sentences. Wrong answers are off-topic or answer a different question. Rate C if a response is not a valid English sentence.
-[part3][part4] Conversation/Talk comprehension: Distractors should be plausible based on context but factually wrong. Rate C if a distractor is nonsensical or unrelated to the topic.
-[part5] Grammar/Vocabulary fill-in: Distractors are INTENTIONALLY grammatically wrong in context (wrong tense, wrong form, wrong word). Rate C only if a distractor is not a real English word, or if multiple distractors are SO similar to the correct answer that the question has multiple valid answers.
-[part6][part7] Reading comprehension: Same as part3/part4. Rate C if distractors are obviously unrelated to the passage.
+[part1] Photo description: 4 spoken statements about a photo. All 4 MUST be grammatically correct, complete sentences. Distractors describe things not in the photo. Rate C if any distractor is not a valid English sentence.
 
-Rating scale:
-A = All distractors are well-crafted for their part type
-B = Mostly good, 1 distractor is weak (too easy to eliminate)
-C = Multiple distractors are poorly crafted (broken, nonsensical, or make the question trivially easy)
+[part2] Question-Response: 1 question + 3 spoken responses. Responses CAN be sentence fragments ("Down the hall", "Not until Friday") — this is normal conversational English, NOT a defect. Rate C only if a response is gibberish or completely unrelated.
+
+[part3][part4] Conversation/Talk comprehension: Good distractors use information from the conversation but answer a DIFFERENT question. Rate C if completely unrelated or nonsensical.
+
+[part5] Incomplete Sentences — THREE sub-types:
+  - Word form (apply/applicant/application/applicable): distractors are INTENTIONALLY wrong part of speech. Do NOT rate C.
+  - Grammar (tense/preposition/conjunction): distractors are INTENTIONALLY grammatically wrong. Do NOT rate C.
+  - Vocabulary (4 different words, same part of speech): all should be real words. Rate C only if a distractor is not a real word or obviously wrong part of speech.
+
+[part6] Text Completion: similar to Part 5, plus sentence insertion. Rate C only if choices are obviously unrelated to passage.
+
+[part7] Reading Comprehension: Good distractors use details FROM the passage but answer incorrectly. Rate C if completely unrelated to passage content.
+
+A = All distractors well-crafted (would challenge a real test-taker)
+B = Mostly good, 1 distractor too easy to eliminate
+C = Multiple distractors poorly crafted (gibberish, or trivially easy by elimination)
 
 Return ONLY one letter per line: "1-Q1: A"
 
