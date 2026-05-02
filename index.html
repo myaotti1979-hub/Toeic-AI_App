@@ -204,6 +204,25 @@ let S = {
 
 if (S.apiKey) S.screen = "home";
 
+// Study reminder notification
+(function checkReminder() {
+  if (localStorage.getItem("reminderEnabled") !== "true") return;
+  const hour = parseInt(localStorage.getItem("reminderHour") || "20");
+  const now = new Date();
+  const lastNotif = localStorage.getItem("lastNotifDate") || "";
+  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  if (lastNotif === today) return;
+  if (now.getHours() >= hour && "Notification" in window && Notification.permission === "granted") {
+    const streak = JSON.parse(localStorage.getItem("studyStreak")||'{}');
+    const todayCount = (streak.todayDate === today) ? streak.todayCount || 0 : 0;
+    const goal = parseInt(localStorage.getItem("dailyGoal")||"30");
+    if (todayCount < goal) {
+      new Notification("📝 TOEIC Trainer", {body: `今日はまだ${todayCount}問！目標${goal}問まであと${goal-todayCount}問`, icon: "📝"});
+      localStorage.setItem("lastNotifDate", today);
+    }
+  }
+})();
+
 const $ = id => document.getElementById(id);
 const app = document.getElementById("app");
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -2630,6 +2649,7 @@ async function speak(text, onEnd) {
   await speakGemini(text, onEnd);
 }
 let _curAudio=null;
+function _applyAudioSpeed(a) { a.playbackRate = parseFloat($("audioSpeed")?.value || localStorage.getItem("audioSpeed") || "1"); return a; }
 const _ttsCache=new Map();
 let _seqId=0;
 
@@ -2646,9 +2666,12 @@ async function speakGemini(text, onEnd, {signal}={}) {
         encodeOpus(pcm).then(opus=>{if(S.qSet)S.qSet._audioOpus=opus;}).catch(e=>console.warn('opus encode failed:', e));
       }
     }
-    const a=new Audio(url); _curAudio=a;
+    const a=new Audio(url); _curAudio=a; _applyAudioSpeed(a);
     a.onended=()=>{_curAudio=null;onEnd&&onEnd();};
     a.onerror=()=>{_curAudio=null;onEnd&&onEnd();};
+    // 0.5秒の準備時間（最初のフレーズを聞き逃さないため）
+    await new Promise(r=>setTimeout(r, 500));
+    if (_curAudio !== a) return; // 停止されていたらキャンセル
     await a.play();
   } catch(e) {
     console.error("TTS failed:", e.message);
@@ -2707,10 +2730,13 @@ async function speakConv(text, onEnd, speakers, {signal}={}) {
 /* ── Sequential playback ── */
 async function playSeq(urls, onEnd) {
   const myId=++_seqId;
+  // 0.5秒の準備時間
+  await new Promise(r=>setTimeout(r, 500));
+  if (_seqId!==myId) { onEnd&&onEnd(); return; }
   for (const url of urls.filter(Boolean)) {
     if (_seqId!==myId) break;
     await new Promise(r=>{
-      const a=new Audio(url); _curAudio=a;
+      const a=new Audio(url); _curAudio=a; _applyAudioSpeed(a);
       a.onended=()=>{if(_curAudio===a)_curAudio=null;r();};
       a.onerror=()=>{if(_curAudio===a)_curAudio=null;r();};
       a.play().catch(()=>{if(_curAudio===a)_curAudio=null;r();});
@@ -3272,6 +3298,7 @@ async function loadStockItem(itemOrId) {
   S.part=item.part; S.level=item.level;
   S.screen="study"; S.stockMode=true; S.stockId=item.id;
   S.stockDifficulty = item.difficulty || 0;
+  S._currentBookmarked = item.bookmarked || false;
   // Don't reset stats when advancing through a playlist — accumulate across sessions
   if (!S._stockPlaylistActive) {
     S.stats={correct:0,wrong:0}; S.streak=0;
@@ -3994,10 +4021,22 @@ function renderStockCreate() {
 
   // Event handlers
   const rb=$("retryBtn"); if(rb)rb.onclick=()=>{ S.error=null; loadNewSet(); };
+
+  // Swipe gesture for next question
+  let _swX=0,_swY=0;
+  app.ontouchstart=(e)=>{_swX=e.touches[0].clientX;_swY=e.touches[0].clientY;};
+  app.ontouchend=(e)=>{
+    const dx=e.changedTouches[0].clientX-_swX, dy=e.changedTouches[0].clientY-_swY;
+    if(Math.abs(dx)>80 && Math.abs(dx)>Math.abs(dy)*1.5) {
+      if(dx<0) { const nb=$("nextBtn")||$("nextSetBtn"); if(nb)nb.click(); }
+      if(dx>0) { const pb=$("prevQBtn"); if(pb)pb.click(); }
+    }
+  };
   const bb3=$("backBtn"); if(bb3) bb3.onclick=()=>{ stopSpeak(); S.stockCreateMode=false; S.stockCreatePaused=false; S.screen="home"; render(); };
 
   // Audio
   const pa=$("playAudio");
+  const as=$("audioSpeed"); if(as) { as.value=localStorage.getItem("audioSpeed")||"1"; as.onchange=()=>{ localStorage.setItem("audioSpeed",as.value); if(_curAudio) _curAudio.playbackRate=parseFloat(as.value); }; }
   if (pa&&S.qSet?.audio) {
     pa.onclick=async()=>{
       if (_curAudio) { stopSpeak(); setAudioBtn(pa,"idle"); return; }
@@ -4494,7 +4533,7 @@ async function renderDiagnosis() {
           <span style="font-size:12px;color:#a0b4c8">${t.part} / ${t.type}</span>
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:12px;color:${color};font-weight:700">${t.rate}% (${t.correct}/${t.total})</span>
-            <button class="btn-s drill-btn" data-drill-part="${t.part}" style="font-size:10px;padding:2px 8px;color:#f472b6">🔥 特訓</button>
+            <button class="btn-s drill-btn" data-drill-part="${t.part}" style="font-size:10px;padding:2px 8px;color:#f472b6">🔥 特訓</button> <button class="btn-s drill-btn" data-drill-wrong="${t.type}" style="font-size:10px;padding:2px 8px;color:#fbbf24">❌ 復習</button>
           </div>
         </div>`;
       }).join("")
@@ -4811,23 +4850,53 @@ async function renderDiagnosis() {
   };
   // 🔥 弱点ドリル: そのパートのストックをランダムで開始
   document.querySelectorAll(".drill-btn").forEach(el=>{
-    el.onclick=async()=>{
-      const part = el.dataset.drillPart;
-      const items = await stockGetAllLight(part);
-      if (items.length === 0) {
-        alert(`${part.toUpperCase()} のストックがありません。\n先にStreamlitで生成してインポートしてください。`);
-        return;
-      }
-      // Shuffle and start playlist
-      for(let i=items.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[items[i],items[j]]=[items[j],items[i]];}
-      S._stockReturnScreen = "diagnosis";
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
-      S.stockPlayIdx = 0;
-      S._stockPlaylistActive = false;
-      S.judgeMode = true;  // 判定モードONで特訓（結果が記録される）
-      localStorage.setItem("judgeMode","true");
-      await loadStockItem(items[0].id);
-    };
+    if (el.dataset.drillPart) {
+      el.onclick=async()=>{
+        const part = el.dataset.drillPart;
+        const items = await stockGetAllLight(part);
+        if (items.length === 0) {
+          alert(`${part.toUpperCase()} のストックがありません。`);
+          return;
+        }
+        const shuffled = diverseShuffle(items);
+        S._stockReturnScreen = "diagnosis";
+        S.stockPlaylist = shuffled.map(it=>({id:it.id, part:it.part}));
+        S.stockPlayIdx = 0;
+        S._stockPlaylistActive = false;
+        S.judgeMode = true;
+        localStorage.setItem("judgeMode","true");
+        await loadStockItem(shuffled[0].id);
+      };
+    }
+    if (el.dataset.drillWrong) {
+      el.onclick=async()=>{
+        // Get wrong answers from judgeDB for this type
+        const wrongType = el.dataset.drillWrong;
+        const history = await judgeGetAll();
+        const wrongParts = new Set(history.filter(h=>!h.correct && h.type===wrongType).map(h=>h.part));
+        if (wrongParts.size === 0) { alert("この弱点タイプの問題が見つかりません"); return; }
+        // Get stock items matching those parts with weak streaks
+        let weakItems = [];
+        for (const part of wrongParts) {
+          const items = await stockGetAllLight(part);
+          const weak = items.filter(it=>it.correctStreak!==undefined && it.correctStreak < 2);
+          weakItems.push(...weak);
+        }
+        if (weakItems.length === 0) {
+          // Fallback: get all items from those parts
+          for (const part of wrongParts) weakItems.push(...(await stockGetAllLight(part)));
+        }
+        if (weakItems.length === 0) { alert("ストックに該当問題がありません"); return; }
+        const shuffled = diverseShuffle(weakItems);
+        S._stockReturnScreen = "diagnosis";
+        S.stockPlaylist = shuffled.map(it=>({id:it.id, part:it.part}));
+        S.stockPlayIdx = 0;
+        S._stockPlaylistActive = false;
+        S.judgeMode = true;
+        localStorage.setItem("judgeMode","true");
+        await loadStockItem(shuffled[0].id);
+      };
+    }
   });
 }
 
@@ -6533,6 +6602,16 @@ function renderMockResult() {
         const hist = JSON.parse(localStorage.getItem("mockHistory")||"[]");
         if (hist.length <= 1) return "";
         const recent = hist.slice(-10).reverse();
+        // Score trend graph
+        const scores = hist.slice(-10).map(h=>h.score);
+        let graphHtml = "";
+        if (scores.length >= 2) {
+          const gW=280,gH=100,pad=25;
+          const mn=Math.min(...scores)-50,mx=Math.max(...scores)+50;
+          const pts=scores.map((s,i)=>`${pad+i/(scores.length-1)*(gW-pad*2)},${pad+(1-(s-mn)/(mx-mn))*(gH-pad*2)}`).join(" ");
+          const dots=scores.map((s,i)=>{const x=pad+i/(scores.length-1)*(gW-pad*2),y=pad+(1-(s-mn)/(mx-mn))*(gH-pad*2);return `<circle cx="${x}" cy="${y}" r="3" fill="#818cf8"/><text x="${x}" y="${y-6}" fill="#dce6f0" font-size="8" text-anchor="middle">${s}</text>`;}).join("");
+          graphHtml=`<div style="text-align:center;margin:8px 0"><svg width="${gW}" height="${gH}" viewBox="0 0 ${gW} ${gH}"><line x1="${pad}" y1="${gH-pad}" x2="${gW-pad}" y2="${gH-pad}" stroke="#334155"/><polyline points="${pts}" fill="none" stroke="#818cf8" stroke-width="2"/>${dots}</svg></div>`;
+        }
         let rows = recent.map(h => {
           const d = new Date(h.date);
           const dt = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
@@ -6542,7 +6621,7 @@ function renderMockResult() {
             <span style="color:${col};font-weight:600">${h.score} <span style="color:#7a8ea5;font-weight:400">L${h.lScore} R${h.rScore}</span></span>
           </div>`;
         }).join("");
-        return `<div style="margin-top:20px"><div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:6px">📈 模試スコア履歴</div><div style="background:#243040;border-radius:10px;padding:4px 0">${rows}</div></div>`;
+        return `<div style="margin-top:20px"><div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:6px">📈 模試スコア履歴</div>${graphHtml}<div style="background:#243040;border-radius:10px;padding:4px 0">${rows}</div></div>`;
       } catch(e) { return ""; }
     })()}`;
 
@@ -6597,7 +6676,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02a · diverse shuffle + no-API-key + level-aware difficulty + per-part IRT · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02b · swipe + bookmark + speed + streak + graph + drill + remind + diverse shuffle · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -6644,6 +6723,7 @@ function renderHome() {
     <div style="text-align:center;margin-top:14px">
       <button class="btn-s" id="changeKey">${S.apiKey?"🔑 APIキー変更":"🔑 APIキーを設定"}</button>
       ${!S.apiKey?`<div style="font-size:10px;color:#fbbf24;margin-top:4px">⚠️ APIキー未設定 — 問題生成・難易度判定には設定が必要です</div>`:""}
+      <button class="btn-s" id="notifBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px">🔔 学習リマインダー設定</button>
     </div>`;
 
   // Async: load stock counts and IRT level
@@ -6874,6 +6954,19 @@ function renderHome() {
     render();
   };
   const ck=$("changeKey"); if(ck)ck.onclick=()=>{ localStorage.removeItem("gemini_api_key"); S.apiKey=""; S.screen="apikey"; render(); };
+  const nb=$("notifBtn"); if(nb)nb.onclick=async()=>{
+    if (!("Notification" in window)) { alert("このブラウザは通知に対応していません"); return; }
+    const perm = await Notification.requestPermission();
+    if (perm === "granted") {
+      const hour = prompt("毎日何時にリマインドしますか？（0-23）", localStorage.getItem("reminderHour")||"20");
+      if (hour !== null) {
+        localStorage.setItem("reminderHour", hour);
+        localStorage.setItem("reminderEnabled", "true");
+        nb.textContent = `🔔 リマインダー ON (${hour}時)`;
+        alert(`✅ 毎日${hour}時に学習リマインダーを送信します`);
+      }
+    } else { alert("通知の許可が必要です。ブラウザの設定から許可してください。"); }
+  };
   const gsBtn=$("goalSettingBtn"); if(gsBtn) gsBtn.onclick=()=>{
     const g = prompt("1日の目標問題数を設定してください:", localStorage.getItem("dailyGoal")||"30");
     if(g && !isNaN(parseInt(g)) && parseInt(g) > 0) {
@@ -7092,7 +7185,10 @@ function renderStudy() {
     // ストック/ストック解除ボタン（最後の問いに回答済みの場合）
     if (answered && qi===numQ-1) {
       if (S.stockMode) {
-        body+=`<button class="btn-s" id="unstockBtn" style="margin:10px auto;display:block;color:#f87171">🗑️ ストック解除</button>`;
+        body+=`<div style="display:flex;gap:8px;justify-content:center;margin:10px 0">
+          <button class="btn-s" id="bookmarkBtn" style="color:${S._currentBookmarked?"#fbbf24":"#7a8ea5"}">${S._currentBookmarked?"⭐ ブックマーク済":"☆ ブックマーク"}</button>
+          <button class="btn-s" id="unstockBtn" style="color:#f87171">🗑️ ストック解除</button>
+        </div>`;
         // 卒業チェック（3回連続正解の場合は次のrenderで反映）
       } else {
         const isL=["part1","part2","part3","part4"].includes(S.part);
@@ -7155,7 +7251,7 @@ function renderStudy() {
       <div class="stat"><div class="sl">不正解</div><div class="sv" style="color:#f87171">${S.stats.wrong}</div></div>
       <div class="stat"><div class="sl">正答率</div><div class="sv" style="color:#fbbf24">${rate}%</div></div>
     </div>
-    ${S.streak>=2?`<div class="streak">🔥 ${S.streak}問連続正解！</div>`:""}
+    ${S.streak>=2?`<div class="streak">🔥 ${S.streak}問連続正解！${(()=>{const bs=parseInt(localStorage.getItem("bestStreak")||"0");if(S.streak>bs)localStorage.setItem("bestStreak",String(S.streak));return S.streak>=bs&&S.streak>=5?" 🏆 自己ベスト！":"";})()}</div>`:""}
     
     ${body}`;
 

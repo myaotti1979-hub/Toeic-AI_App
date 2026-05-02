@@ -1673,7 +1673,7 @@ if "_init" not in st.session_state:
     st.session_state.results = load_results(RESULTS_FILE)
     st.session_state.mock_results = load_all_mock_batches()
     gk = st.session_state.gemini_key
-    print(f"[INIT] key={'set' if gk else 'empty'} | results={len(st.session_state.results)} | mock={len(st.session_state.mock_results)} | VERSION=v2026.05.01a", flush=True)
+    print(f"[INIT] key={'set' if gk else 'empty'} | results={len(st.session_state.results)} | mock={len(st.session_state.mock_results)} | VERSION=v2026.05.02b", flush=True)
     st.session_state._init = True  # Set LAST so incomplete init retries
 
 # Safety defaults — ensure critical keys exist even if init was from old version
@@ -1967,7 +1967,7 @@ with st.sidebar:
     if not edge: st.caption("⚠️ Edge TTS が使えません: `pip install edge-tts`")
 
     st.divider()
-    st.caption("v2026.05.01a · multi-file difficulty rating + level-aware · 303 types")
+    st.caption("v2026.05.02b · folder-based batch difficulty + lightweight tabs · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
