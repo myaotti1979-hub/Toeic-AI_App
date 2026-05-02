@@ -3013,7 +3013,7 @@ function prefetchNext() {
 
 async function loadNewSet() {
   stopSpeak();
-  S.answers=[]; S.qIdx=0; S.error=null; S.sceneImgUrl=null; S.imageError=null;
+  S.answers=[]; S.qIdx=0; S.error=null; S.sceneImgUrl=null; S.imageError=null; S._mistakeReasons={};
 
   // ストック作成モードはセッション制限なし
   if (S.stockCreateMode && S.sessionNum >= SESSION_SIZE) {
@@ -3028,7 +3028,7 @@ async function loadNewSet() {
     S.qSet = cached.qs;
     S.sceneImgUrl = cached.imgUrl || null;
     S.imageError = cached.imgErr || null;
-    S.answers = S.qSet.questions.map(() => ({selected:null, answered:false}));
+    S.answers = S.qSet.questions.map(() => ({selected:null, answered:false})); S._mistakeReasons={};
     S.sessionNum++;
     S.loading = false;
     render();
@@ -3049,7 +3049,7 @@ async function loadNewSet() {
     S.qSet = result.qs;
     S.sceneImgUrl = result.imgUrl || null;
     S.imageError = result.imgErr || null;
-    S.answers = S.qSet.questions.map(() => ({selected:null, answered:false}));
+    S.answers = S.qSet.questions.map(() => ({selected:null, answered:false})); S._mistakeReasons={};
     S.sessionNum++;
   } catch(e) {
     if (S.stockCreateMode) {
@@ -3405,7 +3405,7 @@ async function loadStockItem(itemOrId) {
   S.qSet.part=item.part; // partフィールドを復元
   S.sceneImgUrl=item.imgUrl||null;
   S.imageError=null;
-  S.answers=S.qSet.questions.map(()=>({selected:null,answered:false}));
+  S.answers=S.qSet.questions.map(()=>({selected:null,answered:false})); S._mistakeReasons={};
   S.qIdx=0; S.sessionNum=1;
   S.timerStart=Date.now(); S.timerFrozen=0;  // Reset timer for new stock item
   S.loading=false; S.error=null;
@@ -6976,7 +6976,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02n · fix roleplay rec stop button disabled · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02p · session7 final: roleplay/shadow/speed-drill/WPM/mistake/collo/writing/quality · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7479,10 +7479,11 @@ function renderStudy() {
         <div class="res" style="color:${isOk?"#4ade80":"#f87171"}">${isOk?"🎉 正解！":ans.timeUp?"⏱ 時間切れ！":"😥 不正解..."}</div>
         ${q.explanation_en?`<details style="margin-bottom:8px"><summary style="font-size:13px;color:#60a5fa;cursor:pointer;user-select:none">💡 English Explanation</summary><div style="font-size:14px;line-height:1.9;color:#a0b4c8;margin-top:4px;padding:8px;background:rgba(96,165,250,0.06);border-radius:6px">${esc(q.explanation_en)}</div></details>`:""}
         <div class="det">${esc(q.explanation_ja||"")}</div>
-        ${(!isOk && isLastQ && S.judgeMode && !S._mistakeReasonPending)?`<div style="margin-top:10px;padding:10px;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.15);border-radius:8px">
-          <div style="font-size:11px;color:#f87171;margin-bottom:6px">なぜ間違えた？（分析用）</div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap">${MISTAKE_REASONS.map(r=>`<button class="btn-s mistake-reason-btn" data-reason="${r.id}" style="flex:1;font-size:11px;padding:6px;color:#dce6f0" title="${esc(r.desc)}">${r.icon} ${r.label}</button>`).join("")}</div>
+        ${(!isOk && S.judgeMode && !(S._mistakeReasons||{})[qi])?`<div style="margin-top:10px;padding:10px;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.15);border-radius:8px">
+          <div style="font-size:11px;color:#f87171;margin-bottom:6px">なぜ間違えた？ Q${qi+1}（分析用）</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">${MISTAKE_REASONS.map(r=>`<button class="btn-s mistake-reason-btn" data-reason="${r.id}" data-qi="${qi}" style="flex:1;font-size:11px;padding:6px;color:#dce6f0" title="${esc(r.desc)}">${r.icon} ${r.label}</button>`).join("")}</div>
         </div>`:""}
+        ${(S._mistakeReasons||{})[qi]?`<div style="margin-top:6px;font-size:11px;color:#7a8ea5;text-align:center">✅ Q${qi+1}: ${MISTAKE_REASONS.find(r=>r.id===S._mistakeReasons[qi])?.icon||""} ${MISTAKE_REASONS.find(r=>r.id===S._mistakeReasons[qi])?.label||""} を記録済</div>`:""}
         ${(S.part==="part7" && isLastQ && S._readingStartTime)?(() => {
           const readSec = Math.round((S.timerFrozen ? (S.timerStart ? S.timerFrozen : 0) : (S.timerStart ? Math.round((Date.now()-S.timerStart)/1000) : 0)));
           const wc = ((qs.text||"")+" "+(qs.text_1||"")+" "+(qs.text_2||"")+" "+(qs.text_3||"")).trim().split(/\s+/).length;
@@ -7708,18 +7709,20 @@ function renderStudy() {
     };
   }
 
-  // Mistake reason buttons
+  // Mistake reason buttons (per-question)
   document.querySelectorAll(".mistake-reason-btn").forEach(btn=>{
     btn.onclick=()=>{
       const reason = btn.dataset.reason;
-      // Save the last wrong answer with reason
-      const qi2=S.qIdx, q2=S.qSet.questions[qi2], ans2=S.answers[qi2];
-      if (ans2 && !ans2.answered) return;
+      const qi2 = parseInt(btn.dataset.qi);
+      const q2=S.qSet.questions[qi2], ans2=S.answers[qi2];
+      if (!ans2 || !ans2.answered) return;
       const elapsed2=S.timerFrozen||0;
       let qType2 = S.qSet._questionType || S.qSet.talk_type || S.qSet.doc_type || "unknown";
       const diff2 = S.stockMode && S.stockId ? (S._stockDifficulty||0) : 0;
       judgeSave(S.part, S.level||"intermediate", qType2, qi2, false, (q2.question||"").slice(0,100), elapsed2, diff2, reason).catch(e=>console.warn("mistakeReason save:", e));
-      btn.parentElement.parentElement.innerHTML = `<div style="font-size:11px;color:#7a8ea5;text-align:center">✅ ${MISTAKE_REASONS.find(r=>r.id===reason)?.icon||""} ${MISTAKE_REASONS.find(r=>r.id===reason)?.label||reason} を記録</div>`;
+      if (!S._mistakeReasons) S._mistakeReasons = {};
+      S._mistakeReasons[qi2] = reason;
+      render();
     };
   });
   // Role-play button
@@ -8069,7 +8072,7 @@ function renderColloQuiz() {
 }
 
 /* ── WAV Recording Utility ── */
-async function recordWav(maxDurationMs=20000) {
+async function recordWav(maxDurationMs=30000) {
   const stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:16000}});
   const ctx = new AudioContext({sampleRate:16000});
   const src = ctx.createMediaStreamSource(stream);
@@ -8279,14 +8282,14 @@ function renderRolePlay() {
       try {
         recBtn.disabled = true;
         recBtn.textContent = "⏳ マイク準備中...";
-        const recorder = await recordWav(20000);
+        const recorder = await recordWav(30000);
         recBtn.disabled = false;
         recBtn.textContent = "⏺️ 録音中... (タップで停止)";
         recBtn.style.color = "#ef4444";
         recBtn.style.background = "rgba(239,68,68,0.2)";
         if (statusEl) statusEl.textContent = "話してください...";
-        // Auto-stop after 20 seconds
-        const autoStop = setTimeout(async () => { recBtn.click(); }, 20000);
+        // Auto-stop after 30 seconds
+        const autoStop = setTimeout(async () => { recBtn.click(); }, 30000);
         recBtn.onclick = async () => {
           clearTimeout(autoStop);
           recBtn.disabled = true;
