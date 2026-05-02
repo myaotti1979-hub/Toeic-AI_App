@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TOEIC AI Trainer マニュアル v2026.05.02p</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b1120;
+  --card: #131b2e;
+  --card2: #1a2540;
+  --border: rgba(129,140,248,0.12);
+  --text: #dce6f0;
+  --text2: #94a3b8;
+  --text3: #64748b;
+  --accent: #818cf8;
+  --accent2: #7b9cf7;
+  --green: #4ade80;
+  --yellow: #fbbf24;
+  --red: #f87171;
+  --pink: #f472b6;
+  --teal: #34d399;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Noto Sans JP', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.8;
+  font-size: 15px;
+}
+.hero {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 60px 20px;
+  background: linear-gradient(180deg, #0f1a33 0%, var(--bg) 100%);
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 30% 40%, rgba(129,140,248,0.06) 0%, transparent 50%),
+              radial-gradient(circle at 70% 60%, rgba(244,114,182,0.04) 0%, transparent 50%);
+  animation: drift 20s ease-in-out infinite alternate;
+}
+@keyframes drift { 0%{transform:translate(0,0)} 100%{transform:translate(-3%,2%)} }
+.hero h1 {
+  font-size: clamp(36px, 7vw, 64px);
+  font-weight: 800;
+  letter-spacing: -1px;
+  position: relative;
+  background: linear-gradient(135deg, #818cf8, #f472b6, #fbbf24);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+.hero .sub {
+  font-size: 16px;
+  color: var(--text2);
+  position: relative;
+  max-width: 500px;
+}
+.hero .version {
+  margin-top: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text3);
+  background: var(--card);
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  position: relative;
+}
+.container { max-width: 800px; margin: 0 auto; padding: 0 20px 80px; }
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(11,17,32,0.85);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+  margin-bottom: 40px;
+}
+nav .inner {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+nav .inner::-webkit-scrollbar { display: none; }
+nav a {
+  color: var(--text3);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+nav a:hover { color: var(--accent); background: rgba(129,140,248,0.08); }
+h2 {
+  font-size: 24px;
+  font-weight: 800;
+  margin: 48px 0 20px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+h2 .icon { font-size: 28px; }
+h3 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--accent2);
+  margin: 28px 0 10px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 16px 0;
+}
+.card.highlight {
+  border-color: rgba(129,140,248,0.3);
+  background: linear-gradient(135deg, rgba(129,140,248,0.06), rgba(244,114,182,0.04));
+}
+.card.warn {
+  border-color: rgba(251,191,36,0.3);
+  background: rgba(251,191,36,0.04);
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.feat {
+  background: var(--card2);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 16px;
+  transition: transform 0.2s, border-color 0.2s;
+}
+.feat:hover { transform: translateY(-2px); border-color: var(--border); }
+.feat .fi { font-size: 24px; margin-bottom: 6px; }
+.feat .ft { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.feat .fd { font-size: 11px; color: var(--text3); line-height: 1.5; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+}
+th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--card2);
+  color: var(--accent2);
+  font-weight: 600;
+  border-bottom: 2px solid var(--border);
+}
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--text2);
+}
+tr:hover td { background: rgba(129,140,248,0.03); }
+code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  background: var(--card2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+}
+pre {
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text2);
+  margin: 12px 0;
+}
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tag-g { background: rgba(74,222,128,0.12); color: var(--green); }
+.tag-y { background: rgba(251,191,36,0.12); color: var(--yellow); }
+.tag-r { background: rgba(248,113,113,0.12); color: var(--red); }
+.tag-b { background: rgba(129,140,248,0.12); color: var(--accent); }
+.tag-p { background: rgba(244,114,182,0.12); color: var(--pink); }
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.flow .arrow { color: var(--text3); }
+.flow .step {
+  background: var(--card2);
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.shortcut {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  font-size: 13px;
+}
+.shortcut .key {
+  min-width: 80px;
+  font-weight: 600;
+  color: var(--accent2);
+}
+footer {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text3);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 60px;
+}
+@media (max-width: 600px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .grid3 { grid-template-columns: 1fr 1fr; }
+  h2 { font-size: 20px; }
+  .card { padding: 14px; }
+}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>TOEIC AI Trainer</h1>
+  <div class="sub">Gemini AI × Azure Speech で作る<br>パーソナル TOEIC 学習アプリ</div>
+  <div class="version">v2026.05.02p · 8,352行 · 303問題タイプ · 17画面</div>
+</div>
+
+<nav><div class="inner">
+  <a href="#structure">構成</a>
+  <a href="#setup">セットアップ</a>
+  <a href="#home">HOME</a>
+  <a href="#study">出題</a>
+  <a href="#roleplay">ロールプレイ</a>
+  <a href="#shadowing">シャドーイング</a>
+  <a href="#vocab">単語帳</a>
+  <a href="#diagnosis">実力診断</a>
+  <a href="#mock">模試</a>
+  <a href="#generate">問題生成</a>
+  <a href="#quality">品質管理</a>
+  <a href="#data">データ</a>
+  <a href="#irt">IRT</a>
+  <a href="#security">セキュリティ</a>
+</div></nav>
+
+<div class="container">
+
+<!-- ════════════════════════ STRUCTURE ════════════════════════ -->
+<h2 id="structure"><span class="icon">📦</span> アプリ構成</h2>
+
+<p>3ファイルで構成されるPWA（Progressive Web App）です。</p>
+
+<div class="grid3">
+  <div class="feat">
+    <div class="fi">📱</div>
+    <div class="ft">index.html</div>
+    <div class="fd">スマホ学習アプリ（メイン）。オフライン対応。8,352行。</div>
+  </div>
+  <div class="feat">
+    <div class="fi">💻</div>
+    <div class="ft">toeic_generator_app.py</div>
+    <div class="fd">PC用Streamlit問題ジェネレーター。3,928行。</div>
+  </div>
+  <div class="feat">
+    <div class="fi">⚙️</div>
+    <div class="ft">sw.js</div>
+    <div class="fd">Service Worker。オフラインキャッシュ。</div>
+  </div>
+</div>
+
+<!-- ════════════════════════ SETUP ════════════════════════ -->
+<h2 id="setup"><span class="icon">🔧</span> セットアップ</h2>
+
+<h3>スマホ（HTML）</h3>
+<div class="flow">
+  <span class="step">index.htmlをホスト</span>
+  <span class="arrow">→</span>
+  <span class="step">Chromeで開く</span>
+  <span class="arrow">→</span>
+  <span class="step">ホーム画面に追加</span>
+  <span class="arrow">→</span>
+  <span class="step">APIキー入力</span>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">APIキー</h3>
+  <table>
+    <tr><th>キー</th><th>用途</th><th>必須</th></tr>
+    <tr><td><code>Gemini API</code></td><td>問題生成・難易度判定・和訳・フレーズ抽出・英作文添削</td><td>問題生成時のみ</td></tr>
+    <tr><td><code>Azure Speech</code></td><td>ロールプレイ発音チェック</td><td>ロールプレイのみ</td></tr>
+  </table>
+  <p style="font-size:12px;color:var(--text3);margin-top:8px">APIキーなしでもストック学習・単語帳・フラッシュカード・模試は利用可能です。</p>
+</div>
+
+<h3>PC（Streamlit）</h3>
+<pre>pip install streamlit edge-tts
+streamlit run toeic_generator_app.py</pre>
+<p style="font-size:13px;color:var(--text2)">4タブ構成: 🔧 Generate | 📦 管理 | 🎯 Practice | 📝 模試テスト</p>
+
+<!-- ════════════════════════ HOME ════════════════════════ -->
+<h2 id="home"><span class="icon">🏠</span> HOME画面</h2>
+
+<div class="card highlight">
+  <pre style="background:transparent;border:none;padding:0;color:var(--text);font-size:12px;line-height:1.6">ESTIMATED LEVEL
+上級  推定 793点
+L:389 R:404 ｜ 各パート直近50問
+
+今日 62/30問  ✅ 達成! 🔥5日連続  ⚙
+
+LISTENING               READING
+Part 1 ▶ 🆕 🔥 🎯      Part 5 ▶ 🆕 🔥 🎯
+Part 2 ▶ 🆕 🔥 🎯      Part 6 ▶ 🆕 🔥 🎯
+Part 3 ▶ 🆕 🔥 🎯      Part 7 ▶ 🆕 🔥 🎯
+Part 4 ▶ 🆕 🔥 🎯
+
+📊 判定モード ON  ⏱ タイムアタック OFF  ⚡ P5速度ドリル</pre>
+</div>
+
+<h3>出題モード（4種類）</h3>
+<table>
+  <tr><th>ボタン</th><th>動作</th><th>説明</th></tr>
+  <tr><td>▶ 通常</td><td>全問題からタイプ分散シャッフル</td><td>品質A/Bを優先、Cは後回し</td></tr>
+  <tr><td>🆕 未回答</td><td>未回答問題のみ</td><td>初見の問題だけ出題</td></tr>
+  <tr><td>🔥 苦手特訓</td><td>正答率70%未満のタイプのみ</td><td>弱点を集中練習</td></tr>
+  <tr><td>🎯 最適レベル</td><td>推定スコア±150点の問題</td><td>自分のレベルに合った問題</td></tr>
+</table>
+
+<h3>HOME画面の設定</h3>
+<table>
+  <tr><th>設定</th><th>説明</th></tr>
+  <tr><td>📊 判定モード</td><td>ONで回答結果をIRT推定に反映</td></tr>
+  <tr><td>⏱ タイムアタック</td><td>パート別制限時間付き</td></tr>
+  <tr><td>⚡ P5速度ドリル</td><td>タイムアタック時にPart 5を10秒制限に</td></tr>
+  <tr><td>🔑 APIキー</td><td>Gemini / Azure キーの設定・変更</td></tr>
+  <tr><td>🔔 リマインダー</td><td>毎日指定時間に目標未達なら通知</td></tr>
+</table>
+
+<!-- ════════════════════════ STUDY ════════════════════════ -->
+<h2 id="study"><span class="icon">📝</span> 出題・学習画面</h2>
+
+<div class="grid2">
+  <div class="feat">
+    <div class="fi">🔊</div>
+    <div class="ft">リスニング</div>
+    <div class="fd">音声再生 + 速度調整（0.9x/1.0x/1.1x）。再生前に0.5秒の準備時間。</div>
+  </div>
+  <div class="feat">
+    <div class="fi">📊</div>
+    <div class="ft">難易度バッジ</div>
+    <div class="fd">ヘッダーに 🟢~600 / 🟡600-800 / 🔴800+ の色付き表示。</div>
+  </div>
+  <div class="feat">
+    <div class="fi">⭐</div>
+    <div class="ft">ブックマーク</div>
+    <div class="fd">回答後に☆/⭐切替で後で復習用にマーク。</div>
+  </div>
+  <div class="feat">
+    <div class="fi">👆</div>
+    <div class="ft">スワイプ操作</div>
+    <div class="fd">左→次の問題、右→前の問題。</div>
+  </div>
+</div>
+
+<h3>回答後の追加機能</h3>
+<table>
+  <tr><th>機能</th><th>対象パート</th><th>説明</th></tr>
+  <tr><td>🔍 間違い理由</td><td>全パート（不正解時）</td><td>📚知識不足 / 👁️読み飛ばし / ⏱️時間切れ / 🪤引っかけ から選択</td></tr>
+  <tr><td>🎭 ロールプレイ</td><td>Part 3/4</td><td>Azure発音チェック付き会話練習</td></tr>
+  <tr><td>🎙️ シャドーイング</td><td>Part 3/4</td><td>1文ずつ再生→真似る→確認</td></tr>
+  <tr><td>📖 WPM計測</td><td>Part 7</td><td>読速を自動計測（目標: 150 WPM）</td></tr>
+  <tr><td>✍️ 英作文練習</td><td>Part 5</td><td>同じ文法で英作文→Gemini添削</td></tr>
+</table>
+
+<!-- ════════════════════════ ROLEPLAY ════════════════════════ -->
+<h2 id="roleplay"><span class="icon">🎭</span> ロールプレイ</h2>
+
+<div class="card highlight">
+  <p style="font-size:13px;margin-bottom:12px">Part 3/4 の問題を解いた後、会話の一方の役になりきって発音チェックを受けるスピーキング練習機能です。</p>
+  <p style="font-size:12px;color:var(--yellow)">⚠️ Azure Speech APIキーが必要です（HOME画面の「🎭 Azure設定」から入力）</p>
+</div>
+
+<h3>フロー</h3>
+<div class="flow">
+  <span class="step">Part 3 回答</span>
+  <span class="arrow">→</span>
+  <span class="step">🎭 ボタン</span>
+  <span class="arrow">→</span>
+  <span class="step">役割選択</span>
+  <span class="arrow">→</span>
+  <span class="step">会話開始</span>
+</div>
+
+<div class="grid2">
+  <div class="feat">
+    <div class="fi">🔊</div>
+    <div class="ft">相手のターン</div>
+    <div class="fd">Web Speech APIで自動読み上げ → 「次へ」で進む</div>
+  </div>
+  <div class="feat">
+    <div class="fi">🎤</div>
+    <div class="ft">自分のターン</div>
+    <div class="fd">テキストはブラー非表示 → 録音（最大30秒）→ Azure が分析</div>
+  </div>
+</div>
+
+<h3>スコア表示</h3>
+<table>
+  <tr><th>指標</th><th>説明</th></tr>
+  <tr><td>Pronunciation Score</td><td>総合スコア（Accuracy × Fluency × Completeness の重み付き）</td></tr>
+  <tr><td>Accuracy</td><td>個々の単語の発音正確性</td></tr>
+  <tr><td>Fluency</td><td>自然な流暢さ（間の空け方、速度）</td></tr>
+  <tr><td>単語別スコア</td><td><span class="tag tag-g">80+</span> <span class="tag tag-y">50-79</span> <span class="tag tag-r">~49</span> で色分け</td></tr>
+</table>
+
+<!-- ════════════════════════ SHADOWING ════════════════════════ -->
+<h2 id="shadowing"><span class="icon">🎙️</span> シャドーイング</h2>
+
+<p>Part 3/4 の回答後に利用可能。追加データ・API不要（ブラウザ内蔵TTS使用）。</p>
+
+<div class="card">
+  <div class="shortcut"><span class="key">STEP 1</span>🔊 で1文を聴く</div>
+  <div class="shortcut"><span class="key">STEP 2</span>口で真似る（録音なし）</div>
+  <div class="shortcut"><span class="key">STEP 3</span>👁️ でテキスト表示して確認</div>
+  <div class="shortcut"><span class="key">STEP 4</span>「次 →」で次の文へ</div>
+  <div class="shortcut"><span class="key">🔁</span>全文を通して連続再生も可能</div>
+</div>
+
+<!-- ════════════════════════ VOCAB ════════════════════════ -->
+<h2 id="vocab"><span class="icon">📝</span> 単語帳</h2>
+
+<p>問題を解くと自動的に単語が蓄積されます。</p>
+
+<h3>5段階レベル</h3>
+<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
+  <span class="tag" style="background:#22c55e20;color:#22c55e">A1 基礎</span>
+  <span class="tag" style="background:#60a5fa20;color:#60a5fa">A2 初級</span>
+  <span class="tag" style="background:#fbbf2420;color:#fbbf24">B1 中級</span>
+  <span class="tag" style="background:#f97316;color:#f97316">B2 上級</span>
+  <span class="tag" style="background:#ef444420;color:#ef4444">C 最上級</span>
+</div>
+
+<h3>学習モード</h3>
+<div class="grid2">
+  <div class="feat"><div class="fi">🧠</div><div class="ft">英→日クイズ</div><div class="fd">英単語を見て日本語を選ぶ4択</div></div>
+  <div class="feat"><div class="fi">🧠</div><div class="ft">日→英クイズ</div><div class="fd">日本語を見て英単語を選ぶ4択</div></div>
+  <div class="feat"><div class="fi">📋</div><div class="ft">品詞あて</div><div class="fd">英単語の品詞を選ぶ</div></div>
+  <div class="feat"><div class="fi">🃏</div><div class="ft">フラッシュカード</div><div class="fd">スワイプで覚えた/まだの判定</div></div>
+  <div class="feat"><div class="fi">📎</div><div class="ft">コロケーション</div><div class="fd">例文の空欄に正しい単語を選ぶ</div></div>
+</div>
+
+<!-- ════════════════════════ DIAGNOSIS ════════════════════════ -->
+<h2 id="diagnosis"><span class="icon">📊</span> 実力診断</h2>
+
+<div class="card">
+  <p style="font-size:13px;margin-bottom:8px">IRT（項目応答理論）ベースの精密スコア推定。各パート直近50問から算出。</p>
+  <div class="grid3">
+    <div class="feat"><div class="fi">🎯</div><div class="ft">レーダーチャート</div><div class="fd">7角形パートバランス</div></div>
+    <div class="feat"><div class="fi">📕</div><div class="ft">弱点タイプ分析</div><div class="fd">🔥特訓 / ❌復習</div></div>
+    <div class="feat"><div class="fi">🔍</div><div class="ft">間違いパターン</div><div class="fd">知識/読み飛ばし/時間切れ/引っかけ</div></div>
+  </div>
+</div>
+
+<!-- ════════════════════════ MOCK ════════════════════════ -->
+<h2 id="mock"><span class="icon">🎯</span> 模試</h2>
+
+<table>
+  <tr><th>形式</th><th>問題数</th><th>時間</th></tr>
+  <tr><td>フル模試</td><td>200問</td><td>2時間</td></tr>
+  <tr><td>ハーフ模試</td><td>100問</td><td>1時間</td></tr>
+  <tr><td>クォーター模試</td><td>50問</td><td>30分</td></tr>
+</table>
+<p style="font-size:13px;color:var(--text2);margin-top:8px">公式問題集5換算テーブルでスコア算出。直近10回の折れ線グラフ表示。</p>
+
+<!-- ════════════════════════ GENERATE ════════════════════════ -->
+<h2 id="generate"><span class="icon">🤖</span> 問題生成・管理</h2>
+
+<h3>生成</h3>
+<div class="flow">
+  <span class="step">レベル選択</span>
+  <span class="arrow">→</span>
+  <span class="step">パート選択</span>
+  <span class="arrow">→</span>
+  <span class="step">問題数</span>
+  <span class="arrow">→</span>
+  <span class="step">📦+ ストック作成</span>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">パート別推奨レベル</h3>
+  <table>
+    <tr><th>パート</th><th>推奨</th><th>理由</th></tr>
+    <tr><td>Part 1 / Part 2</td><td><span class="tag tag-y">中級</span></td><td>構造的にスコア上限あり</td></tr>
+    <tr><td>Part 3〜7</td><td><span class="tag tag-r">上級</span></td><td>フルレンジの難易度が必要</td></tr>
+  </table>
+</div>
+
+<h3>管理ツール</h3>
+<table>
+  <tr><th>ツール</th><th>説明</th></tr>
+  <tr><td>🎯 難易度判定</td><td>未判定/全再判定。Gemini APIで300-950点を付与</td></tr>
+  <tr><td>📖 Part 5 和訳追加</td><td>バッチ翻訳（20問/バッチ）</td></tr>
+  <tr><td>💬 フレーズ抽出</td><td>P3-7から慣用表現を単語帳に追加</td></tr>
+  <tr><td>🔍 品質チェック</td><td>不正解選択肢の質をA/B/C判定</td></tr>
+  <tr><td>🗑️ 品質C削除</td><td>全設問Cのアイテムを一括削除</td></tr>
+</table>
+
+<!-- ════════════════════════ QUALITY ════════════════════════ -->
+<h2 id="quality"><span class="icon">🔍</span> 品質管理システム</h2>
+
+<h3>選択肢品質チェック（パート別基準）</h3>
+<div class="card">
+  <table>
+    <tr><th>パート</th><th>良いdistractor</th><th>C判定の条件</th></tr>
+    <tr><td>Part 1</td><td>文法的に正しい文だが写真と合わない</td><td>文として壊れている</td></tr>
+    <tr><td>Part 2</td><td>正しい応答だが質問と噛み合わない<br><span style="font-size:11px;color:var(--text3)">断片応答("Down the hall"等)はOK</span></td><td>gibberish、完全に無関係</td></tr>
+    <tr><td>Part 3/4</td><td>文脈上もっともらしいが事実と違う</td><td>話題と無関係、意味不明</td></tr>
+    <tr><td>Part 5 品詞</td><td>意図的に品詞が違う（正常設計）</td><td>—</td></tr>
+    <tr><td>Part 5 語彙</td><td>同品詞で意味/コロケーションが違う</td><td>品詞が混在（消去法で解ける）</td></tr>
+    <tr><td>Part 6</td><td>Part 5同様 + 文挿入問題</td><td>パッセージと無関係</td></tr>
+    <tr><td>Part 7</td><td>本文の情報だが質問の答えではない</td><td>本文と完全に無関係</td></tr>
+  </table>
+</div>
+
+<h3>アイテム判定（多数決方式）</h3>
+<p style="font-size:13px">Part 3の3問セットで Q1:A Q2:A Q3:C → アイテム全体は <span class="tag tag-g">A</span>（Cは少数）。削除は全設問Cのアイテムのみ対象。</p>
+
+<h3>出題優先順位</h3>
+<p style="font-size:13px"><code>qualityPriorityShuffle()</code> により <span class="tag tag-g">A</span>/<span class="tag tag-y">B</span> → <span class="tag tag-r">C</span> の順で出題。品質の低い問題は後回し。</p>
+
+<!-- ════════════════════════ DATA ════════════════════════ -->
+<h2 id="data"><span class="icon">💾</span> データフロー</h2>
+
+<div class="card">
+<pre style="background:transparent;border:none;padding:0;font-size:12px;color:var(--text2)">PC (Streamlit)                    スマホ (HTML)
+  問題生成                          ストック学習
+  ↓                                ↑
+  results.json → JSON → インポート → IndexedDB
+                                    ↓
+                                  judgeSave() → judgeDB
+                                    ↓
+                                  IRT推定 → 実力診断
+                                    ↓
+                                  vocabAutoSave() → vocabDB → 単語帳</pre>
+</div>
+
+<h3>IndexedDB（4つ）</h3>
+<table>
+  <tr><th>DB</th><th>内容</th></tr>
+  <tr><td><code>stockDB</code></td><td>ストック問題（音声・画像含む）</td></tr>
+  <tr><td><code>judgeDB</code></td><td>判定履歴（正誤・タイプ・間違い理由）</td></tr>
+  <tr><td><code>vocabDB</code></td><td>単語帳（SRS・レベル・品詞）</td></tr>
+  <tr><td><code>mockDB</code></td><td>模試データ</td></tr>
+</table>
+
+<!-- ════════════════════════ IRT ════════════════════════ -->
+<h2 id="irt"><span class="icon">📈</span> IRT推定の仕組み</h2>
+
+<div class="card">
+<pre style="background:transparent;border:none;padding:0;font-size:11px;color:var(--text2);line-height:1.7">各パート直近50問を取得:
+  Part 1: 直近50問 → effectiveDifficulty(h) → diffToLevel → IRT推定
+  ...
+  Part 7: 直近50問 → ...
+
+effectiveDifficulty(h) = max(h.difficulty, LEVEL_FLOOR[h.level])
+  LEVEL_FLOOR: beginner=0, intermediate=450, advanced=650
+
+→ L(P1-4)合算 → /2 → Lスコア (5-495)
+→ R(P5-7)合算 → /2 → Rスコア (5-495)
+→ 合計 = 推定TOEICスコア</pre>
+</div>
+
+<h3>SCORE_TABLE</h3>
+<table>
+  <tr><th>レベル</th><th>50%</th><th>70%</th><th>85%</th><th>97%</th></tr>
+  <tr><td>初級</td><td>300</td><td>400</td><td>600</td><td>800</td></tr>
+  <tr><td>中級</td><td>400</td><td>600</td><td>800</td><td>900</td></tr>
+  <tr><td>上級</td><td>500</td><td>700</td><td>800</td><td>900</td></tr>
+</table>
+
+<!-- ════════════════════════ SECURITY ════════════════════════ -->
+<h2 id="security"><span class="icon">🔒</span> セキュリティ</h2>
+
+<div class="card warn">
+  <h3 style="margin-top:0;color:var(--yellow)">JSONインポートのXSS防止</h3>
+  <p style="font-size:13px">外部から取得したJSONファイルをインポートする場合のXSS攻撃を防止しています。</p>
+  <table style="margin-top:10px">
+    <tr><th>対策</th><th>説明</th></tr>
+    <tr><td><code>safeImgUrl()</code></td><td>imgUrlが<code>data:image/</code>または<code>blob:</code>で始まることを検証</td></tr>
+    <tr><td><code>esc()</code></td><td>全テキスト出力をHTMLエスケープ（ctxBlock label含む）</td></tr>
+    <tr><td>インポート時検証</td><td>ストリーミング/クラシック/模試の全インポート経路でサニタイズ</td></tr>
+  </table>
+</div>
+
+<h3>APIキー管理</h3>
+<p style="font-size:13px;color:var(--text2)">Gemini/AzureキーはlocalStorageに保存。個人利用では十分安全。配布時はXSS防止済みのため、悪意あるJSONからの窃取は不可能。</p>
+
+<!-- ════════════════════════ VERSION ════════════════════════ -->
+<h2 id="versions"><span class="icon">📋</span> バージョン履歴</h2>
+
+<table>
+  <tr><th>バージョン</th><th>日付</th><th>主な変更</th></tr>
+  <tr><td><code>v2026.04.19a-f</code></td><td>4/19</td><td>初期レビュー、バグ修正、単語帳改善</td></tr>
+  <tr><td><code>v2026.04.19g</code></td><td>4/20</td><td>IRT補正、タイプ修復、データ移行、弱点ドリル</td></tr>
+  <tr><td><code>v2026.04.22e</code></td><td>4/22</td><td>模試生成修正、シナリオ多様性、クォーター模試</td></tr>
+  <tr><td><code>v2026.05.01b</code></td><td>5/1</td><td>HOME再構成、難易度判定、5段階レベル、フラッシュカード</td></tr>
+  <tr><td><code>v2026.05.02b</code></td><td>5/2</td><td>分散シャッフル、スワイプ、ブックマーク、速度調整</td></tr>
+  <tr><td><code>v2026.05.02p</code></td><td>5/2</td><td>セキュリティ強化、ロールプレイ（Azure発音評価）、シャドーイング、速度ドリル、WPM計測、間違い理由分析、コロケーション、英作文添削、品質チェック（パート別多数決）、ストック画面簡素化</td></tr>
+</table>
+
+</div>
+
+<footer>
+  TOEIC AI Trainer v2026.05.02p · Built with Gemini AI + Azure Speech + Claude<br>
+  © 2026 · TOEIC is a registered trademark of ETS
+</footer>
+
+</body>
+</html>
