@@ -3411,37 +3411,16 @@ async function renderStockSelect() {
   let total = 0, totalMastered = 0;
   for (const s of Object.values(stats)) { total += s.total; totalMastered += s.mastered; }
 
-  // Load preview (3 items per part) in parallel — lightweight
-  const previewPromises = {};
-  for (const p of PARTS) {
-    if (stats[p.id]?.total > 0) previewPromises[p.id] = stockPreview(p.id, 3);
-  }
-  const previews = {};
-  for (const [pid, prom] of Object.entries(previewPromises)) {
-    try { previews[pid] = await prom; } catch(e) { previews[pid] = []; }
-  }
-
-  // パート別ボタン
+  // パート別サマリー
   const partSections = PARTS.map(p => {
     const s = stats[p.id];
     if (!s || s.total === 0) return "";
-    const preview = (previews[p.id]||[]).map((item,i) => {
-      const d = item.difficulty;
-      const dBadge = d ? `<span style="font-size:9px;color:${d>=800?"#ef4444":d>=600?"#f59e0b":"#22c55e"};margin-left:4px">${d}点</span>` : "";
-      return `<div style="font-size:11px;color:#a0b4c8;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${esc(item.text)}${dBadge}</div>`;
-    }).join("");
-    return `<div style="margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-size:13px;font-weight:700;color:#7b9cf7;font-family:monospace">${p.icon} ${p.label}</span>
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:12px;color:#7b9cf7;font-family:monospace">${p.icon} ${p.label}</span>
         <span class="p-tag"><span id="stockCount_${p.id}">${s.total}問</span></span>
       </div>
-      ${preview}
-      ${s.total>3?`<div style="font-size:11px;color:#7a8ea5">…他${s.total-3}問</div>`:""}
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn-s" data-stock-seq="${p.id}" style="flex:1;font-size:12px">📋 順番に再生</button>
-        <button class="btn-s" data-stock-rnd="${p.id}" style="flex:1;font-size:12px">🔀 ランダム再生</button>
-      </div>
-      <div id="stockExtra_${p.id}"></div>
+      <div id="stockExtra_${p.id}" style="display:flex;gap:4px;align-items:center"></div>
     </div>`;
   }).join("");
 
@@ -3611,35 +3590,6 @@ async function renderStockSelect() {
     alert(`✅ ${mastered.length}問の卒業フラグをリセットしました`);
     render();
   };
-
-  // 順番に再生ボタン（on-demand loading）
-  document.querySelectorAll("[data-stock-seq]").forEach(el=>{
-    el.onclick=async()=>{
-      el.textContent="⏳ 読込中...";
-      const items = await stockGetAllLight(el.dataset.stockSeq);
-      if(items.length===0) { el.textContent="📋 順番に再生"; return; }
-      S._stockReturnScreen = "stockSelect";
-      S.stockPlaylist = items.map(it=>({id:it.id, part:it.part}));
-      S.stockPlayIdx = 0;
-      S._stockPlaylistActive = false;
-      await loadStockItem(items[0].id);
-    };
-  });
-
-  // ランダム再生ボタン（on-demand loading）
-  document.querySelectorAll("[data-stock-rnd]").forEach(el=>{
-    el.onclick=async()=>{
-      el.textContent="⏳ 読込中...";
-      const items = await stockGetAllLight(el.dataset.stockRnd);
-      if(items.length===0) { el.textContent="🔀 ランダム再生"; return; }
-      const shuffled2 = qualityPriorityShuffle(items);
-      S._stockReturnScreen = "stockSelect";
-      S.stockPlaylist = shuffled2.map(it=>({id:it.id, part:it.part}));
-      S.stockPlayIdx = 0;
-      S._stockPlaylistActive = false;
-      await loadStockItem(shuffled2[0].id);
-    };
-  });
 
   const eb=$("stockExportBtn"); if(eb)eb.onclick=async()=>{
     await stockExport(); eb.textContent="✅ 保存しました";
@@ -4232,23 +4182,8 @@ ${texts.join("\n")}`, GEMINI_FLASH);
       const extra = document.getElementById(`stockExtra_${p.id}`);
       if (extra) {
         let h = "";
-        if (unplayed > 0) h += `<button class="btn-s" data-stock-new="${p.id}" style="font-size:11px;color:#60a5fa;margin-top:4px">🆕 未回答のみ (${unplayed}問)</button>`;
-        if (mastered > 0) h += `<button class="btn-s" data-del-mastered="${p.id}" style="font-size:11px;color:#f87171;margin-top:6px;opacity:0.7">🗑️ 卒業済${mastered}問を削除</button>`;
+        if (mastered > 0) h += `<button class="btn-s" data-del-mastered="${p.id}" style="font-size:10px;color:#f87171;padding:3px 8px;opacity:0.7">🗑️ 卒業${mastered}</button>`;
         extra.innerHTML = h;
-        // Bind handlers for newly added buttons
-        extra.querySelectorAll("[data-stock-new]").forEach(btn => {
-          btn.onclick = async () => {
-            btn.textContent="⏳ 読込中...";
-            const allItems = await stockGetAllLight(btn.dataset.stockNew);
-            const items = allItems.filter(it=>!it.lastPracticed);
-            if(items.length===0){ alert("未回答の問題がありません"); btn.textContent="🆕 未回答のみ"; return; }
-            const shuffledNew = diverseShuffle(items);
-            S._stockReturnScreen = "stockSelect";
-            S.stockPlaylist = shuffledNew.map(it=>({id:it.id, part:it.part}));
-            S.stockPlayIdx = 0; S._stockPlaylistActive = false;
-            await loadStockItem(shuffledNew[0].id);
-          };
-        });
         extra.querySelectorAll("[data-del-mastered]").forEach(btn => {
           btn.onclick = async () => {
             btn.textContent="⏳ 読込中...";
@@ -7023,7 +6958,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02h · multi-Q grade majority vote + per-Q detail · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02i · stock screen simplified (gen+manage only) · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
