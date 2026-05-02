@@ -4846,7 +4846,7 @@ async function renderDiagnosis() {
       {label:"基礎語", value:avgSh},
       {label:"ビジネス語", value:avgLo}
     ];
-    const cx=110, cy=110, maxR=80;
+    const cx=130, cy=120, maxR=80;
     const angleStep = (2*Math.PI)/5;
     const gridLevels = [20,40,60,80,100];
     let gridLines = "";
@@ -4864,7 +4864,7 @@ async function renderDiagnosis() {
       const a = -Math.PI/2 + i*angleStep;
       const x2 = cx + maxR*Math.cos(a), y2 = cy + maxR*Math.sin(a);
       axisLines += `<line x1="${cx}" y1="${cy}" x2="${x2}" y2="${y2}" stroke="rgba(129,140,248,0.15)" stroke-width="1"/>`;
-      const lx = cx + (maxR+18)*Math.cos(a), ly = cy + (maxR+18)*Math.sin(a);
+      const lx = cx + (maxR+24)*Math.cos(a), ly = cy + (maxR+24)*Math.sin(a);
       const anchor = Math.abs(Math.cos(a))<0.3 ? "middle" : Math.cos(a)>0 ? "start" : "end";
       const valColor = ax.value >= 80 ? "#4ade80" : ax.value >= 60 ? "#fbbf24" : "#f87171";
       axisLines += `<text x="${lx}" y="${ly}" text-anchor="${anchor}" dominant-baseline="central" fill="#7a8ea5" font-size="10">${ax.label}</text>`;
@@ -4930,18 +4930,17 @@ async function renderDiagnosis() {
     }
 
     const pcol = avgP >= 80 ? "#4ade80" : avgP >= 60 ? "#fbbf24" : "#f87171";
-    speakingHtml = `<div style="margin-top:14px;padding:14px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.12);border-radius:12px">
-      <div style="font-size:15px;font-weight:700;color:#818cf8;margin-bottom:4px">🎭 スピーキング（直近${recent.length}回）</div>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-        <div style="font-size:36px;font-weight:800;color:${pcol}">${avgP}</div>
-        <div style="font-size:11px;color:#7a8ea5">Pronunciation<br>Score (平均)</div>
+    speakingHtml = `<details style="margin-top:14px;padding:14px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.12);border-radius:12px;cursor:pointer">
+      <summary style="font-size:15px;font-weight:700;color:#818cf8;margin-bottom:4px;display:flex;align-items:center;gap:8px">🎭 スピーキング（直近${recent.length}回）<span style="font-size:24px;font-weight:800;color:${pcol}">${avgP}</span><span style="font-size:11px;color:#7a8ea5;font-weight:400">点</span></summary>
+      <div style="display:flex;align-items:center;gap:12px;margin:8px 0">
+        <div style="font-size:11px;color:#7a8ea5">Pronunciation Score (平均)</div>
       </div>
-      <svg viewBox="0 0 220 220" style="width:100%;max-width:280px;margin:0 auto;display:block">
+      <svg viewBox="0 0 270 250" style="width:100%;max-width:320px;margin:0 auto;display:block">
         ${gridLines}${axisLines}
         <polygon points="${dataPts}" fill="rgba(129,140,248,0.15)" stroke="#818cf8" stroke-width="2"/>
       </svg>
       ${trendSvg}${weakHtml}
-    </div>`;
+    </details>`;
   }
 
   // 間違い理由分析
@@ -5164,12 +5163,12 @@ async function renderDiagnosis() {
 
     ${mistakeAnalysisHtml}
 
-    ${speakingHtml}
-
     <div style="margin-top:16px">
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">💡 改善アドバイス</div>
       ${advice}
     </div>
+
+    ${speakingHtml}
 
     <details style="margin-top:16px">
       <summary style="font-size:13px;font-weight:700;color:#dce6f0;cursor:pointer;margin-bottom:8px">📋 学習レポート</summary>
@@ -7096,7 +7095,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02q · speaking diagnosis radar + weak words + trend · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02r · speaking chart collapsible + wider radar + text visible · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8390,7 +8389,7 @@ function renderRolePlay() {
     <div style="padding:12px;background:rgba(${isMyTurn?"129,140,248":"52,211,153"},0.06);border:1px solid rgba(${isMyTurn?"129,140,248":"52,211,153"},0.15);border-radius:12px;margin-bottom:12px">
       <div style="font-size:11px;color:${isMyTurn?"#818cf8":"#34d399"};margin-bottom:6px;font-weight:600">${isMyTurn?"🎤 あなたの番 ("+myRole+")":"🔊 "+speaker}</div>
       ${isMyTurn ? `
-        <div id="rpRefText" style="font-size:15px;line-height:1.7;color:#dce6f0;${S._rpRevealed?"":"filter:blur(5px);user-select:none"}">${esc(text)}</div>
+        <div id="rpRefText" style="font-size:15px;line-height:1.7;color:#dce6f0">${esc(text)}</div>
       ` : `
         <div style="font-size:15px;line-height:1.7;color:#dce6f0">${esc(text)}</div>
       `}
@@ -8398,7 +8397,6 @@ function renderRolePlay() {
     ${isMyTurn ? `
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <button class="btn-s" id="rpRecordBtn" style="flex:1;padding:14px;font-size:15px;color:#ef4444;background:rgba(239,68,68,0.1)">🎤 録音開始</button>
-        <button class="btn-s" id="rpRevealBtn" style="padding:14px;font-size:13px;color:#60a5fa">${S._rpRevealed?"🙈":"👁️"}</button>
       </div>
       <div id="rpRecStatus" style="font-size:12px;color:#7a8ea5;text-align:center;min-height:20px">${S.azureSpeechKey?"タップして話してください":"⚠️ Azure Speechキー未設定"}</div>
       ${resultHtml}
