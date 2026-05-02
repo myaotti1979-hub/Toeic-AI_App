@@ -4071,45 +4071,89 @@ ${texts.join("\n")}`, GEMINI_FLASH);
         const total=grades.A+grades.B+grades.C;
         const aPct=total?Math.round(grades.A/total*100):0;
         const cItems=results.filter(r=>r.grade==="C");
-        // Per-part breakdown
+        // Per-part breakdown (question-level)
         const byPart={};
         results.forEach(r=>{
           const p=r.part||"?";
           if(!byPart[p])byPart[p]={A:0,B:0,C:0,total:0};
           byPart[p][r.grade]++;byPart[p].total++;
         });
-        // Save grades to DB
-        const gradeByIdx={};
-        results.forEach(r=>{ if(!gradeByIdx[r.idx] || r.grade==="C") gradeByIdx[r.idx]=r.grade; });
-        let savedCount=0;
-        for(const [idxStr,grade] of Object.entries(gradeByIdx)){
-          const it=items[parseInt(idxStr)];
-          if(it?.id) { await stockUpdateField(it.id,{distractorGrade:grade}).catch(()=>{}); savedCount++; }
+        // Aggregate per-item: collect all question grades per item index
+        const itemGrades={};  // idx → [{qi, grade}]
+        results.forEach(r=>{
+          if(!itemGrades[r.idx])itemGrades[r.idx]=[];
+          itemGrades[r.idx].push({qi:r.qi, grade:r.grade});
+        });
+        // Determine item-level grade by majority vote
+        function itemOverallGrade(qGrades){
+          const g={A:0,B:0,C:0};
+          qGrades.forEach(q=>g[q.grade]++);
+          const total=g.A+g.B+g.C;
+          if(total===0)return "B";
+          // All C → C, majority C → C, otherwise best majority wins
+          if(g.C===total)return "C";
+          if(g.C>total/2)return "C";
+          if(g.A>=g.B && g.A>=g.C)return "A";
+          return "B";
         }
-        // Build per-part summary
-        let partBreakdown = "\n\n📊 パート別内訳:";
+        // Save item-level grade + per-question detail to DB
+        let savedCount=0;
+        for(const [idxStr,qGrades] of Object.entries(itemGrades)){
+          const it=items[parseInt(idxStr)];
+          if(!it?.id)continue;
+          const overall=itemOverallGrade(qGrades);
+          const detail={};
+          qGrades.forEach(q=>detail[q.qi]=q.grade);
+          await stockUpdateField(it.id,{distractorGrade:overall, distractorDetail:detail}).catch(()=>{});
+          savedCount++;
+        }
+        // Recalculate item-level stats
+        const itemGradeCount={A:0,B:0,C:0};
+        for(const qGrades of Object.values(itemGrades)){
+          itemGradeCount[itemOverallGrade(qGrades)]++;
+        }
+        const totalItems=itemGradeCount.A+itemGradeCount.B+itemGradeCount.C;
+        const itemAPct=totalItems?Math.round(itemGradeCount.A/totalItems*100):0;
+        // Items where ALL questions are C (true junk — safe to delete)
+        const allCItems=Object.entries(itemGrades).filter(([_,qg])=>qg.every(q=>q.grade==="C")).map(([idx])=>parseInt(idx));
+        // Items with any C question (for informational display)
+        const anyCItems=Object.entries(itemGrades).filter(([_,qg])=>qg.some(q=>q.grade==="C")).map(([idx])=>parseInt(idx));
+        // Build per-part summary (item-level)
+        const itemByPart={};
+        for(const [idxStr,qGrades] of Object.entries(itemGrades)){
+          const p=items[parseInt(idxStr)]?.part||"?";
+          if(!itemByPart[p])itemByPart[p]={A:0,B:0,C:0,total:0};
+          itemByPart[p][itemOverallGrade(qGrades)]++;
+          itemByPart[p].total++;
+        }
+        let partBreakdown = "\n\n📊 パート別内訳（アイテム単位）:";
         const partOrder=["part1","part2","part3","part4","part5","part6","part7"];
         for(const p of partOrder){
-          if(!byPart[p])continue;
-          const d=byPart[p];
+          if(!itemByPart[p])continue;
+          const d=itemByPart[p];
           const cPct=d.total?Math.round(d.C/d.total*100):0;
           const flag=cPct>=15?"🔴":cPct>=5?"🟡":"🟢";
-          partBreakdown+=`\n  ${flag} ${p.replace("part","P")}: A:${d.A} B:${d.B} C:${d.C} (${d.total}問, C率${cPct}%)`;
+          partBreakdown+=`\n  ${flag} ${p.replace("part","P")}: A:${d.A} B:${d.B} C:${d.C} (${d.total}セット, C率${cPct}%)`;
         }
-        let msg=`✅ チェック完了: ${total}問 (${savedCount}問に評価を保存)\n\n🟢 A (高品質): ${grades.A}問 (${aPct}%)\n🟡 B (普通): ${grades.B}問\n🔴 C (要改善): ${grades.C}問${partBreakdown}`;
-        if(cItems.length>0){
-          msg+=`\n\n⚠️ 品質Cの問題:`;
-          for(const ci of cItems.slice(0,10)){
-            const it=items[ci.idx];
-            const q=(it.qSet.questions||[])[ci.qi];
-            msg+=`\n  ${it.part} Q${ci.qi+1}: ${(q?.question||"").slice(0,50)}`;
+        // Question-level C count for info
+        const cQuestions=results.filter(r=>r.grade==="C");
+        let msg=`✅ チェック完了: ${totalItems}セット / ${total}設問\n\n📦 アイテム判定（多数決）:\n🟢 A: ${itemGradeCount.A}セット (${itemAPct}%)\n🟡 B: ${itemGradeCount.B}セット\n🔴 C: ${itemGradeCount.C}セット\n\n📝 設問レベル: C判定 ${cQuestions.length}問 / ${total}問${partBreakdown}`;
+        if(anyCItems.length>0){
+          msg+=`\n\n⚠️ C判定を含むアイテム (${anyCItems.length}セット):`;
+          for(const idx of anyCItems.slice(0,8)){
+            const it=items[idx];
+            const qg=itemGrades[idx]||[];
+            const qDetail=qg.map(q=>`Q${q.qi+1}:${q.grade}`).join(" ");
+            const overall=itemOverallGrade(qg);
+            msg+=`\n  ${it.part} [${overall}] ${qDetail} — ${(it.qSet.questions?.[0]?.question||"").slice(0,40)}`;
           }
-          if(cItems.length>10) msg+=`\n  ...他${cItems.length-10}問`;
-          msg+=`\n\n品質Cの${cItems.length}問を削除しますか？`;
+          if(anyCItems.length>8) msg+=`\n  ...他${anyCItems.length-8}セット`;
+        }
+        if(allCItems.length>0){
+          msg+=`\n\n🗑️ 全設問C（削除推奨）: ${allCItems.length}セット\n削除しますか？`;
           if(confirm(msg)){
             let deleted=0;
-            const cIdxSet=new Set(cItems.map(r=>r.idx));
-            for(const idx of cIdxSet){
+            for(const idx of allCItems){
               const it=items[idx];
               if(it?.id){
                 const db=await openStockDB();
@@ -4121,16 +4165,16 @@ ${texts.join("\n")}`, GEMINI_FLASH);
                 });
               }
             }
-            alert(`🗑️ ${deleted}問を削除しました`);
+            alert(`🗑️ ${deleted}セットを削除しました`);
             render(); return;
           }
         } else {
           alert(msg);
         }
-        dcb.textContent=`✅ A:${grades.A} B:${grades.B} C:${grades.C}`;
+        dcb.textContent=`✅ A:${itemGradeCount.A} B:${itemGradeCount.B} C:${itemGradeCount.C}`;
         if(dp){
-          const worstParts=partOrder.filter(p=>byPart[p]&&byPart[p].C>0).sort((a,b)=>byPart[b].C-byPart[a].C);
-          dp.textContent=`高品質率: ${aPct}%` + (worstParts.length?` | C多: ${worstParts.map(p=>`${p.replace("part","P")}:${byPart[p].C}`).join(" ")}`:"");
+          const worstParts=partOrder.filter(p=>itemByPart[p]&&itemByPart[p].C>0).sort((a,b)=>(itemByPart[b]?.C||0)-(itemByPart[a]?.C||0));
+          dp.textContent=`高品質率: ${itemAPct}%` + (worstParts.length?` | C多: ${worstParts.map(p=>`${p.replace("part","P")}:${itemByPart[p].C}`).join(" ")}`:"");
         }
       }catch(e){
         dcb.textContent="❌ エラー";
@@ -6979,7 +7023,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02g · distractor check per-part breakdown · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02h · multi-Q grade majority vote + per-Q detail · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
