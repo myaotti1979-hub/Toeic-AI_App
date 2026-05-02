@@ -3370,7 +3370,8 @@ with tab_gen:
     # ── 不正解選択肢の品質チェック ──
     st.subheader("🔍 不正解選択肢の品質チェック")
     st.caption("各問題の不正解選択肢が「もっともらしく間違っている」かをGeminiで検証します")
-    if st.session_state.results and gemini_key:
+    _dc_gemini_key = st.session_state.get("gemini_key", "")
+    if st.session_state.results and _dc_gemini_key:
         dc_part = st.selectbox("パートフィルタ", ["全パート"]+[f"Part {i}" for i in range(1,8)], key="dc_part_sel")
         dc_items = st.session_state.results
         if dc_part != "全パート":
@@ -3383,7 +3384,7 @@ with tab_gen:
             def dc_prog(done, total):
                 prog.progress(done/max(total,1))
                 stat.text(f"チェック中... {done}/{total}")
-            results = check_distractor_quality(dc_items, gemini_key, dc_prog)
+            results = check_distractor_quality(dc_items, _dc_gemini_key, dc_prog)
             prog.progress(1.0)
             # Summarize
             grades = {"A":0, "B":0, "C":0}
@@ -3402,7 +3403,7 @@ with tab_gen:
                         st.text(f"  {item.get('part','?')} Q{ci['qi']+1}: {(q.get('question',''))[:80]}")
             else:
                 stat.text("チェック結果なし")
-    elif not gemini_key:
+    elif not _dc_gemini_key:
         st.info("Gemini APIキーが必要です")
     else:
         st.info("問題を生成してからチェックしてください")
