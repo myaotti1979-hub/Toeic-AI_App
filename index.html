@@ -6976,7 +6976,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02m · fix Part 3 answer bug (isLastQ undefined) · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.02n · fix roleplay rec stop button disabled · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8280,6 +8280,7 @@ function renderRolePlay() {
         recBtn.disabled = true;
         recBtn.textContent = "⏳ マイク準備中...";
         const recorder = await recordWav(20000);
+        recBtn.disabled = false;
         recBtn.textContent = "⏺️ 録音中... (タップで停止)";
         recBtn.style.color = "#ef4444";
         recBtn.style.background = "rgba(239,68,68,0.2)";
