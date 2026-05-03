@@ -7340,7 +7340,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03v · cleanup voice diagnostic · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03w · tap word in roleplay → vocab lookup/add · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8695,7 +8695,7 @@ function renderRolePlay() {
         wordReview += `<div style="margin-top:8px;font-size:11px;color:#7a8ea5">Line ${ri+1}:</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">`;
         r.words.forEach(w => {
           const c = w.accuracy >= 80 ? "#4ade80" : w.accuracy >= 50 ? "#fbbf24" : "#f87171";
-          wordReview += `<span style="padding:2px 6px;border-radius:4px;font-size:13px;color:${c};background:rgba(${w.accuracy>=80?"74,222,128":w.accuracy>=50?"251,191,36":"248,113,113"},0.1)">${esc(w.word)}<sub style="font-size:9px">${Math.round(w.accuracy)}</sub></span>`;
+          wordReview += `<span class="rp-word-tap" data-word="${esc(w.word)}" style="padding:2px 6px;border-radius:4px;font-size:13px;color:${c};background:rgba(${w.accuracy>=80?"74,222,128":w.accuracy>=50?"251,191,36":"248,113,113"},0.1);cursor:pointer">${esc(w.word)}<sub style="font-size:9px">${Math.round(w.accuracy)}</sub></span>`;
         });
         wordReview += `</div>`;
       }
@@ -8716,8 +8716,9 @@ function renderRolePlay() {
       <div style="padding:0 16px">${wordReview}</div>
       <button class="btn-s" id="rpRetryBtn" style="margin:16px auto;display:block;padding:10px 24px;color:#818cf8">🔁 もう一度</button>
       <button class="btn-p" id="rpDoneBtn" style="margin:8px 20px">← 問題に戻る</button>`;
-    $("rpRetryBtn").onclick = () => { S._rpIdx = 0; S._rpResults = []; render(); };
+    $("rpRetryBtn").onclick = () => { S._rpIdx = 0; S._rpResults = []; S._rpSaved = false; render(); };
     $("rpDoneBtn").onclick = () => { S._rpRole = null; S.screen = "study"; render(); };
+    bindRpWordTap();
     return;
   }
 
@@ -8740,7 +8741,7 @@ function renderRolePlay() {
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:3px">${r.words.map(w=>{
         const c=w.accuracy>=80?"#4ade80":w.accuracy>=50?"#fbbf24":"#f87171";
-        return `<span style="padding:2px 5px;border-radius:4px;font-size:13px;color:${c};background:rgba(${w.accuracy>=80?"74,222,128":w.accuracy>=50?"251,191,36":"248,113,113"},0.08)">${esc(w.word)}<sub style="font-size:8px">${Math.round(w.accuracy)}</sub></span>`;
+        return `<span class="rp-word-tap" data-word="${esc(w.word)}" style="padding:2px 5px;border-radius:4px;font-size:13px;color:${c};background:rgba(${w.accuracy>=80?"74,222,128":w.accuracy>=50?"251,191,36":"248,113,113"},0.08);cursor:pointer">${esc(w.word)}<sub style="font-size:8px">${Math.round(w.accuracy)}</sub></span>`;
       }).join("")}</div>
     </div>`;
   }
@@ -8838,9 +8839,104 @@ function renderRolePlay() {
       }
     };
   }
+  bindRpWordTap();
 }
 
-/* ── Web Speech voice picker ── */
+/* ── ロールプレイ単語タップ → 単語帳連携 ── */
+function bindRpWordTap() {
+  document.querySelectorAll(".rp-word-tap").forEach(el => {
+    el.onclick = async () => {
+      const word = el.dataset.word;
+      if (!word || word.length < 2) return;
+      const base = lemmatize(word.toLowerCase());
+      // Check vocabDB
+      const allVocab = await vocabGetAll();
+      const found = allVocab.find(v => lemmatize(v.word.toLowerCase()) === base);
+      if (found) {
+        // Show existing entry + play pronunciation
+        const u = new SpeechSynthesisUtterance(found.word);
+        u.lang = "en-US"; u.rate = 0.85;
+        speechSynthesis.speak(u);
+        const lvCol = {"A1":"#22c55e","A2":"#60a5fa","B1":"#fbbf24","B2":"#f97316","C":"#ef4444"}[found.level]||"#94a3b8";
+        el.insertAdjacentHTML("afterend", `<div class="rp-word-info" style="margin:6px 0;padding:10px;background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.15);border-radius:8px;font-size:12px">
+          <div style="color:#dce6f0;font-weight:700">${esc(found.word)} <span style="color:${lvCol};font-size:10px">${found.level||""} ${found.pos||""}</span></div>
+          <div style="color:#a0b4c8;margin-top:2px">${esc(found.meaning?.split("\\n")[0]||found.ja||"")}</div>
+          ${found.context?`<div style="color:#7a8ea5;margin-top:2px;font-style:italic">${esc(found.context.split("\\n")[0])}</div>`:""}
+          <button class="rp-word-play" style="margin-top:4px;background:none;border:none;color:#60a5fa;cursor:pointer;font-size:12px">🔊 もう一度再生</button>
+        </div>`);
+        el.querySelector && document.querySelector(".rp-word-play")?.addEventListener("click", () => {
+          const u2 = new SpeechSynthesisUtterance(found.word);
+          u2.lang = "en-US"; u2.rate = 0.85;
+          speechSynthesis.speak(u2);
+        });
+      } else if (S.apiKey) {
+        // Generate via Gemini and add to vocabDB
+        el.style.outline = "2px solid #818cf8";
+        try {
+          const prompt = `For the English word "${word}", provide:
+{"word":"${word}","pos":"noun/verb/adjective/adverb/phrase","ja":"日本語の意味（短く）","example":"Example sentence using the word","level":"A1/A2/B1/B2/C"}
+RESPOND IN JSON ONLY. No markdown, no backticks.`;
+          const raw = await geminiText(prompt, GEMINI_FLASH);
+          let info;
+          try {
+            info = JSON.parse(raw.replace(/\`\`\`json\s*|\`\`\`/g,"").trim());
+          } catch(e) {
+            const m = raw.match(/\{[^}]*"word"[^}]*\}/);
+            if (m) info = JSON.parse(m[0]); else throw new Error("解析失敗");
+          }
+          // Save to vocabDB
+          const entry = {
+            word: info.word || word,
+            meaning: info.ja || "",
+            ja: info.ja || "",
+            pos: info.pos || "unknown",
+            level: info.level || "B1",
+            context: info.example || "",
+            source: "roleplay",
+            wrongCount: 1, correctCount: 0,
+            createdAt: Date.now(), updatedAt: Date.now()
+          };
+          const db = await openVocabDB();
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction("words","readwrite");
+            tx.objectStore("words").add(entry);
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+          });
+          // Play and show
+          const u = new SpeechSynthesisUtterance(entry.word);
+          u.lang = "en-US"; u.rate = 0.85;
+          speechSynthesis.speak(u);
+          const lvCol = {"A1":"#22c55e","A2":"#60a5fa","B1":"#fbbf24","B2":"#f97316","C":"#ef4444"}[entry.level]||"#94a3b8";
+          el.insertAdjacentHTML("afterend", `<div class="rp-word-info" style="margin:6px 0;padding:10px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.15);border-radius:8px;font-size:12px">
+            <div style="color:#34d399;font-size:10px">✅ 単語帳に追加しました</div>
+            <div style="color:#dce6f0;font-weight:700;margin-top:2px">${esc(entry.word)} <span style="color:${lvCol};font-size:10px">${entry.level} ${entry.pos}</span></div>
+            <div style="color:#a0b4c8;margin-top:2px">${esc(entry.ja)}</div>
+            ${entry.context?`<div style="color:#7a8ea5;margin-top:2px;font-style:italic">${esc(entry.context)}</div>`:""}
+          </div>`);
+        } catch(e) {
+          el.insertAdjacentHTML("afterend", `<div style="font-size:11px;color:#f87171;margin:4px 0">⚠️ ${e.message}</div>`);
+        }
+        el.style.outline = "";
+      } else {
+        // No API key — just play pronunciation
+        const u = new SpeechSynthesisUtterance(word);
+        u.lang = "en-US"; u.rate = 0.85;
+        speechSynthesis.speak(u);
+      }
+      // Remove previous info panels
+      el.onclick = () => {
+        const existing = el.nextElementSibling;
+        if (existing?.classList.contains("rp-word-info")) existing.remove();
+        else {
+          const u = new SpeechSynthesisUtterance(word);
+          u.lang = "en-US"; u.rate = 0.85;
+          speechSynthesis.speak(u);
+        }
+      };
+    };
+  });
+}
 let _voiceCache = null;
 function _loadVoices() {
   _voiceCache = speechSynthesis.getVoices();
