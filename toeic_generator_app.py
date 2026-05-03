@@ -1176,8 +1176,9 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
     prompt, ap = build_prompt(level, actual_part, to)
     raw = generate_text(prompt, engine, model, url, api_key)
     parsed = parse_json(raw)
-    difficulty = parsed.get("difficulty", 0)  # Extract before normalize_set strips it
-    print(f"[DIFFICULTY] parsed keys: {list(parsed.keys())[:10]}, difficulty={difficulty}", flush=True)
+    difficulty = 0  # Always 0 — let HTML's dedicated rating prompt handle this
+    # parsed.get("difficulty") is LLM self-assessment and unreliable
+    print(f"[GEN] parsed keys: {list(parsed.keys())[:10]}", flush=True)
     qs = enforce_choice_count(normalize_set(parsed, ap))
     if not qs.get("questions"): raise ValueError("No questions")
     # Consistency check BEFORE shuffle (letters still match LLM output)
@@ -1186,11 +1187,9 @@ def generate_one_question(level, actual_part, to, engine, model, url, api_key,
         time.sleep(2)
         raw2 = generate_text(prompt, engine, model, url, api_key)
         parsed2 = parse_json(raw2)
-        difficulty2 = parsed2.get("difficulty", 0)
         qs2 = enforce_choice_count(normalize_set(parsed2, ap))
         if qs2.get("questions") and check_answer_consistency(qs2, actual_part):
             qs = qs2
-            difficulty = difficulty2
         else:
             print(f"[WARN] Retry also inconsistent, keeping original", flush=True)
     # Shuffle AFTER consistency check
@@ -1610,13 +1609,22 @@ def load_results(filepath):
 def save_results(filepath, items):
     """Save results to JSON file. Merges audioOpus back from _audio_store."""
     try:
-        # Check if difficulty is present
-        diff_count = sum(1 for it in items if it.get("difficulty"))
+        diff_count = sum(1 for it in items if it.get("difficulty") is not None and it.get("difficulty") != 0)
         print(f"[SAVE] {len(items)} items, {diff_count} with difficulty", flush=True)
         # Reconstruct full items with audio for saving
+        # Copy only the parts that _restore_audio mutates (top-level dict + qSet + vocab/questions items)
         full_items = []
         for item in items:
-            full = json.loads(json.dumps(item, ensure_ascii=False))  # deep copy
+            full = dict(item)  # shallow copy top level
+            qs = full.get("qSet")
+            if qs:
+                qs_copy = dict(qs)
+                # Copy vocab and question items since _restore_audio adds audio keys to them
+                if "vocab" in qs_copy:
+                    qs_copy["vocab"] = [dict(v) for v in qs_copy["vocab"]]
+                if "questions" in qs_copy:
+                    qs_copy["questions"] = [dict(q) for q in qs_copy["questions"]]
+                full["qSet"] = qs_copy
             _restore_audio(full)
             full_items.append(full)
         tmp = filepath.with_suffix(".tmp.json")
@@ -1740,7 +1748,7 @@ if "_init" not in st.session_state:
     st.session_state.results = load_results(RESULTS_FILE)
     st.session_state.mock_results = load_all_mock_batches()
     gk = st.session_state.gemini_key
-    print(f"[INIT] key={'set' if gk else 'empty'} | results={len(st.session_state.results)} | mock={len(st.session_state.mock_results)} | VERSION=v2026.05.02b", flush=True)
+    print(f"[INIT] key={'set' if gk else 'empty'} | results={len(st.session_state.results)} | mock={len(st.session_state.mock_results)} | VERSION=v2026.05.03i", flush=True)
     st.session_state._init = True  # Set LAST so incomplete init retries
 
 # Safety defaults — ensure critical keys exist even if init was from old version
@@ -2034,7 +2042,7 @@ with st.sidebar:
     if not edge: st.caption("⚠️ Edge TTS が使えません: `pip install edge-tts`")
 
     st.divider()
-    st.caption("v2026.05.02b · folder-based batch difficulty + lightweight tabs · 303 types")
+    st.caption("v2026.05.03i · batch save + perf fix · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2084,6 +2092,7 @@ with tab_manage:
                 st.caption(f"レベル内訳: {lv_str}")
 
             # --- Export: full + differential ---
+            # Use session_state data + restore audio on-demand (avoid re-reading 100MB file)
             LAST_EXPORT_FILE = "last_html_export.txt"
             last_export_ts = 0
             try:
@@ -2092,43 +2101,46 @@ with tab_manage:
             except Exception:
                 pass
 
-            try:
-                with open(RESULTS_FILE, "r", encoding="utf-8") as f:
-                    _exp_all = json.load(f)
-            except Exception:
-                _exp_all = []
-
-            _exp_filtered = _exp_all if selected_part == "全パート" else [r for r in _exp_all if r.get("part") == selected_part]
+            _exp_filtered = st.session_state.results if selected_part == "全パート" else [r for r in st.session_state.results if r.get("part") == selected_part]
             _exp_diff = [r for r in _exp_filtered if last_export_ts > 0 and (r.get("createdAt") or 0) > last_export_ts]
 
             ec1, ec2 = st.columns(2)
             with ec1:
                 if _exp_filtered:
-                    _json_full = json.dumps(_exp_filtered, ensure_ascii=False, indent=None)
-                    _mb = len(_json_full) / 1024 / 1024
+                    # Restore audio only when user clicks download (lazy)
+                    def _build_export_json(items):
+                        full = []
+                        for it in items:
+                            d = dict(it)
+                            qs = d.get("qSet")
+                            if qs:
+                                qs_c = dict(qs)
+                                if "vocab" in qs_c: qs_c["vocab"] = [dict(v) for v in qs_c["vocab"]]
+                                if "questions" in qs_c: qs_c["questions"] = [dict(q) for q in qs_c["questions"]]
+                                d["qSet"] = qs_c
+                            _restore_audio(d)
+                            full.append(d)
+                        return json.dumps(full, ensure_ascii=False, indent=None)
+                    _mb_est = len(_exp_filtered) * 50  # rough estimate KB
                     st.download_button(
-                        f"📤 全問 ({len(_exp_filtered)}問 / {_mb:.0f}MB)",
-                        _json_full,
+                        f"📤 全問 ({len(_exp_filtered)}問 / ~{_mb_est//1024}MB)",
+                        _build_export_json(_exp_filtered),
                         f"toeic-stock-{selected_part}-full-{datetime.now():%Y%m%d-%H%M}.json",
                         "application/json", key="exp_full")
-                    del _json_full
             with ec2:
                 if _exp_diff:
-                    _json_diff = json.dumps(_exp_diff, ensure_ascii=False, indent=None)
-                    _mb_d = len(_json_diff) / 1024 / 1024
+                    _mb_d_est = len(_exp_diff) * 50
                     from datetime import datetime as _dt
                     last_dt = _dt.fromtimestamp(last_export_ts/1000).strftime("%m/%d %H:%M")
                     st.download_button(
-                        f"🆕 差分 ({len(_exp_diff)}問 / {_mb_d:.0f}MB)",
-                        _json_diff,
+                        f"🆕 差分 ({len(_exp_diff)}問 / ~{_mb_d_est//1024}MB)",
+                        _build_export_json(_exp_diff),
                         f"toeic-stock-{selected_part}-diff-{datetime.now():%Y%m%d-%H%M}.json",
                         "application/json", key="exp_diff", help=f"前回: {last_dt}")
-                    del _json_diff
                 elif last_export_ts > 0:
                     st.button("🆕 差分なし", disabled=True, key="exp_diff_empty")
                 else:
                     st.caption("初回は全問で出力")
-            del _exp_all, _exp_filtered, _exp_diff
 
             if st.button("⏱ エクスポート時刻を記録", key="mark_export", help="次回の差分基準を更新"):
                 with open(LAST_EXPORT_FILE, "w") as f:
@@ -2869,12 +2881,17 @@ with tab_gen:
                     continue
                 _strip_audio(item)  # Move audio to _audio_store
                 st.session_state.results.append(item); gen+=1
-                save_results(RESULTS_FILE, st.session_state.results)  # auto-save
+                # Save periodically (every 10 items) instead of every item
+                if gen % 10 == 0:
+                    save_results(RESULTS_FILE, st.session_state.results)
                 print(f"[OK] [{i+1}/{count}]",flush=True); log.success(f"✅ [{i+1}/{count}] {tt}")
             except Exception as e:
                 fail+=1; print(f"[ERR] {e}",flush=True); log.error(f"❌ [{i+1}/{count}] {e}")
                 # Retry is disabled for strict mode - listening needs full regeneration with TTS
                 # The main loop will continue and try the next question
+        # Final save (catch remaining items not saved by periodic save)
+        if gen > 0:
+            save_results(RESULTS_FILE, st.session_state.results)
         prog.progress(1.0); stat.success(f"🎉 {gen}/{count} generated, {fail} failed")
 
     # Summary
