@@ -7189,7 +7189,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03c · choices always visible + confidence optional · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03d · show API keys button · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7240,6 +7240,7 @@ function renderHome() {
     <input type="file" id="homeFileInput" accept=".json" multiple style="display:none">
     <div style="text-align:center;margin-top:14px">
       <button class="btn-s" id="changeKey">${S.apiKey?"🔑 APIキー変更":"🔑 APIキーを設定"}</button>
+      ${S.apiKey?`<button class="btn-s" id="showKeyBtn" style="margin-left:4px;font-size:11px">👁️ キー確認</button>`:""}
       <button class="btn-s" id="azureKeyToggle" style="margin-left:4px">${S.azureSpeechKey?"🎭 Azure設定済":"🎭 Azure設定"}</button>
       ${!S.apiKey?`<div style="font-size:10px;color:#fbbf24;margin-top:4px">⚠️ APIキー未設定 — 問題生成・難易度判定には設定が必要です</div>`:""}
       <div id="azureKeyPanel" style="display:none;margin-top:8px;padding:10px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.15);border-radius:8px;text-align:left">
@@ -7483,6 +7484,12 @@ function renderHome() {
   };
   const sdt=$("speedDrillToggle"); if(sdt)sdt.onclick=()=>{S.speedDrillMode=!S.speedDrillMode;localStorage.setItem("speedDrillMode",JSON.stringify(S.speedDrillMode));render();};
   const ck=$("changeKey"); if(ck)ck.onclick=()=>{ localStorage.removeItem("gemini_api_key"); S.apiKey=""; S.screen="apikey"; render(); };
+  const skb=$("showKeyBtn"); if(skb) skb.onclick=()=>{
+    const gk = S.apiKey||"未設定";
+    const ak = S.azureSpeechKey||"未設定";
+    const ar = S.azureSpeechRegion||"未設定";
+    alert(`Gemini API Key:\n${gk}\n\nAzure Speech Key:\n${ak}\n\nAzure Region:\n${ar}`);
+  };
   const azToggle=$("azureKeyToggle"); if(azToggle) azToggle.onclick=()=>{ const p=$("azureKeyPanel"); if(p) p.style.display=p.style.display==="none"?"block":"none"; };
   const azSave2=$("azSave2"); if(azSave2) azSave2.onclick=()=>{
     const r=$("azRegion2")?.value.trim(); const k=$("azKey2")?.value.trim();
