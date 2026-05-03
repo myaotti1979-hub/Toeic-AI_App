@@ -7340,7 +7340,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03u · voice: gender→accent fallback (US/GB) · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03v · cleanup voice diagnostic · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8640,28 +8640,11 @@ function renderRolePlay() {
       ${!S.azureSpeechKey?`<div style="padding:12px;margin:0 20px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);border-radius:8px">
         <div style="font-size:12px;color:#fbbf24">⚠️ Azure Speech APIキーが未設定です</div>
         <div style="font-size:11px;color:#7a8ea5;margin-top:4px">発音チェックにはAzure Speechキーが必要です。APIキー設定画面から設定してください。</div>
-      </div>`:""}
-      <div style="padding:12px;margin:12px 20px;background:rgba(100,116,139,0.08);border-radius:8px">
-        <div style="font-size:11px;color:#7a8ea5">🔊 利用可能な英語音声:</div>
-        <div id="rpVoiceList" style="font-size:10px;color:#64748b;margin-top:4px;max-height:100px;overflow-y:auto"></div>
-      </div>`;
+      </div>`:""}`;
     document.querySelectorAll(".rp-role-btn").forEach(btn => {
       btn.onclick = () => { S._rpRole = btn.dataset.role; S._rpIdx = 0; S._rpResults = []; render(); };
     });
     $("rpBackBtn").onclick = () => { S.screen = "study"; render(); };
-    // Show available voices
-    const vList = $("rpVoiceList");
-    if (vList) {
-      const showVoices = () => {
-        const voices = speechSynthesis.getVoices();
-        const en = voices.filter(v => v.lang.startsWith("en"));
-        vList.textContent = en.length > 0
-          ? en.map(v => `${v.name} (${v.lang})`).join("\n")
-          : `全音声: ${voices.map(v=>v.name+" "+v.lang).join(", ") || "読込中..."}`;
-      };
-      showVoices();
-      speechSynthesis.onvoiceschanged = showVoices;
-    }
     return;
   }
 
