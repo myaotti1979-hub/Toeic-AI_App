@@ -4859,6 +4859,54 @@ async function renderDiagnosis() {
 
   // スピーキング分析
   const speakingHistory = history.filter(h => h.speakingData);
+
+  // ライティング分析
+  const writingHistory = history.filter(h => h.writingData);
+  let writingHtml = "";
+  if (writingHistory.length >= 1) {
+    const wRecent = writingHistory.sort((a,b)=>b.timestamp-a.timestamp).slice(0, 20);
+    const wAvgG = Math.round(wRecent.reduce((a,h)=>a+h.writingData.grammar,0)/wRecent.length);
+    const wAvgV = Math.round(wRecent.reduce((a,h)=>a+h.writingData.vocabulary,0)/wRecent.length);
+    const wAvgR = Math.round(wRecent.reduce((a,h)=>a+h.writingData.relevance,0)/wRecent.length);
+    const wAvg = Math.round((wAvgG+wAvgV+wAvgR)/3);
+    const wsc = v => v >= 80 ? "#4ade80" : v >= 60 ? "#fbbf24" : "#f87171";
+    // Trend
+    const wTrend = writingHistory.sort((a,b)=>a.timestamp-b.timestamp).slice(-10);
+    let wTrendSvg = "";
+    if (wTrend.length >= 2) {
+      const tw=200, th=50, pad=4;
+      const vals = wTrend.map(h=>Math.round((h.writingData.grammar+h.writingData.vocabulary+h.writingData.relevance)/3));
+      const minS=Math.min(...vals)-5, maxS=Math.max(...vals)+5, range=Math.max(maxS-minS,10);
+      const pts=vals.map((v,i)=>`${pad+i/(vals.length-1)*(tw-pad*2)},${th-pad-(v-minS)/range*(th-pad*2)}`).join(" ");
+      const first=vals[0], last=vals[vals.length-1];
+      const dir = last>first?"📈":last<first?"📉":"→";
+      wTrendSvg = `<div style="margin-top:8px">
+        <div style="font-size:11px;color:#7a8ea5">${dir} 推移 (直近${wTrend.length}回): ${first} → ${last}</div>
+        <svg viewBox="0 0 ${tw} ${th}" style="width:100%;height:50px">
+          <polyline points="${pts}" fill="none" stroke="#f472b6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          ${vals.map((v,i)=>`<circle cx="${pad+i/(vals.length-1)*(tw-pad*2)}" cy="${th-pad-(v-minS)/range*(th-pad*2)}" r="3" fill="#f472b6"/>`).join("")}
+        </svg>
+      </div>`;
+    }
+    writingHtml = `<details style="margin-top:14px;padding:14px;background:rgba(244,114,182,0.06);border:1px solid rgba(244,114,182,0.12);border-radius:12px;cursor:pointer">
+      <summary style="font-size:15px;font-weight:700;color:#f472b6;display:flex;align-items:center;gap:8px">✍️ ライティング（直近${wRecent.length}回）<span style="font-size:24px;font-weight:800;color:${wsc(wAvg)}">${wAvg}</span><span style="font-size:11px;color:#7a8ea5;font-weight:400">点</span></summary>
+      <div style="display:flex;gap:12px;margin:12px 0">
+        <div style="flex:1;text-align:center;padding:8px;background:rgba(15,23,42,0.5);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">Grammar</div>
+          <div style="font-size:22px;font-weight:700;color:${wsc(wAvgG)}">${wAvgG}</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:rgba(15,23,42,0.5);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">Vocabulary</div>
+          <div style="font-size:22px;font-weight:700;color:${wsc(wAvgV)}">${wAvgV}</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:rgba(15,23,42,0.5);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">Relevance</div>
+          <div style="font-size:22px;font-weight:700;color:${wsc(wAvgR)}">${wAvgR}</div>
+        </div>
+      </div>
+      ${wTrendSvg}
+    </details>`;
+  }
   let speakingHtml = "";
   if (speakingHistory.length >= 1) {
     const recent = speakingHistory.sort((a,b)=>b.timestamp-a.timestamp).slice(0, 20);
@@ -4875,7 +4923,7 @@ async function renderDiagnosis() {
       {label:"Fluency", value:avgF},
       {label:"Prosody", value:avgPr},
       {label:"基礎語", value:avgSh},
-      {label:"ビジネス語", value:avgLo}
+      {label:"BIZ語", value:avgLo}
     ];
     const cx=130, cy=120, maxR=80;
     const angleStep = (2*Math.PI)/5;
@@ -5263,6 +5311,8 @@ async function renderDiagnosis() {
     </div>
 
     ${speakingHtml}
+
+    ${writingHtml}
 
     <details style="margin-top:16px">
       <summary style="font-size:13px;font-weight:700;color:#dce6f0;cursor:pointer;margin-bottom:8px">📋 学習レポート</summary>
@@ -7189,7 +7239,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03d · show API keys button · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03f · fix BIZ label cutoff + writing scoring · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7985,7 +8035,7 @@ function renderStudy() {
   // Writing practice button
   const wrBtn=$("writingBtn"); if(wrBtn) wrBtn.onclick=()=>{
     S._writingQSet = S.qSet;
-    S._writingResult = null;
+    S._writingScores = null;
     S._writingInput = "";
     S.screen = "writing";
     render();
@@ -8140,8 +8190,36 @@ function renderWriting() {
   const q = qs.questions?.[0] || {};
   const sentence = q.question || "";
   const expl = q.explanation_ja || "";
-  // Extract grammar point from explanation
   const grammarHint = expl.match(/正解は.*?。(.{0,50})/)?.[1] || "";
+  const wr = S._writingScores; // {grammar, vocabulary, relevance, corrected, tip, raw}
+
+  let resultHtml = "";
+  if (wr) {
+    const avg = Math.round((wr.grammar + wr.vocabulary + wr.relevance) / 3);
+    const sc = v => v >= 80 ? "#4ade80" : v >= 60 ? "#fbbf24" : "#f87171";
+    resultHtml = `<div style="margin-top:14px;padding:14px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:10px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+        <div style="font-size:32px;font-weight:800;color:${sc(avg)}">${avg}</div>
+        <div style="font-size:11px;color:#7a8ea5">Writing<br>Score</div>
+      </div>
+      <div style="display:flex;gap:12px;margin-bottom:12px">
+        <div style="flex:1;text-align:center;padding:8px;background:rgba(15,23,42,0.5);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">Grammar</div>
+          <div style="font-size:20px;font-weight:700;color:${sc(wr.grammar)}">${wr.grammar}</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:rgba(15,23,42,0.5);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">Vocabulary</div>
+          <div style="font-size:20px;font-weight:700;color:${sc(wr.vocabulary)}">${wr.vocabulary}</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:8px;background:rgba(15,23,42,0.5);border-radius:8px">
+          <div style="font-size:10px;color:#7a8ea5">Relevance</div>
+          <div style="font-size:20px;font-weight:700;color:${sc(wr.relevance)}">${wr.relevance}</div>
+        </div>
+      </div>
+      ${wr.corrected?`<div style="margin-bottom:8px"><div style="font-size:11px;color:#60a5fa;margin-bottom:2px">✏️ 修正文</div><div style="font-size:14px;color:#dce6f0;line-height:1.6;padding:8px;background:rgba(96,165,250,0.06);border-radius:6px">${esc(wr.corrected)}</div></div>`:""}
+      ${wr.tip?`<div style="font-size:13px;color:#a0b4c8;line-height:1.6">${esc(wr.tip)}</div>`:""}
+    </div>`;
+  }
 
   app.innerHTML = `
     <div class="header" style="display:flex;justify-content:space-between;align-items:center">
@@ -8159,12 +8237,7 @@ function renderWriting() {
       <textarea id="wrInput" rows="3" style="width:100%;padding:12px;background:#243040;border:1px solid #3a4d63;border-radius:10px;color:#dce6f0;font-size:14px;line-height:1.6;resize:vertical;outline:none;font-family:'Noto Sans JP',sans-serif" placeholder="Type your sentence here...">${esc(S._writingInput||"")}</textarea>
     </div>
     <button class="btn-p" id="wrSubmitBtn" ${S._writingInput?"":"disabled"}>📤 添削を受ける</button>
-    ${S._writingResult ? `
-      <div style="margin-top:14px;padding:14px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.15);border-radius:10px">
-        <div style="font-size:13px;font-weight:700;color:#34d399;margin-bottom:8px">📝 添削結果</div>
-        <div style="font-size:14px;line-height:1.8;color:#dce6f0;white-space:pre-wrap">${esc(S._writingResult)}</div>
-      </div>
-    ` : ""}
+    ${resultHtml}
     ${S._writingLoading ? `<div class="loading" style="padding:20px"><div class="spin"></div>添削中...</div>` : ""}`;
 
   $("wrBackBtn").onclick = () => { S.screen = "study"; render(); };
@@ -8176,25 +8249,61 @@ function renderWriting() {
   }
   if (sub) sub.onclick = async () => {
     if (!S._writingInput?.trim() || !S.apiKey) return;
-    S._writingLoading = true; render();
+    S._writingLoading = true; S._writingScores = null; render();
     try {
-      const prompt = `You are an English teacher. The student studied this TOEIC sentence:
+      const prompt = `You are a TOEIC writing coach. The student studied this sentence:
 "${sentence.replace("-------","____")}"
 Grammar point: ${grammarHint}
 
 The student wrote: "${S._writingInput}"
 
-Please:
-1. Check if the grammar point is used correctly
-2. Fix any errors (show corrected version)
-3. Rate: ◎ Perfect / ○ Minor issues / △ Needs work
-4. Give a brief tip in Japanese (2-3 sentences max)
+Score the student's writing on 3 axes (0-100 each):
+1. Grammar: Is the target grammar point used correctly? Are there any grammatical errors?
+2. Vocabulary: Is the word choice natural and appropriate for business English?
+3. Relevance: Does the sentence actually use the same grammar point as the original?
 
-Format: Rating + corrected sentence + tip. Keep it concise.`;
-      const result = await geminiText(prompt, GEMINI_FLASH);
-      S._writingResult = result;
+Also provide:
+- corrected: The corrected version of the student's sentence (or same if perfect)
+- tip: A brief improvement tip in Japanese (2 sentences max)
+
+RESPOND IN THIS EXACT JSON FORMAT ONLY (no markdown, no backticks):
+{"grammar":85,"vocabulary":70,"relevance":90,"corrected":"The corrected sentence here.","tip":"日本語のアドバイスここ。"}`;
+      const raw = await geminiText(prompt, GEMINI_FLASH);
+      let scores;
+      try {
+        const jsonStr = raw.replace(/```json\s*|```/g,"").trim();
+        scores = JSON.parse(jsonStr);
+      } catch(e) {
+        // Fallback: try to extract JSON from response
+        const m = raw.match(/\{[^}]*"grammar"\s*:\s*\d+[^}]*\}/);
+        if (m) scores = JSON.parse(m[0]);
+        else throw new Error("スコアを解析できません");
+      }
+      S._writingScores = {
+        grammar: Math.min(100, Math.max(0, parseInt(scores.grammar)||50)),
+        vocabulary: Math.min(100, Math.max(0, parseInt(scores.vocabulary)||50)),
+        relevance: Math.min(100, Math.max(0, parseInt(scores.relevance)||50)),
+        corrected: scores.corrected || "",
+        tip: scores.tip || ""
+      };
+      // Save to judgeDB
+      (async () => {
+        try {
+          const db = await openJudgeDB();
+          const tx = db.transaction("history","readwrite");
+          tx.objectStore("history").add({
+            part: "part5", level: "writing", type: "writing_practice",
+            questionIdx: 0, correct: true,
+            questionText: (S._writingInput||"").slice(0,100),
+            elapsed: 0, difficulty: 0, mistakeReason: null, confidence: null,
+            writingData: S._writingScores,
+            timestamp: Date.now()
+          });
+          console.log("[WRITING] Saved score:", S._writingScores.grammar, S._writingScores.vocabulary, S._writingScores.relevance);
+        } catch(e) { console.warn("writing save:", e); }
+      })();
     } catch(e) {
-      S._writingResult = "⚠️ エラー: " + e.message;
+      S._writingScores = {grammar:0, vocabulary:0, relevance:0, corrected:"", tip:"⚠️ エラー: "+e.message};
     }
     S._writingLoading = false;
     render();
