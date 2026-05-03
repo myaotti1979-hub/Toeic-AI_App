@@ -7240,7 +7240,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03g · diagnosis layout reorganized · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03h · speaking/writing save respects judge mode · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8287,22 +8287,24 @@ RESPOND IN THIS EXACT JSON FORMAT ONLY (no markdown, no backticks):
         corrected: scores.corrected || "",
         tip: scores.tip || ""
       };
-      // Save to judgeDB
-      (async () => {
-        try {
-          const db = await openJudgeDB();
-          const tx = db.transaction("history","readwrite");
-          tx.objectStore("history").add({
-            part: "part5", level: "writing", type: "writing_practice",
-            questionIdx: 0, correct: true,
-            questionText: (S._writingInput||"").slice(0,100),
-            elapsed: 0, difficulty: 0, mistakeReason: null, confidence: null,
-            writingData: S._writingScores,
-            timestamp: Date.now()
-          });
-          console.log("[WRITING] Saved score:", S._writingScores.grammar, S._writingScores.vocabulary, S._writingScores.relevance);
-        } catch(e) { console.warn("writing save:", e); }
-      })();
+      // Save to judgeDB (only when judge mode is ON)
+      if (S.judgeMode) {
+        (async () => {
+          try {
+            const db = await openJudgeDB();
+            const tx = db.transaction("history","readwrite");
+            tx.objectStore("history").add({
+              part: "part5", level: "writing", type: "writing_practice",
+              questionIdx: 0, correct: true,
+              questionText: (S._writingInput||"").slice(0,100),
+              elapsed: 0, difficulty: 0, mistakeReason: null, confidence: null,
+              writingData: S._writingScores,
+              timestamp: Date.now()
+            });
+            console.log("[WRITING] Saved score:", S._writingScores.grammar, S._writingScores.vocabulary, S._writingScores.relevance);
+          } catch(e) { console.warn("writing save:", e); }
+        })();
+      }
     } catch(e) {
       S._writingScores = {grammar:0, vocabulary:0, relevance:0, corrected:"", tip:"⚠️ エラー: "+e.message};
     }
@@ -8528,8 +8530,8 @@ function renderRolePlay() {
     const longWords = allWords.filter(w => w.word.length >= 6);
     const avgShort = shortWords.length ? Math.round(shortWords.reduce((a,w)=>a+w.accuracy,0)/shortWords.length) : 0;
     const avgLong = longWords.length ? Math.round(longWords.reduce((a,w)=>a+w.accuracy,0)/longWords.length) : 0;
-    // Save to judgeDB for diagnosis
-    if (myResults.length > 0 && !S._rpSaved) {
+    // Save to judgeDB for diagnosis (only when judge mode is ON)
+    if (myResults.length > 0 && !S._rpSaved && S.judgeMode) {
       S._rpSaved = true;
       (async () => {
         try {
