@@ -2254,8 +2254,9 @@ async function stockExport() {
   downloadFile(JSON.stringify(all), `toeic-stock-${new Date().toISOString().slice(0,10)}.json`);
 }
 
-// Per-part export (streaming: loads 100 items at a time, outputs 1 file)
-// Each chunk is immediately Blob-ified so the JSON string can be GC'd
+// Per-part export with automatic splitting at ~50MB
+const EXPORT_SPLIT_MB = 50;
+
 async function stockExportPart(partId, onProgress) {
   const db = await openStockDB();
   const ids = await new Promise((resolve, reject) => {
@@ -2271,49 +2272,73 @@ async function stockExportPart(partId, onProgress) {
   });
   if (ids.length === 0) { alert(`${partId} のストックがありません`); return null; }
 
-  // Build Blob from sub-Blobs: each chunk's string → Blob → GC-eligible
-  const CHUNK = 100;
-  const blobChunks = [new Blob(["["])];
-  let totalSize = 2; // [ and ]
-  const totalPasses = Math.ceil(ids.length / CHUNK);
-
-  for (let ci = 0; ci < totalPasses; ci++) {
-    const chunkIds = ids.slice(ci * CHUNK, (ci + 1) * CHUNK);
-    const items = [];
-    for (const id of chunkIds) {
-      const item = await stockGetById(id);
-      if (item) items.push(item);
-    }
-    const json = JSON.stringify(items);
-    const inner = json.slice(1, -1); // strip [ ]
-    if (ci > 0) blobChunks.push(new Blob([","]));
-    blobChunks.push(new Blob([inner])); // inner string becomes GC-eligible after this
-    totalSize += inner.length + (ci > 0 ? 1 : 0);
-    if (onProgress) onProgress(ci + 1, totalPasses);
+  // Estimate: sample first 5 items to get avg size
+  let sampleSize = 0;
+  const sampleN = Math.min(5, ids.length);
+  for (let si = 0; si < sampleN; si++) {
+    const item = await stockGetById(ids[si]);
+    if (item) sampleSize += JSON.stringify(item).length;
   }
-  blobChunks.push(new Blob(["]"]));
+  const avgItemBytes = sampleSize / sampleN;
+  const estTotalMB = (avgItemBytes * ids.length) / (1024*1024);
+  const numFiles = Math.max(1, Math.ceil(estTotalMB / EXPORT_SPLIT_MB));
+  const itemsPerFile = Math.ceil(ids.length / numFiles);
 
-  const blob = new Blob(blobChunks, {type: "application/json"});
-  const d = new Date().toISOString().slice(0,10);
-  const filename = `toeic-stock-${partId}-${d}.json`;
-  const file = new File([blob], filename, {type: "application/json"});
+  if (onProgress) onProgress(0, ids.length, `${ids.length}問 (推定${estTotalMB.toFixed(0)}MB → ${numFiles}ファイル)`);
 
-  if (navigator.canShare && navigator.canShare({files:[file]})) {
-    try { await navigator.share({files:[file], title:filename}); }
-    catch(e) {
-      if (e.name === "AbortError") return {count: ids.length, sizeMB: (totalSize / 1024 / 1024).toFixed(1)};
-      // Share failed (file too large?) — fallback to download
-      console.warn("[EXPORT] Share failed, falling back to download:", e);
+  const results = [];
+  for (let fi = 0; fi < numFiles; fi++) {
+    const fileIds = ids.slice(fi * itemsPerFile, (fi + 1) * itemsPerFile);
+    const CHUNK = 100;
+    const blobChunks = [new Blob(["["])];
+    let firstItem = true;
+
+    for (let ci = 0; ci < fileIds.length; ci += CHUNK) {
+      const chunkIds = fileIds.slice(ci, ci + CHUNK);
+      const items = [];
+      for (const id of chunkIds) {
+        const item = await stockGetById(id);
+        if (item) items.push(item);
+      }
+      const json = JSON.stringify(items);
+      const inner = json.slice(1, -1);
+      if (!firstItem) blobChunks.push(new Blob([","]));
+      blobChunks.push(new Blob([inner]));
+      firstItem = false;
+      const globalIdx = fi * itemsPerFile + ci + chunkIds.length;
+      if (onProgress) onProgress(globalIdx, ids.length, `${globalIdx}/${ids.length}問 (ファイル${fi+1}/${numFiles})`);
+    }
+    blobChunks.push(new Blob(["]"]));
+
+    const blob = new Blob(blobChunks, {type: "application/json"});
+    const d = new Date().toISOString().slice(0,10);
+    const suffix = numFiles > 1 ? `-${fi+1}of${numFiles}` : "";
+    const filename = `toeic-stock-${partId}${suffix}-${d}.json`;
+    const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+
+    // Download/Share
+    const file = new File([blob], filename, {type: "application/json"});
+    if (navigator.canShare && navigator.canShare({files:[file]})) {
+      try { await navigator.share({files:[file], title:filename}); }
+      catch(e) {
+        if (e.name === "AbortError" && fi === 0) return {count: ids.length, files: numFiles, sizeMB};
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
+        setTimeout(()=>URL.revokeObjectURL(url), 5000);
+      }
+    } else {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
       setTimeout(()=>URL.revokeObjectURL(url), 5000);
     }
-  } else {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    results.push({filename, sizeMB, count: fileIds.length});
+
+    // Pause between files so browser can process
+    if (fi < numFiles - 1) await new Promise(r => setTimeout(r, 1000));
   }
-  return {count: ids.length, sizeMB: (totalSize / 1024 / 1024).toFixed(1)};
+
+  if (onProgress) onProgress(ids.length, ids.length, `完了 (${numFiles}ファイル)`);
+  return {count: ids.length, files: numFiles, sizeMB: estTotalMB.toFixed(1), details: results};
 }
 
 // Vocab export
@@ -3556,7 +3581,7 @@ async function renderStockSelect() {
 
     <div style="margin-top:24px;padding:16px;background:rgba(129,140,248,0.05);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:13px;font-weight:700;color:#7b9cf7;margin-bottom:8px">📱 データ移行（スマホ機種変更時）</div>
-      <div style="font-size:11px;color:#7a8ea5;margin-bottom:10px">パート別にエクスポートすれば大容量でも安全です</div>
+      <div style="font-size:11px;color:#7a8ea5;margin-bottom:10px">パート別にエクスポート（50MB超は自動分割）</div>
       <div style="font-size:12px;font-weight:600;color:#a0b4c8;margin-bottom:6px">エクスポート</div>
       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
         ${PARTS.map(p=>{
@@ -3577,16 +3602,23 @@ async function renderStockSelect() {
 
     ${total>0?`<div style="margin-top:60px;text-align:center"><button class="btn-s" id="stockClearBtn" style="color:#f87171;font-size:11px;opacity:0.6">🗑️ 全ストック削除</button></div>`:""}`;
 
-  // パート別エクスポート（1パート1ファイル・ストリーミング）
+  // パート別エクスポート（自動分割対応）
   document.querySelectorAll("[data-export-part]").forEach(el=>{
     el.onclick=async()=>{
       const partId = el.dataset.exportPart;
       el.textContent="⏳ 準備中...";
       try {
-        const r = await stockExportPart(partId, (done, total) => {
-          el.textContent = `⏳ ${Math.round(done/total*100)}%...`;
+        const r = await stockExportPart(partId, (done, total, msg) => {
+          const pct = total > 0 ? Math.round(done/total*100) : 0;
+          el.textContent = `⏳ ${pct}% ${msg||""}`;
         });
-        if (r) el.textContent = `✅ ${r.count}問 (${r.sizeMB}MB)`;
+        if (r) {
+          if (r.files > 1) {
+            el.textContent = `✅ ${r.count}問 → ${r.files}ファイル`;
+          } else {
+            el.textContent = `✅ ${r.count}問 (${r.sizeMB}MB)`;
+          }
+        }
       } catch(e) { el.textContent="❌ 失敗"; console.error("[EXPORT]", partId, e.message || e); alert(`エクスポート失敗: ${e.message || e}`); }
     };
   });
@@ -7301,7 +7333,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03j · import progress % display · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03k · export auto-split at 50MB + import progress · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
