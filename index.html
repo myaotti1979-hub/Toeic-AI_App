@@ -6643,7 +6643,7 @@ function renderMockSetup() {
 
     <div style="margin:12px 0">
       <div style="font-size:13px;color:#a0b4c8;margin-bottom:6px">📥 模試JSONをインポート</div>
-      <input type="file" id="mockImportFile" accept=".json" style="width:100%;padding:8px;background:#243040;color:#dce6f0;border:1px dashed rgba(255,255,255,0.2);border-radius:8px">
+      <input type="file" id="mockImportFile" accept=".json" multiple style="width:100%;padding:8px;background:#243040;color:#dce6f0;border:1px dashed rgba(255,255,255,0.2);border-radius:8px">
     </div>
 
     <div id="mockStockSummary" style="margin:12px 0;padding:10px;background:#243040;border-radius:10px;font-size:12px"></div>
@@ -6787,16 +6787,22 @@ function renderMockSetup() {
 
   // File import
   $("mockImportFile").onchange = async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    let totalAdded = 0, totalSkipped = 0, totalRejected = 0;
     try {
-      const text = await f.text();
-      const items = JSON.parse(text);
-      if (!Array.isArray(items)) { alert("JSONフォーマットが不正です（配列ではありません）"); return; }
-      const n = await mockStockImport(items);
-      let msg = `✅ ${n.added}セット追加`;
-      if (n.skipped) msg += `、${n.skipped}セット重複スキップ`;
-      if (n.rejected) msg += `\n⚠️ ${n.rejected}セットは音声/画像不完全のため除外されました`;
+      for (const f of files) {
+        const text = await f.text();
+        const items = JSON.parse(text);
+        if (!Array.isArray(items)) continue;
+        const n = await mockStockImport(items);
+        totalAdded += n.added || 0;
+        totalSkipped += n.skipped || 0;
+        totalRejected += n.rejected || 0;
+      }
+      let msg = `✅ ${files.length}ファイル: ${totalAdded}セット追加`;
+      if (totalSkipped) msg += `、${totalSkipped}セット重複スキップ`;
+      if (totalRejected) msg += `\n⚠️ ${totalRejected}セットは音声/画像不完全のため除外`;
       alert(msg);
       render();
     } catch(err) {
@@ -7314,9 +7320,9 @@ function renderHome() {
     const color=sec==="L"?"#38bdf8":"#a78bfa";
     const btns=PARTS.filter(p=>p.sec===sec).map(p=>{
       return `<div class="p-btn" style="display:flex;align-items:center;gap:6px;padding:8px 10px">
-        <span style="font-size:11px;font-family:monospace;font-weight:700;min-width:44px;color:#64748b">${p.label}</span>
-        <span style="font-size:13px;flex:1;color:#94a3b8">${p.desc}</span>
-        <span id="sc_${p.id}" style="font-size:10px;color:#7a8ea5;min-width:32px;text-align:right">…</span>
+        <span style="font-size:11px;font-family:monospace;font-weight:700;min-width:44px;color:#dce6f0">${p.label}</span>
+        <span style="font-size:13px;flex:1;color:#dce6f0">${p.desc}</span>
+        <span id="sc_${p.id}" style="font-size:10px;color:#a0b4c8;min-width:32px;text-align:right">…</span>
         <div style="display:flex;gap:3px;margin-left:4px">
           <button class="btn-s" data-home-rnd="${p.id}" style="font-size:13px;padding:5px 8px;color:#dce6f0" title="通常出題">▶</button>
           <button class="btn-s" data-home-new="${p.id}" style="font-size:13px;padding:5px 8px;color:#60a5fa" title="未回答">🆕</button>
@@ -7333,16 +7339,16 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03k · export auto-split at 50MB + import progress · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03m · HOME text brightness + mock multi-import · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
-      <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
+      <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
       <div style="font-size:13px;color:#7a8ea5;margin-top:2px">読込中...</div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin:8px 0;padding:8px 12px;background:rgba(255,255,255,0.02);border-radius:8px">
       <div style="flex:1">
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
-          <span style="color:#a0b4c8">今日 ${streak.todayCount}/${DAILY_GOAL}問</span>
+          <span style="color:#dce6f0">今日 ${streak.todayCount}/${DAILY_GOAL}問</span>
           <span style="color:${goalColor};font-weight:600">${goalPct >= 100 ? "✅ 達成!" : `${goalPct}%`} ${streakDisplay}</span>
         </div>
         <div style="height:4px;background:#1e293b;border-radius:2px;overflow:hidden">
@@ -7413,9 +7419,9 @@ function renderHome() {
     let totalItems = 0;
     for (const pid of allPartIds) totalItems += (recentByPart[pid]||[]).length;
     if (totalItems < 5) {
-      el.innerHTML = `<div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
-        <div style="font-size:15px;font-weight:700;color:#94a3b8;margin-top:2px">データ不足（${totalItems}/5問）</div>
-        <div style="font-size:10px;color:#7a8ea5">学習を進めると実力レベルが表示されます</div>`;
+      el.innerHTML = `<div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
+        <div style="font-size:15px;font-weight:700;color:#dce6f0;margin-top:2px">データ不足（${totalItems}/5問）</div>
+        <div style="font-size:10px;color:#a0b4c8">学習を進めると実力レベルが表示されます</div>`;
       return;
     }
     let allCorrect = 0;
@@ -7461,12 +7467,12 @@ function renderHome() {
     const rScore = estimateHomeSection(hPartsR);
     const estScore = lScore + rScore;
     S.level = estLevel;
-    el.innerHTML = `<div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
+    el.innerHTML = `<div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
       <div style="display:flex;justify-content:center;align-items:baseline;gap:8px;margin-top:4px">
         <span style="font-size:22px;font-weight:800;color:${lvInfo?.color||'#94a3b8'}">${lvInfo?.label||'—'}</span>
-        <span style="font-size:14px;color:#a0b4c8">推定 ${estScore}点</span>
+        <span style="font-size:14px;color:#dce6f0;font-weight:600">推定 ${estScore}点</span>
       </div>
-      <div style="font-size:10px;color:#7a8ea5">L:${lScore} R:${rScore} ｜ 各パート直近${PART_RECENT_N}問（全${totalItems}問）</div>`;
+      <div style="font-size:10px;color:#a0b4c8">L:${lScore} R:${rScore} ｜ 各パート直近${PART_RECENT_N}問（全${totalItems}問）</div>`;
   }).catch(e=>console.warn("HOME IRT estimation failed:", e));
 
   // Stock play handlers
