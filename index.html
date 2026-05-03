@@ -7340,7 +7340,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03t · voice diagnostic on roleplay · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03u · voice: gender→accent fallback (US/GB) · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8287,9 +8287,12 @@ function renderShadowing() {
   const done=$("shDoneBtn"); if(done) done.onclick=()=>{S.screen="study";render();};
   const playBtn=$("shPlayBtn"); if(playBtn) playBtn.onclick=()=>{
     speechSynthesis.cancel();
+    const spk = (current.match(/^((?:Man|Woman|Speaker)\s*\d?)\s*:/i)||[])[1]||"";
     const clean = current.replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i, "");
     const u = new SpeechSynthesisUtterance(clean);
     u.lang = "en-US"; u.rate = 0.9;
+    const shVoice = getVoiceForSpeaker(spk);
+    if (shVoice) u.voice = shVoice;
     speechSynthesis.speak(u);
   };
   const revBtn=$("shRevealBtn"); if(revBtn) revBtn.onclick=()=>{S._shadowRevealed=!S._shadowRevealed;render();};
@@ -8300,9 +8303,12 @@ function renderShadowing() {
     let si=0;
     function speakNext(){
       if(si>=sentences.length)return;
+      const spk2=(sentences[si].match(/^((?:Man|Woman|Speaker)\s*\d?)\s*:/i)||[])[1]||"";
       const clean=sentences[si].replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i,"");
       const u=new SpeechSynthesisUtterance(clean);
       u.lang="en-US";u.rate=0.9;
+      const shV2=getVoiceForSpeaker(spk2);
+      if(shV2)u.voice=shV2;
       u.onend=()=>{si++;setTimeout(speakNext,500);};
       speechSynthesis.speak(u);
     }
@@ -8799,6 +8805,8 @@ function renderRolePlay() {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "en-US"; u.rate = 0.9;
+      const rpVoice = getVoiceForSpeaker(speaker);
+      if (rpVoice) u.voice = rpVoice;
       const st = $("rpListenStatus");
       if(st) st.textContent = "再生中...";
       u.onend = () => { if(st) st.textContent = ""; };
@@ -8849,11 +8857,53 @@ function renderRolePlay() {
   }
 }
 
-/* ── Web Speech TTS helper ── */
-function speakText(text, lang="en-US", rate=0.9) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = lang; u.rate = rate;
-  return u;
+/* ── Web Speech voice picker ── */
+let _voiceCache = null;
+function _loadVoices() {
+  _voiceCache = speechSynthesis.getVoices();
+  return _voiceCache;
+}
+if (typeof speechSynthesis !== "undefined") {
+  speechSynthesis.onvoiceschanged = _loadVoices;
+  _loadVoices();
+}
+
+function getVoiceForSpeaker(speaker) {
+  const voices = _voiceCache?.length ? _voiceCache : _loadVoices();
+  const enVoices = voices.filter(v => v.lang.startsWith("en"));
+  if (!enVoices.length) return null;
+  const isFemale = /woman|female/i.test(speaker);
+  const num = parseInt((speaker.match(/\d/)||[])[0]) || 1;
+
+  // Strategy 1: Explicit Male/Female in voice name
+  const explicitF = enVoices.filter(v => /female/i.test(v.name));
+  const explicitM = enVoices.filter(v => /\bmale\b/i.test(v.name) && !/female/i.test(v.name));
+  if (explicitF.length && explicitM.length) {
+    const pool = isFemale ? explicitF : explicitM;
+    return pool[(num-1) % pool.length];
+  }
+
+  // Strategy 2: Known voice names (iOS/Mac/Windows)
+  const fNames = /samantha|victoria|karen|moira|fiona|zira|hazel|susan|jenny|aria|sonia|ava/i;
+  const mNames = /daniel|james|david|thomas|alex|guy|davis|ryan|fred|andrew/i;
+  const knownF = enVoices.filter(v => fNames.test(v.name));
+  const knownM = enVoices.filter(v => mNames.test(v.name));
+  if (knownF.length && knownM.length) {
+    const pool = isFemale ? knownF : knownM;
+    return pool[(num-1) % pool.length];
+  }
+
+  // Strategy 3: Accent-based (Man=en_US, Woman=en_GB, Man2=en_AU)
+  const accentOrder = isFemale
+    ? ["en-GB","en_GB","en-AU","en_AU","en-IN","en_IN","en-US","en_US"]
+    : ["en-US","en_US","en-AU","en_AU","en-NG","en_NG","en-GB","en_GB"];
+  // Shift by speaker number
+  const shifted = [...accentOrder.slice((num-1)*2), ...accentOrder.slice(0,(num-1)*2)];
+  for (const lang of shifted) {
+    const match = enVoices.find(v => v.lang === lang);
+    if (match) return match;
+  }
+  return enVoices[0];
 }
 
 /* ── マニュアル画面 ── */
