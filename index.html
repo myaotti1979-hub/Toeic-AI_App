@@ -7340,7 +7340,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03p · 3-speaker voice support · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03q · voice pitch fallback for Android · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8291,8 +8291,8 @@ function renderShadowing() {
     const clean = current.replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i, "");
     const u = new SpeechSynthesisUtterance(clean);
     u.lang = "en-US"; u.rate = 0.9;
-    const voice = getVoiceForSpeaker(spk);
-    if (voice) u.voice = voice;
+    const vp = getVoiceForSpeaker(spk);
+    if (vp.voice) u.voice = vp.voice; u.pitch = vp.pitch;
     speechSynthesis.speak(u);
   };
   const revBtn=$("shRevealBtn"); if(revBtn) revBtn.onclick=()=>{S._shadowRevealed=!S._shadowRevealed;render();};
@@ -8307,8 +8307,8 @@ function renderShadowing() {
       const clean=sentences[si].replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i,"");
       const u=new SpeechSynthesisUtterance(clean);
       u.lang="en-US";u.rate=0.9;
-      const voice=getVoiceForSpeaker(spk2);
-      if(voice)u.voice=voice;
+      const vp2=getVoiceForSpeaker(spk2);
+      if(vp2.voice)u.voice=vp2.voice;u.pitch=vp2.pitch;
       u.onend=()=>{si++;setTimeout(speakNext,500);};
       speechSynthesis.speak(u);
     }
@@ -8788,8 +8788,8 @@ function renderRolePlay() {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "en-US"; u.rate = 0.9;
-      const voice = getVoiceForSpeaker(speaker);
-      if (voice) u.voice = voice;
+      const vp3 = getVoiceForSpeaker(speaker);
+      if (vp3.voice) u.voice = vp3.voice; u.pitch = vp3.pitch;
       const st = $("rpListenStatus");
       if(st) st.textContent = "再生中...";
       u.onend = () => { if(st) st.textContent = ""; };
@@ -8842,28 +8842,46 @@ function renderRolePlay() {
 
 /* ── Web Speech voice picker (male/female, numbered) ── */
 let _voiceCache = null;
-function getVoiceForSpeaker(speaker) {
+function _getEnVoices() {
   if (!_voiceCache || !_voiceCache.length) _voiceCache = speechSynthesis.getVoices();
-  const enVoices = _voiceCache.filter(v => v.lang.startsWith("en"));
-  if (!enVoices.length) return null;
+  return _voiceCache.filter(v => v.lang.startsWith("en"));
+}
+// Returns {voice, pitch} object
+function getVoiceForSpeaker(speaker) {
+  const enVoices = _getEnVoices();
   const isFemale = /woman|female/i.test(speaker);
-  const num = parseInt((speaker.match(/\d/)||[])[0]) || 1; // Man 1→1, Man 2→2
-  const femaleNames = /samantha|victoria|karen|moira|fiona|zira|hazel|susan|jenny|aria|sonia|female/i;
-  const maleNames = /daniel|james|david|thomas|alex|guy|davis|ryan|male|fred/i;
-  // Collect matching voices
-  let pool;
-  if (isFemale) {
-    pool = enVoices.filter(v => femaleNames.test(v.name));
-    if (!pool.length) pool = enVoices.filter(v => !maleNames.test(v.name));
-    if (!pool.length) pool = enVoices;
-  } else {
-    pool = enVoices.filter(v => maleNames.test(v.name));
-    if (!pool.length) pool = enVoices.filter(v => !femaleNames.test(v.name));
-    if (!pool.length) pool = enVoices;
+  const num = parseInt((speaker.match(/\d/)||[])[0]) || 1;
+
+  // Strategy 1: Look for voices with explicit Male/Female in name (Android Google TTS)
+  const explicitF = enVoices.filter(v => /female/i.test(v.name));
+  const explicitM = enVoices.filter(v => /\bmale\b/i.test(v.name) && !/female/i.test(v.name));
+
+  if (explicitF.length && explicitM.length) {
+    const pool = isFemale ? explicitF : explicitM;
+    const idx = (num - 1) % pool.length;
+    return {voice: pool[idx], pitch: 1.0};
   }
-  // Pick different voice for numbered speakers (Man 1 vs Man 2)
-  const idx = (num - 1) % pool.length;
-  return pool[idx];
+
+  // Strategy 2: Look for known voice names (iOS/macOS/Windows)
+  const femaleNames = /samantha|victoria|karen|moira|fiona|zira|hazel|susan|jenny|aria|sonia|ava/i;
+  const maleNames = /daniel|james|david|thomas|alex|guy|davis|ryan|fred|andrew/i;
+  const knownF = enVoices.filter(v => femaleNames.test(v.name));
+  const knownM = enVoices.filter(v => maleNames.test(v.name));
+
+  if (knownF.length && knownM.length) {
+    const pool = isFemale ? knownF : knownM;
+    const idx = (num - 1) % pool.length;
+    return {voice: pool[idx], pitch: 1.0};
+  }
+
+  // Strategy 3: Pitch-based fallback (works on any device)
+  // Use same voice but different pitch to distinguish male/female
+  const baseVoice = enVoices[0] || null;
+  if (isFemale) {
+    return {voice: baseVoice, pitch: 1.15 + (num - 1) * 0.1}; // Woman 1=1.15, Woman 2=1.25
+  } else {
+    return {voice: baseVoice, pitch: 0.85 - (num - 1) * 0.1}; // Man 1=0.85, Man 2=0.75
+  }
 }
 // Preload voices (some browsers load async)
 if (typeof speechSynthesis !== "undefined") {
