@@ -5265,11 +5265,25 @@ async function renderDiagnosis() {
       </div>
     </details>
 
+    <details style="margin-top:14px;padding:14px;background:rgba(100,116,139,0.06);border:1px solid rgba(100,116,139,0.1);border-radius:12px;cursor:pointer">
+      <summary style="font-size:13px;font-weight:700;color:#dce6f0">📋 分析詳細（間違いパターン・自信度・改善アドバイス）</summary>
+      ${mistakeAnalysisHtml}
+      ${confidenceHtml}
+      <div style="margin-top:14px">
+        <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">💡 改善アドバイス</div>
+        ${advice}
+      </div>
+    </details>
+
     <details style="margin-top:16px">
       <summary style="font-size:13px;font-weight:700;color:#7b9cf7;cursor:pointer;margin-bottom:8px">📝 単語分析</summary>
       ${vocabSection}
       ${vocabDbSection}
     </details>
+
+    ${speakingHtml}
+
+    ${writingHtml}
 
     `}
 
@@ -5300,19 +5314,6 @@ async function renderDiagnosis() {
       <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">📈 今週 vs 先週</div>
       ${weeklyComparison}
     </div>
-
-    ${mistakeAnalysisHtml}
-
-    ${confidenceHtml}
-
-    <div style="margin-top:16px">
-      <div style="font-size:13px;font-weight:700;color:#dce6f0;margin-bottom:8px">💡 改善アドバイス</div>
-      ${advice}
-    </div>
-
-    ${speakingHtml}
-
-    ${writingHtml}
 
     <details style="margin-top:16px">
       <summary style="font-size:13px;font-weight:700;color:#dce6f0;cursor:pointer;margin-bottom:8px">📋 学習レポート</summary>
@@ -7239,7 +7240,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03f · fix BIZ label cutoff + writing scoring · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03g · diagnosis layout reorganized · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
