@@ -7340,7 +7340,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03r · stronger pitch/rate voice separation · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03t · voice diagnostic on roleplay · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -8287,12 +8287,9 @@ function renderShadowing() {
   const done=$("shDoneBtn"); if(done) done.onclick=()=>{S.screen="study";render();};
   const playBtn=$("shPlayBtn"); if(playBtn) playBtn.onclick=()=>{
     speechSynthesis.cancel();
-    const spk = (current.match(/^((?:Man|Woman|Speaker)\s*\d?)\s*:/i)||[])[1]||"";
     const clean = current.replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i, "");
     const u = new SpeechSynthesisUtterance(clean);
-    u.lang = "en-US";
-    const vp = getVoiceForSpeaker(spk);
-    if (vp.voice) u.voice = vp.voice; u.pitch = vp.pitch; u.rate = vp.rate || 0.9;
+    u.lang = "en-US"; u.rate = 0.9;
     speechSynthesis.speak(u);
   };
   const revBtn=$("shRevealBtn"); if(revBtn) revBtn.onclick=()=>{S._shadowRevealed=!S._shadowRevealed;render();};
@@ -8303,12 +8300,9 @@ function renderShadowing() {
     let si=0;
     function speakNext(){
       if(si>=sentences.length)return;
-      const spk2=(sentences[si].match(/^((?:Man|Woman|Speaker)\s*\d?)\s*:/i)||[])[1]||"";
       const clean=sentences[si].replace(/^(?:Man|Woman|Speaker)\s*\d?\s*:\s*/i,"");
       const u=new SpeechSynthesisUtterance(clean);
-      u.lang="en-US";
-      const vp2=getVoiceForSpeaker(spk2);
-      if(vp2.voice)u.voice=vp2.voice;u.pitch=vp2.pitch;u.rate=vp2.rate||0.9;
+      u.lang="en-US";u.rate=0.9;
       u.onend=()=>{si++;setTimeout(speakNext,500);};
       speechSynthesis.speak(u);
     }
@@ -8640,11 +8634,28 @@ function renderRolePlay() {
       ${!S.azureSpeechKey?`<div style="padding:12px;margin:0 20px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);border-radius:8px">
         <div style="font-size:12px;color:#fbbf24">⚠️ Azure Speech APIキーが未設定です</div>
         <div style="font-size:11px;color:#7a8ea5;margin-top:4px">発音チェックにはAzure Speechキーが必要です。APIキー設定画面から設定してください。</div>
-      </div>`:""}`;
+      </div>`:""}
+      <div style="padding:12px;margin:12px 20px;background:rgba(100,116,139,0.08);border-radius:8px">
+        <div style="font-size:11px;color:#7a8ea5">🔊 利用可能な英語音声:</div>
+        <div id="rpVoiceList" style="font-size:10px;color:#64748b;margin-top:4px;max-height:100px;overflow-y:auto"></div>
+      </div>`;
     document.querySelectorAll(".rp-role-btn").forEach(btn => {
       btn.onclick = () => { S._rpRole = btn.dataset.role; S._rpIdx = 0; S._rpResults = []; render(); };
     });
     $("rpBackBtn").onclick = () => { S.screen = "study"; render(); };
+    // Show available voices
+    const vList = $("rpVoiceList");
+    if (vList) {
+      const showVoices = () => {
+        const voices = speechSynthesis.getVoices();
+        const en = voices.filter(v => v.lang.startsWith("en"));
+        vList.textContent = en.length > 0
+          ? en.map(v => `${v.name} (${v.lang})`).join("\n")
+          : `全音声: ${voices.map(v=>v.name+" "+v.lang).join(", ") || "読込中..."}`;
+      };
+      showVoices();
+      speechSynthesis.onvoiceschanged = showVoices;
+    }
     return;
   }
 
@@ -8787,9 +8798,7 @@ function renderRolePlay() {
     if (listenBtn) listenBtn.onclick = () => {
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = "en-US";
-      const vp3 = getVoiceForSpeaker(speaker);
-      if (vp3.voice) u.voice = vp3.voice; u.pitch = vp3.pitch; u.rate = vp3.rate || 0.9;
+      u.lang = "en-US"; u.rate = 0.9;
       const st = $("rpListenStatus");
       if(st) st.textContent = "再生中...";
       u.onend = () => { if(st) st.textContent = ""; };
@@ -8840,54 +8849,11 @@ function renderRolePlay() {
   }
 }
 
-/* ── Web Speech voice picker (male/female, numbered) ── */
-let _voiceCache = null;
-function _getEnVoices() {
-  if (!_voiceCache || !_voiceCache.length) _voiceCache = speechSynthesis.getVoices();
-  return _voiceCache.filter(v => v.lang.startsWith("en"));
-}
-// Returns {voice, pitch} object
-function getVoiceForSpeaker(speaker) {
-  const enVoices = _getEnVoices();
-  const isFemale = /woman|female/i.test(speaker);
-  const num = parseInt((speaker.match(/\d/)||[])[0]) || 1;
-
-  // Strategy 1: Look for voices with explicit Male/Female in name (Android Google TTS)
-  const explicitF = enVoices.filter(v => /female/i.test(v.name));
-  const explicitM = enVoices.filter(v => /\bmale\b/i.test(v.name) && !/female/i.test(v.name));
-
-  if (explicitF.length && explicitM.length) {
-    const pool = isFemale ? explicitF : explicitM;
-    const idx = (num - 1) % pool.length;
-    return {voice: pool[idx], pitch: 1.0, rate: 0.9};
-  }
-
-  // Strategy 2: Look for known voice names (iOS/macOS/Windows)
-  const femaleNames = /samantha|victoria|karen|moira|fiona|zira|hazel|susan|jenny|aria|sonia|ava/i;
-  const maleNames = /daniel|james|david|thomas|alex|guy|davis|ryan|fred|andrew/i;
-  const knownF = enVoices.filter(v => femaleNames.test(v.name));
-  const knownM = enVoices.filter(v => maleNames.test(v.name));
-
-  if (knownF.length && knownM.length) {
-    const pool = isFemale ? knownF : knownM;
-    const idx = (num - 1) % pool.length;
-    return {voice: pool[idx], pitch: 1.0, rate: 0.9};
-  }
-
-  // Strategy 3: Pitch-based fallback (works on any device)
-  // Use same voice but significantly different pitch to distinguish male/female
-  const baseVoice = enVoices[0] || null;
-  console.log("[VOICE]", speaker, "→ pitch fallback. Available voices:", enVoices.map(v=>v.name).join(", "));
-  if (isFemale) {
-    return {voice: baseVoice, pitch: 1.4 + (num - 1) * 0.15, rate: 0.95}; // Woman=high pitch
-  } else {
-    return {voice: baseVoice, pitch: 0.6 - (num - 1) * 0.1, rate: 0.85};  // Man=low pitch
-  }
-}
-// Preload voices (some browsers load async)
-if (typeof speechSynthesis !== "undefined") {
-  speechSynthesis.onvoiceschanged = () => { _voiceCache = speechSynthesis.getVoices(); };
-  speechSynthesis.getVoices();
+/* ── Web Speech TTS helper ── */
+function speakText(text, lang="en-US", rate=0.9) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang; u.rate = rate;
+  return u;
 }
 
 /* ── マニュアル画面 ── */
