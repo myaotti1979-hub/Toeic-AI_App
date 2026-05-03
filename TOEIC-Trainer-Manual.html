@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TOEIC AI Trainer マニュアル v2026.05.02p</title>
+<title>TOEIC AI Trainer マニュアル v2026.05.03h</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -270,7 +270,7 @@ footer {
 <div class="hero">
   <h1>TOEIC AI Trainer</h1>
   <div class="sub">Gemini AI × Azure Speech で作る<br>パーソナル TOEIC 学習アプリ</div>
-  <div class="version">v2026.05.02p · 8,352行 · 303問題タイプ · 17画面</div>
+  <div class="version">v2026.05.03h · 8,742行 · 303問題タイプ · 17画面</div>
 </div>
 
 <nav><div class="inner">
@@ -375,7 +375,7 @@ Part 4 ▶ 🆕 🔥 🎯
 <h3>HOME画面の設定</h3>
 <table>
   <tr><th>設定</th><th>説明</th></tr>
-  <tr><td>📊 判定モード</td><td>ONで回答結果をIRT推定に反映</td></tr>
+  <tr><td>📊 判定モード</td><td>ONで回答結果・自信度・スピーキング・ライティングをIRT推定に反映</td></tr>
   <tr><td>⏱ タイムアタック</td><td>パート別制限時間付き</td></tr>
   <tr><td>⚡ P5速度ドリル</td><td>タイムアタック時にPart 5を10秒制限に</td></tr>
   <tr><td>🔑 APIキー</td><td>Gemini / Azure キーの設定・変更</td></tr>
@@ -408,6 +408,27 @@ Part 4 ▶ 🆕 🔥 🎯
   </div>
 </div>
 
+<h3>回答フロー</h3>
+<div class="card">
+  <div class="flow">
+    <span class="step">自信度選択（任意）</span>
+    <span class="arrow">→</span>
+    <span class="step">選択肢タップ</span>
+    <span class="arrow">→</span>
+    <span class="step">正解/不正解表示</span>
+    <span class="arrow">→</span>
+    <span class="step">解説 + 追加機能</span>
+  </div>
+  <h3 style="margin-top:12px;font-size:14px">🎯 自信度（回答前）</h3>
+  <p style="font-size:13px;color:var(--text2)">選択肢の上に3つのボタンが表示されます。タップしてから回答すると診断に反映されます。選ばずに回答した場合は「🤔たぶん」として記録されます。</p>
+  <table>
+    <tr><th>ボタン</th><th>意味</th></tr>
+    <tr><td><span class="tag tag-g">💪 自信あり</span></td><td>正解を確信している</td></tr>
+    <tr><td><span class="tag tag-y">🤔 たぶん</span></td><td>50-80%の確率で正解だと思う</td></tr>
+    <tr><td><span class="tag tag-r">🎲 カン</span></td><td>50%以下、推測で選んでいる</td></tr>
+  </table>
+</div>
+
 <h3>回答後の追加機能</h3>
 <table>
   <tr><th>機能</th><th>対象パート</th><th>説明</th></tr>
@@ -415,7 +436,7 @@ Part 4 ▶ 🆕 🔥 🎯
   <tr><td>🎭 ロールプレイ</td><td>Part 3/4</td><td>Azure発音チェック付き会話練習</td></tr>
   <tr><td>🎙️ シャドーイング</td><td>Part 3/4</td><td>1文ずつ再生→真似る→確認</td></tr>
   <tr><td>📖 WPM計測</td><td>Part 7</td><td>読速を自動計測（目標: 150 WPM）</td></tr>
-  <tr><td>✍️ 英作文練習</td><td>Part 5</td><td>同じ文法で英作文→Gemini添削</td></tr>
+  <tr><td>✍️ 英作文練習</td><td>Part 5</td><td>同じ文法で英作文→Gemini添削（Grammar/Vocabulary/Relevance 3軸採点）</td></tr>
 </table>
 
 <!-- ════════════════════════ ROLEPLAY ════════════════════════ -->
@@ -446,7 +467,7 @@ Part 4 ▶ 🆕 🔥 🎯
   <div class="feat">
     <div class="fi">🎤</div>
     <div class="ft">自分のターン</div>
-    <div class="fd">テキストはブラー非表示 → 録音（最大30秒）→ Azure が分析</div>
+    <div class="fd">テキストを見ながら発声 → 録音（最大30秒）→ Azure が分析</div>
   </div>
 </div>
 
@@ -456,8 +477,12 @@ Part 4 ▶ 🆕 🔥 🎯
   <tr><td>Pronunciation Score</td><td>総合スコア（Accuracy × Fluency × Completeness の重み付き）</td></tr>
   <tr><td>Accuracy</td><td>個々の単語の発音正確性</td></tr>
   <tr><td>Fluency</td><td>自然な流暢さ（間の空け方、速度）</td></tr>
+  <tr><td>Prosody</td><td>抑揚・イントネーションの自然さ</td></tr>
+  <tr><td>基礎語スコア</td><td>短い単語（1-5文字: the, have, from等）の平均accuracy</td></tr>
+  <tr><td>BIZ語スコア</td><td>長い単語（6文字以上: subsidiary, accommodate等）の平均accuracy</td></tr>
   <tr><td>単語別スコア</td><td><span class="tag tag-g">80+</span> <span class="tag tag-y">50-79</span> <span class="tag tag-r">~49</span> で色分け</td></tr>
 </table>
+<p style="font-size:12px;color:var(--text3);margin-top:8px">結果は自動的にjudgeDBに保存され、実力診断の「🎭 スピーキング」セクションに反映されます。</p>
 
 <!-- ════════════════════════ SHADOWING ════════════════════════ -->
 <h2 id="shadowing"><span class="icon">🎙️</span> シャドーイング</h2>
@@ -500,11 +525,68 @@ Part 4 ▶ 🆕 🔥 🎯
 
 <div class="card">
   <p style="font-size:13px;margin-bottom:8px">IRT（項目応答理論）ベースの精密スコア推定。各パート直近50問から算出。</p>
+  <p style="font-size:12px;color:var(--yellow)">⚠️ 判定モード ON の時のみデータが蓄積されます（スピーキング・ライティング含む）</p>
   <div class="grid3">
     <div class="feat"><div class="fi">🎯</div><div class="ft">レーダーチャート</div><div class="fd">7角形パートバランス</div></div>
     <div class="feat"><div class="fi">📕</div><div class="ft">弱点タイプ分析</div><div class="fd">🔥特訓 / ❌復習</div></div>
-    <div class="feat"><div class="fi">🔍</div><div class="ft">間違いパターン</div><div class="fd">知識/読み飛ばし/時間切れ/引っかけ</div></div>
+    <div class="feat"><div class="fi">🎯</div><div class="ft">自信度分析</div><div class="fd">2×3マトリクス</div></div>
   </div>
+</div>
+
+<h3>画面レイアウト</h3>
+<div class="card">
+  <div class="shortcut"><span class="key">1</span>📊 パート別分析（弱点タイプ含む）</div>
+  <div class="shortcut"><span class="key">2</span>📋 分析詳細 <span class="tag tag-b">折りたたみ</span> — 間違いパターン + 自信度 + 改善アドバイス</div>
+  <div class="shortcut"><span class="key">3</span>📝 単語分析 <span class="tag tag-b">折りたたみ</span></div>
+  <div class="shortcut"><span class="key">4</span>🎭 スピーキング <span class="tag tag-b">折りたたみ</span></div>
+  <div class="shortcut"><span class="key">5</span>✍️ ライティング <span class="tag tag-b">折りたたみ</span></div>
+  <div class="shortcut"><span class="key">6</span>📅 直近7日間の学習量 + 今週 vs 先週</div>
+  <div class="shortcut"><span class="key">7</span>📋 学習レポート <span class="tag tag-b">折りたたみ</span></div>
+</div>
+
+<h3>🎯 自信度分析</h3>
+<div class="card">
+  <p style="font-size:13px;margin-bottom:8px">回答前の自信度と結果を2×3マトリクスで分析します。</p>
+  <table>
+    <tr><th></th><th>💪 自信あり</th><th>🤔 たぶん</th><th>🎲 カン</th></tr>
+    <tr><td style="color:var(--green)">✅ 正解</td><td style="color:var(--green)">真の実力</td><td style="color:#60a5fa">定着途上</td><td style="color:#a78bfa">ラッキー</td></tr>
+    <tr><td style="color:var(--red)">❌ 不正解</td><td style="color:var(--red)">危険な誤解</td><td style="color:var(--yellow)">要復習</td><td style="color:var(--text3)">未学習</td></tr>
+  </table>
+  <p style="font-size:12px;color:var(--text3);margin-top:6px">「自信あり→不正解」が10%超で警告、「カン→正解」が15%超で運頼り警告が出ます。</p>
+</div>
+
+<h3>🎭 スピーキング診断</h3>
+<div class="card highlight">
+  <p style="font-size:13px;margin-bottom:10px">ロールプレイの結果が自動蓄積され、直近20回のデータから分析します。TOEIC L&Rスコアとは独立した0-100スケールです。</p>
+
+  <h3 style="margin-top:0;font-size:14px">5軸レーダーチャート</h3>
+  <table>
+    <tr><th>軸</th><th>ソース</th><th>意味</th></tr>
+    <tr><td style="color:var(--accent)">Accuracy</td><td>Azure全体スコア</td><td>個々の単語の発音正確性</td></tr>
+    <tr><td style="color:var(--accent)">Fluency</td><td>Azure全体スコア</td><td>自然な流暢さ・テンポ</td></tr>
+    <tr><td style="color:var(--accent)">Prosody</td><td>Azure全体スコア</td><td>抑揚・イントネーション</td></tr>
+    <tr><td style="color:var(--green)">基礎語</td><td>短い単語（1-5文字）の平均accuracy</td><td>the, is, have, from 等の発音</td></tr>
+    <tr><td style="color:var(--yellow)">BIZ語</td><td>長い単語（6文字以上）の平均accuracy</td><td>subsidiary, accommodate 等の発音</td></tr>
+  </table>
+
+  <h3 style="font-size:14px">その他の分析</h3>
+  <table>
+    <tr><th>機能</th><th>説明</th></tr>
+    <tr><td>📈 推移グラフ</td><td>直近10回のPronunciation Scoreの折れ線グラフ</td></tr>
+    <tr><td>⚠️ 苦手な発音</td><td>2回以上出現 & 平均accuracy60未満の単語をランキング表示</td></tr>
+  </table>
+</div>
+
+<h3>✍️ ライティング診断</h3>
+<div class="card" style="border-color:rgba(244,114,182,0.3)">
+  <p style="font-size:13px;margin-bottom:10px">英作文練習の結果が自動蓄積され、直近20回のデータから分析します。</p>
+  <table>
+    <tr><th>軸</th><th>意味</th></tr>
+    <tr><td style="color:var(--pink)">Grammar</td><td>文法の正確性 — 指示された文法ポイントを正しく使えたか</td></tr>
+    <tr><td style="color:var(--pink)">Vocabulary</td><td>語彙の適切さ — ビジネス英語として自然な語彙か</td></tr>
+    <tr><td style="color:var(--pink)">Relevance</td><td>関連性 — 元の問題と同じ文法構造を使っているか</td></tr>
+  </table>
+  <p style="font-size:12px;color:var(--text3);margin-top:6px">各0-100で採点。直近10回の推移グラフも表示されます。</p>
 </div>
 
 <!-- ════════════════════════ MOCK ════════════════════════ -->
@@ -549,6 +631,15 @@ Part 4 ▶ 🆕 🔥 🎯
   <tr><td>💬 フレーズ抽出</td><td>P3-7から慣用表現を単語帳に追加</td></tr>
   <tr><td>🔍 品質チェック</td><td>不正解選択肢の質をA/B/C判定</td></tr>
   <tr><td>🗑️ 品質C削除</td><td>全設問Cのアイテムを一括削除</td></tr>
+  <tr><td>🗑️ パート全削除</td><td>パートごとに全問題を削除（模試・判定履歴に影響なし）</td></tr>
+</table>
+
+<h3>HOME画面の管理機能</h3>
+<table>
+  <tr><th>ボタン</th><th>説明</th></tr>
+  <tr><td>🔑 APIキー変更</td><td>Gemini APIキーを再設定</td></tr>
+  <tr><td>👁️ キー確認</td><td>Gemini / Azure / Region の現在値を表示</td></tr>
+  <tr><td>🎭 Azure設定</td><td>Azure Speechキー・リージョンの入力パネル</td></tr>
 </table>
 
 <!-- ════════════════════════ QUALITY ════════════════════════ -->
@@ -594,7 +685,7 @@ Part 4 ▶ 🆕 🔥 🎯
 <table>
   <tr><th>DB</th><th>内容</th></tr>
   <tr><td><code>stockDB</code></td><td>ストック問題（音声・画像含む）</td></tr>
-  <tr><td><code>judgeDB</code></td><td>判定履歴（正誤・タイプ・間違い理由）</td></tr>
+  <tr><td><code>judgeDB</code></td><td>判定履歴（正誤・タイプ・間違い理由・スピーキング結果）</td></tr>
   <tr><td><code>vocabDB</code></td><td>単語帳（SRS・レベル・品詞）</td></tr>
   <tr><td><code>mockDB</code></td><td>模試データ</td></tr>
 </table>
@@ -651,13 +742,13 @@ effectiveDifficulty(h) = max(h.difficulty, LEVEL_FLOOR[h.level])
   <tr><td><code>v2026.04.22e</code></td><td>4/22</td><td>模試生成修正、シナリオ多様性、クォーター模試</td></tr>
   <tr><td><code>v2026.05.01b</code></td><td>5/1</td><td>HOME再構成、難易度判定、5段階レベル、フラッシュカード</td></tr>
   <tr><td><code>v2026.05.02b</code></td><td>5/2</td><td>分散シャッフル、スワイプ、ブックマーク、速度調整</td></tr>
-  <tr><td><code>v2026.05.02p</code></td><td>5/2</td><td>セキュリティ強化、ロールプレイ（Azure発音評価）、シャドーイング、速度ドリル、WPM計測、間違い理由分析、コロケーション、英作文添削、品質チェック（パート別多数決）、ストック画面簡素化</td></tr>
+  <tr><td><code>v2026.05.03h</code></td><td>5/3</td><td>セキュリティ強化、ロールプレイ（Azure発音評価 + 5軸レーダー診断）、シャドーイング、速度ドリル、WPM計測、自信度A/B/C分析、間違い理由分析、コロケーション、英作文3軸採点（Grammar/Vocabulary/Relevance）、品質チェック（パート別多数決）、スピーキング・ライティング診断、パート別削除、P5生成プロンプト改善、診断レイアウト整理</td></tr>
 </table>
 
 </div>
 
 <footer>
-  TOEIC AI Trainer v2026.05.02p · Built with Gemini AI + Azure Speech + Claude<br>
+  TOEIC AI Trainer v2026.05.03h · Built with Gemini AI + Azure Speech + Claude<br>
   © 2026 · TOEIC is a registered trademark of ETS
 </footer>
 
