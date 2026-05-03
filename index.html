@@ -3374,6 +3374,7 @@ function render() {
   else if (S.screen==="writing") renderWriting();
   else if (S.screen==="colloQuiz") renderColloQuiz();
   else if (S.screen==="rolePlay") renderRolePlay();
+  else if (S.screen==="manual") renderManual();
   else                          renderStudy();
 }
 
@@ -7339,7 +7340,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03m · HOME text brightness + mock multi-import · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03n · embedded manual + HOME brightness · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7402,6 +7403,7 @@ function renderHome() {
         <button class="btn-s" id="azSave2" style="width:100%;padding:6px;font-size:11px;color:#34d399">保存</button>
       </div>
       <button class="btn-s" id="notifBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px">🔔 学習リマインダー設定</button>
+      <button class="btn-s" id="manualBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px;margin-left:4px">📖 マニュアル</button>
     </div>`;
 
   // Async: load stock counts and IRT level
@@ -7658,6 +7660,7 @@ function renderHome() {
     azSave2.textContent="✅ 保存"; azToggle.textContent="🎭 Azure設定済";
     setTimeout(()=>{azSave2.textContent="保存";},1500);
   };
+  const mb2=$("manualBtn"); if(mb2) mb2.onclick=()=>{S.screen="manual";render();};
   const nb=$("notifBtn"); if(nb)nb.onclick=async()=>{
     if (!("Notification" in window)) { alert("このブラウザは通知に対応していません"); return; }
     const perm = await Notification.requestPermission();
@@ -8827,6 +8830,149 @@ function renderRolePlay() {
       }
     };
   }
+}
+
+/* ── マニュアル画面 ── */
+function renderManual() {
+  const s = (title, content) => `<details style="margin:8px 0;padding:12px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px"><summary style="font-size:14px;font-weight:700;color:#dce6f0;cursor:pointer">${title}</summary><div style="margin-top:10px;font-size:13px;color:#a0b4c8;line-height:1.8">${content}</div></details>`;
+  const t = (headers, rows) => `<table style="width:100%;border-collapse:collapse;font-size:12px;margin:8px 0"><tr>${headers.map(h=>`<th style="text-align:left;padding:6px 8px;background:rgba(129,140,248,0.08);color:#7b9cf7;border-bottom:1px solid rgba(255,255,255,0.08)">${h}</th>`).join("")}</tr>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.03);color:#a0b4c8">${c}</td>`).join("")}</tr>`).join("")}</table>`;
+
+  app.innerHTML = `
+    <div class="header" style="display:flex;justify-content:space-between;align-items:center">
+      <div><h1 style="font-size:20px;margin:0">📖 マニュアル</h1><div class="sub">v2026.05.03m</div></div>
+      <button class="btn-s" id="manualBackBtn" style="font-size:12px;padding:6px 14px">← 戻る</button>
+    </div>
+
+    ${s("🔧 セットアップ", `
+      <p><b>1.</b> スマホのChromeでこのURLを開く → 「ホーム画面に追加」</p>
+      <p><b>2.</b> Gemini APIキーを入力（問題生成・添削用）→ <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#7b9cf7">Google AI Studio</a>で無料取得</p>
+      <p><b>3.</b> Azure Speechキーを入力（ロールプレイ用・任意）→ <a href="https://portal.azure.com" target="_blank" style="color:#7b9cf7">Azure Portal</a></p>
+      <p><b>4.</b> 問題JSONをインポート → HOME画面「📥 インポート」</p>
+      <p style="color:#7a8ea5">APIキーなしでもストック学習・単語帳・模試は利用可能です。</p>
+    `)}
+
+    ${s("🏠 HOME画面 — 出題モード", `
+      ${t(["ボタン","動作","説明"],[
+        ["▶ 通常","タイプ分散シャッフル","品質A/B優先、C後回し"],
+        ["🆕 未回答","未回答のみ","初見の問題だけ"],
+        ["🔥 苦手特訓","正答率70%未満","弱点集中練習"],
+        ["🎯 最適レベル","推定±150点","自分のレベルに合った問題"],
+      ])}
+      <p>📊 判定モード ON → 回答がIRT推定・診断に反映</p>
+      <p>⏱ タイムアタック → パート別制限時間付き</p>
+      <p>⚡ P5速度ドリル → Part 5を10秒制限で訓練</p>
+    `)}
+
+    ${s("🎯 回答自信度", `
+      <p>回答前に 💪自信あり / 🤔たぶん / 🎲カン を選択（任意）。</p>
+      <p>自信度×正誤の2×3マトリクスで分析：</p>
+      ${t(["","💪自信あり","🤔たぶん","🎲カン"],[
+        ["✅正解","真の実力","定着途上","ラッキー"],
+        ["❌不正解","<span style='color:#f87171'>危険な誤解</span>","要復習","未学習"],
+      ])}
+      <p style="color:#7a8ea5">未選択は自動で「🤔たぶん」として記録。</p>
+    `)}
+
+    ${s("🎭 ロールプレイ（Azure発音評価）", `
+      <p>Part 3/4回答後 →「🎭 ロールプレイ」→ Man/Woman選択 → ターン制会話</p>
+      <p>🔊 相手ターン: Web Speech再生 → 🎤 自分ターン: 録音（最大30秒）→ Azure分析</p>
+      ${t(["指標","説明"],[
+        ["Pronunciation","総合スコア (0-100)"],
+        ["Accuracy","単語ごとの発音正確性"],
+        ["Fluency","流暢さ・テンポ"],
+        ["Prosody","抑揚・イントネーション"],
+        ["単語別","🟢80+ 🟡50-79 🔴~49 で色分け"],
+      ])}
+      <p style="color:#fbbf24">⚠️ Azure Speech APIキーが必要です（HOME →「🎭 Azure設定」）</p>
+    `)}
+
+    ${s("🎙️ シャドーイング", `
+      <p>Part 3/4回答後 →「🎙️ シャドーイング」→ 文単位で練習</p>
+      <p>🔊再生 → 口で真似る → 👁️テキスト確認 → 次の文へ</p>
+      <p>API不要・追加データなし（ブラウザ内蔵TTS使用）</p>
+    `)}
+
+    ${s("✍️ 英作文練習", `
+      <p>Part 5回答後 →「✍️ 英作文」→ 同じ文法で英文を書く → Gemini添削</p>
+      ${t(["採点軸","意味"],[
+        ["Grammar","文法ポイントを正しく使えたか"],
+        ["Vocabulary","ビジネス英語として自然な語彙か"],
+        ["Relevance","元の問題と同じ文法構造を使っているか"],
+      ])}
+    `)}
+
+    ${s("📖 WPM計測", `
+      <p>Part 7で文書表示時に自動計測 → 回答後にWPM表示</p>
+      <p>🟢150+ WPM（900点レベル） / 🟡120-149 / 🔴~119</p>
+    `)}
+
+    ${s("📝 単語帳", `
+      <p>問題を解くと自動蓄積。5段階: A1基礎 / A2初級 / B1中級 / B2上級 / C最上級</p>
+      <p>学習モード: 🧠英→日 / 🧠日→英 / 📋品詞あて / 🃏フラッシュカード / 📎コロケーション</p>
+    `)}
+
+    ${s("📊 実力診断", `
+      <p>IRT（項目応答理論）ベースのTOEICスコア推定。各パート直近50問から算出。</p>
+      <p><b>画面構成:</b></p>
+      <p>1. パート別分析（弱点タイプ含む）</p>
+      <p>2. 📋 分析詳細（間違いパターン + 自信度 + 改善アドバイス）</p>
+      <p>3. 📝 単語分析</p>
+      <p>4. 🎭 スピーキング診断（5軸レーダー + 推移 + 苦手単語）</p>
+      <p>5. ✍️ ライティング診断（Grammar/Vocabulary/Relevance）</p>
+      <p>6. 📅 学習量</p>
+      <p style="color:#fbbf24">⚠️ 判定モード ON 時のみデータが蓄積されます</p>
+    `)}
+
+    ${s("🎯 模試", `
+      ${t(["形式","問題数","時間"],[
+        ["フル","200問","2時間"],
+        ["ハーフ","100問","1時間"],
+        ["クォーター","50問","30分"],
+      ])}
+      <p>公式問題集5換算テーブルでスコア算出。直近10回の推移グラフ。</p>
+    `)}
+
+    ${s("🔍 品質管理", `
+      <p>不正解選択肢の質をパート別基準でA/B/C判定。</p>
+      ${t(["パート","C判定の条件"],[
+        ["Part 1","描写文として壊れている"],
+        ["Part 2","gibberish・完全に無関係"],
+        ["Part 3/4/7","話題/本文と無関係"],
+        ["Part 5 品詞","— (品詞違いは正常設計)"],
+        ["Part 5 語彙","品詞混在（消去法で解ける）"],
+      ])}
+      <p>多数決方式: Q1:A Q2:A Q3:C → アイテム=A。削除は全設問Cのみ。</p>
+      <p>出題優先: A/B → C の順で出題。</p>
+    `)}
+
+    ${s("💾 データ管理", `
+      <p><b>エクスポート:</b> パート別JSON（50MB超は自動分割）</p>
+      <p><b>インポート:</b> HOME「📥 インポート」で複数ファイル対応（stock/vocab/judge自動判別）</p>
+      <p><b>模試:</b> 模試画面から専用インポート（複数ファイル対応）</p>
+      <p><b>パート削除:</b> 管理画面で各パートごとに全削除可能（模試・判定履歴に影響なし）</p>
+      <p><b>IndexedDB:</b> stockDB（問題）/ judgeDB（判定）/ vocabDB（単語帳）/ mockDB（模試）</p>
+    `)}
+
+    ${s("🔒 セキュリティ", `
+      <p>JSONインポート経由のXSSを防止済み。</p>
+      <p>• safeImgUrl(): imgUrl検証（data:image/ or blob: のみ許可）</p>
+      <p>• esc(): 全テキスト出力をHTMLエスケープ</p>
+      <p>• APIキーはlocalStorageに保存（個人端末内のみ）</p>
+    `)}
+
+    ${s("📋 バージョン履歴", `
+      ${t(["Version","日付","変更"],[
+        ["v04.19a-f","4/19","初期レビュー、バグ修正、単語帳"],
+        ["v04.19g","4/20","IRT補正、弱点ドリル"],
+        ["v04.22e","4/22","模試、シナリオ多様性"],
+        ["v05.01b","5/1","HOME再構成、難易度判定"],
+        ["v05.02b","5/2","分散シャッフル、スワイプ"],
+        ["v05.03m","5/3","ロールプレイ(Azure)、シャドーイング、速度ドリル、WPM、自信度、英作文3軸、品質チェック、スピーキング/ライティング診断"],
+      ])}
+    `)}
+  `;
+
+  $("manualBackBtn").onclick = () => { S.screen = "home"; render(); };
 }
 
 function ctxBlock(icon, label, text) {
