@@ -7189,7 +7189,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03b · P5 prompt fix + per-part delete + confidence · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03c · choices always visible + confidence optional · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7908,7 +7908,6 @@ function renderStudy() {
   document.querySelectorAll(".conf-btn").forEach(el=>{
     el.onclick=()=>{
       S._confidences[S.qIdx] = el.dataset.conf;
-      // Highlight selected, dim others
       document.querySelectorAll(".conf-btn").forEach(b=>{
         const cl = CONFIDENCE_LEVELS.find(c=>c.id===b.dataset.conf);
         const active = b.dataset.conf===el.dataset.conf;
@@ -7916,16 +7915,11 @@ function renderStudy() {
         b.style.background = active ? cl.bg : "rgba(100,116,139,0.06)";
         b.style.fontWeight = active ? "700" : "400";
       });
-      // Enable choice buttons
-      document.querySelectorAll("[data-c]").forEach(cb=>{ cb.style.opacity="1"; cb.style.pointerEvents="auto"; });
     };
   });
   document.querySelectorAll("[data-c]").forEach(el=>{
-    if (!S._confidences[S.qIdx] && !S.answers[S.qIdx]?.answered) {
-      el.style.opacity="0.4"; el.style.pointerEvents="none";
-    }
     el.onclick=()=>{
-      if(!S._confidences[S.qIdx]){return;}
+      if(!S._confidences[S.qIdx]) S._confidences[S.qIdx] = "B"; // default to B if not selected
       if(!S.answers[S.qIdx].answered)handleAnswer(parseInt(el.dataset.c));
     };
   });
