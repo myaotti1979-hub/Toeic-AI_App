@@ -2378,7 +2378,7 @@ async function dataImportSmart(file, onProgress) {
 
   // Stock file: [...] — use classic parser
   if (trimmed.startsWith("[")) {
-    const r = await stockImportClassic(file);
+    const r = await stockImportClassic(file, onProgress);
     return {type:"stock", ...r};
   }
 
@@ -2482,15 +2482,35 @@ async function stockImportStream(file, onProgress) {
 
 // Legacy stockImport — use classic (reliable) parser
 // Streaming parser is disabled until fully debugged
-async function stockImport(file) {
-  return stockImportClassic(file);
+async function stockImport(file, onProgress) {
+  return stockImportClassic(file, onProgress);
 }
 
 // Classic import: loads entire file into memory (works on all browsers)
-async function stockImportClassic(file) {
-  const text = await file.text();
+async function stockImportClassic(file, onProgress) {
+  const fileSizeMB = (file.size / 1024 / 1024).toFixed(1);
+  if (onProgress) onProgress(0, 100, `📁 ファイル読込中... (${fileSizeMB}MB)`);
+  // Read file with progress tracking
+  const text = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        const pct = Math.round(e.loaded / e.total * 100);
+        onProgress(pct, 100, `📁 読込中... ${pct}% (${fileSizeMB}MB)`);
+      }
+    };
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+  if (onProgress) onProgress(0, 100, `🔍 JSON解析中... (${fileSizeMB}MB)`);
+  // Yield to UI before heavy JSON.parse
+  await new Promise(r => setTimeout(r, 50));
   const items = JSON.parse(text);
   if (!Array.isArray(items)) throw new Error("無効なファイル形式");
+  const total = items.length;
+  if (onProgress) onProgress(0, total, `📦 DB確認中... (${total}問)`);
+  const startTime = Date.now();
   const db = await openStockDB();
   // Build createdAt → {id, difficulty} map for existing items
   const existingMap = await new Promise((resolve, reject) => {
@@ -2506,7 +2526,13 @@ async function stockImportClassic(file) {
   });
   let count = 0, skipped = 0, diffUpdated = 0, vocabAdded = 0, vocabTotal = 0, withVocab = 0;
   const vocabBefore = (await vocabGetAll()).length;
-  for (const item of items) {
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx];
+    if (idx % 5 === 0 && onProgress) {
+      const elapsed = Math.round((Date.now()-startTime)/1000);
+      const eta = idx > 0 ? Math.round(elapsed / idx * (total - idx)) : 0;
+      onProgress(idx, total, `${idx}/${total}問 (${elapsed}秒経過${eta>0?` / 残り約${eta}秒`:""})`);
+    }
     if (!item.part || !item.qSet) continue;
     const ts = item.createdAt || Date.now();
     if (existingMap.has(ts)) {
@@ -3372,10 +3398,20 @@ function renderApiKey() {
     const files = Array.from(e.target.files);
     if (!files.length) return;
     isb.textContent=`⏳ ${files.length}ファイル...`;
+    // Add inline progress bar
+    let progDiv = document.createElement("div");
+    progDiv.innerHTML = `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;font-size:11px;color:#a0b4c8;margin-bottom:3px"><span id="setupProgText">読込中...</span><span id="setupProgPct">0%</span></div><div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden"><div id="setupProgBar" style="height:100%;width:0%;background:linear-gradient(90deg,#818cf8,#4ade80);transition:width 0.3s;border-radius:3px"></div></div></div>`;
+    isb.parentElement.insertBefore(progDiv, isb.nextSibling);
     const results = [];
     for (const f of files) {
       try {
-        const r = await dataImportSmart(f);
+        const r = await dataImportSmart(f, (done, total, msg) => {
+          const pct = total > 0 ? Math.round(done/total*100) : 0;
+          isb.textContent = `⏳ ${f.name.slice(0,15)}... ${pct}%`;
+          const bar=$("setupProgBar"); if(bar)bar.style.width=pct+"%";
+          const txt=$("setupProgText"); if(txt)txt.textContent=msg||`${done}/${total}問`;
+          const pc=$("setupProgPct"); if(pc)pc.textContent=pct+"%";
+        });
         results.push(`${f.name}: ${r.count}件追加`);
       } catch(err) { results.push(`${f.name}: ❌ ${err.message}`); }
     }
@@ -3507,6 +3543,15 @@ async function renderStockSelect() {
       ${totalMastered>0?`<button class="btn-s" id="stockDelAllMastered" style="font-size:12px;color:#f87171">🗑️ 全パート卒業済${totalMastered}問を一括削除</button>`:""}
       ${totalMastered>0?`<button class="btn-s" id="stockResetMastered" style="font-size:12px;color:#60a5fa">🔄 卒業フラグをリセット</button>`:""}
     </div>
+    <div id="importProgress" style="display:none;margin:8px 0">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#a0b4c8;margin-bottom:3px">
+        <span id="importProgressText">読込中...</span>
+        <span id="importProgressPct">0%</span>
+      </div>
+      <div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden">
+        <div id="importProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#818cf8,#4ade80);transition:width 0.3s;border-radius:3px"></div>
+      </div>
+    </div>
     <input type="file" id="stockFileInput" accept=".json" style="display:none">
 
     <div style="margin-top:24px;padding:16px;background:rgba(129,140,248,0.05);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
@@ -3563,12 +3608,18 @@ async function renderStockSelect() {
     const files = Array.from(e.target.files);
     if (!files.length) return;
     mib.textContent=`⏳ ${files.length}ファイル処理中...`;
+    let progDiv2 = document.createElement("div");
+    progDiv2.innerHTML = `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;font-size:11px;color:#a0b4c8;margin-bottom:3px"><span id="migProgText">読込中...</span><span id="migProgPct">0%</span></div><div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden"><div id="migProgBar" style="height:100%;width:0%;background:linear-gradient(90deg,#818cf8,#4ade80);transition:width 0.3s;border-radius:3px"></div></div></div>`;
+    mib.parentElement.insertBefore(progDiv2, mib.nextSibling);
     const results = [];
     for (const f of files) {
       try {
-        const r = await dataImportSmart(f, (bytes, total) => {
-          const pct = total > 0 ? Math.round(bytes/total*100) : 0;
+        const r = await dataImportSmart(f, (done, total) => {
+          const pct = total > 0 ? Math.round(done/total*100) : 0;
           mib.textContent = `⏳ ${f.name.slice(0,20)}... ${pct}%`;
+          const bar=$("migProgBar"); if(bar)bar.style.width=pct+"%";
+          const txt=$("migProgText"); if(txt)txt.textContent=`${done}/${total}問`;
+          const pc=$("migProgPct"); if(pc)pc.textContent=pct+"%";
         });
         results.push(`${f.name}: ${r.type} ${r.count}件追加${r.skipped?` (${r.skipped}件スキップ)`:""}`);
       } catch(err) {
@@ -3622,10 +3673,20 @@ async function renderStockSelect() {
   const ib=$("stockImportBtn"); if(ib)ib.onclick=()=>$("stockFileInput").click();
   const fi=$("stockFileInput"); if(fi)fi.onchange=async(e)=>{
     const f=e.target.files[0]; if(!f)return;
+    const prog=$("importProgress"); const progBar=$("importProgressBar"); const progText=$("importProgressText"); const progPct=$("importProgressPct");
+    if(prog)prog.style.display="block";
+    ib.textContent="⏳ 読込中..."; ib.disabled=true;
     try {
-      const n=await stockImport(f);
+      const n=await stockImport(f, (done, total, msg) => {
+        const pct = total > 0 ? Math.round(done/total*100) : 0;
+        if(progBar)progBar.style.width=pct+"%";
+        if(progText)progText.textContent=msg||`${done}/${total}問`;
+        if(progPct)progPct.textContent=pct+"%";
+        ib.textContent = `⏳ ${pct}% (${done}/${total})`;
+      });
       let msg = `${n.count}問インポートしました`;
       if (n.skipped > 0) msg += ` (${n.skipped}問は重複スキップ)`;
+      if (n.diffUpdated > 0) msg += `\n📊 ${n.diffUpdated}問の難易度を更新`;
       msg += `\n\n📚 vocab統計:`;
       msg += `\n  vocab付き問題: ${n.withVocab}/${n.count}問`;
       msg += `\n  vocabエントリ総数: ${n.vocabTotal}個`;
@@ -3637,7 +3698,7 @@ async function renderStockSelect() {
       }
       alert(msg);
       render();
-    } catch(err) { alert("インポート失敗: "+err.message); }
+    } catch(err) { alert("インポート失敗: "+err.message); ib.textContent="📥 インポート"; ib.disabled=false; if(prog)prog.style.display="none"; }
   };
   const bb=$("stockBackBtn"); if(bb)bb.onclick=()=>{S.screen="home";render();};
 
@@ -7240,7 +7301,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03i · shadowing split by sentence · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03j · import progress % display · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#7a8ea5;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7512,16 +7573,26 @@ function renderHome() {
   const hfi=$("homeFileInput"); if(hfi) hfi.onchange=async(e)=>{
     const files = Array.from(e.target.files);
     if (!files.length) return;
-    hib.textContent=`⏳ ${files.length}ファイル...`;
+    hib.textContent=`⏳ ${files.length}ファイル...`; hib.disabled=true;
+    // Add progress bar
+    let hProg = document.createElement("div");
+    hProg.innerHTML = `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;font-size:11px;color:#a0b4c8;margin-bottom:3px"><span id="homeProgText">読込中...</span><span id="homeProgPct">0%</span></div><div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden"><div id="homeProgBar" style="height:100%;width:0%;background:linear-gradient(90deg,#818cf8,#4ade80);transition:width 0.3s;border-radius:3px"></div></div></div>`;
+    hib.parentElement.parentElement.insertBefore(hProg, hib.parentElement.nextSibling);
     const results = [];
     for (const f of files) {
       try {
-        const r = await dataImportSmart(f);
+        const r = await dataImportSmart(f, (done, total, msg) => {
+          const pct = total > 0 ? Math.round(done/total*100) : 0;
+          hib.textContent = `⏳ ${f.name.slice(0,15)}... ${pct}%`;
+          const bar=$("homeProgBar"); if(bar)bar.style.width=pct+"%";
+          const txt=$("homeProgText"); if(txt)txt.textContent=msg||`${done}/${total}問`;
+          const pc=$("homeProgPct"); if(pc)pc.textContent=pct+"%";
+        });
         results.push(`${f.name}: ${r.type} ${r.count}件追加${r.skipped?` (${r.skipped}件スキップ)`:""}`);
       } catch(err) { results.push(`${f.name}: ❌ ${err.message}`); }
     }
     alert(`インポート結果:\n${results.join("\n")}`);
-    hib.textContent="📥 インポート"; hfi.value=""; render();
+    hib.textContent="📥 インポート"; hib.disabled=false; hfi.value=""; render();
   };
   const jht=$("judgeHomeToggle"); if(jht)jht.onclick=()=>{
     S.judgeMode=!S.judgeMode;
