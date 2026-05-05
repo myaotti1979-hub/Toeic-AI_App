@@ -3556,7 +3556,8 @@ async function renderStockSelect() {
       <div id="transProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
       <button class="btn-s" id="phraseExtractBtn" style="width:100%;font-size:11px;color:#f472b6;margin-top:6px">💬 フレーズ抽出（既存問題）</button>
       <div id="phraseProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
-      <button class="btn-s" id="distractorCheckBtn" style="width:100%;font-size:11px;color:#34d399;margin-top:6px">🔍 不正解選択肢の品質チェック</button>
+      <button class="btn-s" id="distractorCheckBtn" style="width:100%;font-size:11px;color:#34d399;margin-top:6px">🔍 未判定を品質チェック</button>
+      <button class="btn-s" id="distractorCheckAllBtn" style="width:100%;font-size:11px;color:#7a8ea5;margin-top:4px">🔄 全再判定</button>
       <div id="distractorProgress" style="font-size:11px;color:#7a8ea5;margin-top:4px"></div>
       <button class="btn-s" id="deleteGradeCBtn" style="width:100%;font-size:11px;color:#f87171;margin-top:4px;display:none">🗑️ 品質Cの問題を一括削除</button>
     </div>
@@ -4048,7 +4049,8 @@ ${texts}`, GEMINI_FLASH);
     };
   }
   // Distractor quality check
-  const dcb=$("distractorCheckBtn"); if(dcb) {
+  const dcb=$("distractorCheckBtn"); const dcbAll=$("distractorCheckAllBtn");
+  if(dcb) {
     const partSel=$("difficultyPartSel");
     const filterPart = partSel?.value || "";
     stockGetAllLight(filterPart||undefined).then(async items => {
@@ -4056,26 +4058,25 @@ ${texts}`, GEMINI_FLASH);
       const graded = withQ.filter(it => it.distractorGrade);
       const ungraded = withQ.filter(it => !it.distractorGrade);
       const cCount = withQ.filter(it => it.distractorGrade === "C").length;
-      let label = `🔍 品質チェック`;
-      if (graded.length > 0) label += ` (済${graded.length}/未${ungraded.length})`;
-      else label += ` (${withQ.length}問)`;
-      dcb.textContent = label;
+      dcb.textContent = ungraded.length > 0 ? `🔍 未判定を品質チェック (${ungraded.length}問)` : `✅ 全問判定済み`;
+      dcb.disabled = ungraded.length === 0;
+      if(dcbAll) dcbAll.textContent = `🔄 全再判定 (${withQ.length}問)`;
       const dp=$("distractorProgress");
       if (dp && cCount > 0) dp.textContent = `⚠️ 品質C: ${cCount}問`;
       const delCBtn=$("deleteGradeCBtn");
       if (delCBtn && cCount > 0) { delCBtn.style.display = "block"; delCBtn.textContent = `🗑️ 品質Cの問題を一括削除 (${cCount}問)`; }
     });
-    dcb.onclick=async()=>{
+    async function runDistractorCheck(forceAll) {
       if(!S.apiKey){alert("APIキーが必要です");return;}
+      const btn = forceAll ? dcbAll : dcb;
       const fp = $("difficultyPartSel")?.value || "";
       const allItems = await stockGetAllLight(fp||undefined);
       const withQ = allItems.filter(it => it.qSet?.questions?.length > 0);
-      const ungraded = withQ.filter(it => !it.distractorGrade);
-      const items = ungraded.length > 0 ? ungraded : withQ; // Re-check all if all graded
-      const checkType = ungraded.length > 0 ? "未チェック" : "全問（再チェック）";
+      const items = forceAll ? withQ : withQ.filter(it => !it.distractorGrade);
+      const checkType = forceAll ? "全問（再チェック）" : "未チェック";
       if(!items.length){alert("対象問題がありません");return;}
       if(!confirm(`${fp?PARTS.find(p=>p.id===fp)?.label||fp:"全パート"}: ${checkType} ${items.length}問\n推定: 約${Math.ceil(items.length/10*2/60)}分\n\n開始しますか？`))return;
-      dcb.disabled=true;
+      btn.disabled=true;
       const dp=$("distractorProgress");
       const BATCH=10;
       let results=[], errors=0;
@@ -4130,7 +4131,7 @@ ${texts.join("\n")}`, GEMINI_FLASH);
               }
             }
           }catch(e){errors++;console.warn("distractor check batch error:",e);}
-          dcb.textContent=`⏳ ${Math.min(i+BATCH,items.length)}/${items.length}`;
+          btn.textContent=`⏳ ${Math.min(i+BATCH,items.length)}/${items.length}`;
           if(dp)dp.textContent=`A:${results.filter(r=>r.grade==="A").length} B:${results.filter(r=>r.grade==="B").length} C:${results.filter(r=>r.grade==="C").length} ${errors?"err:"+errors:""}`;
           if(i+BATCH<items.length)await new Promise(r=>setTimeout(r,1500));
         }
@@ -4240,18 +4241,20 @@ ${texts.join("\n")}`, GEMINI_FLASH);
         } else {
           alert(msg);
         }
-        dcb.textContent=`✅ A:${itemGradeCount.A} B:${itemGradeCount.B} C:${itemGradeCount.C}`;
+        btn.textContent=`✅ A:${itemGradeCount.A} B:${itemGradeCount.B} C:${itemGradeCount.C}`;
         if(dp){
           const worstParts=partOrder.filter(p=>itemByPart[p]&&itemByPart[p].C>0).sort((a,b)=>(itemByPart[b]?.C||0)-(itemByPart[a]?.C||0));
           dp.textContent=`高品質率: ${itemAPct}%` + (worstParts.length?` | C多: ${worstParts.map(p=>`${p.replace("part","P")}:${itemByPart[p].C}`).join(" ")}`:"");
         }
       }catch(e){
-        dcb.textContent="❌ エラー";
+        btn.textContent="❌ エラー";
         if(dp)dp.textContent=e.message;
       }
       releaseWakeLock();
-      dcb.disabled=false;
-    };
+      btn.disabled=false;
+    }
+    dcb.onclick=()=>runDistractorCheck(false);
+    if(dcbAll) dcbAll.onclick=()=>runDistractorCheck(true);
   }
   const delCBtn2=$("deleteGradeCBtn"); if(delCBtn2) delCBtn2.onclick=async()=>{
     const fp=$("difficultyPartSel")?.value||"";
@@ -7340,7 +7343,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03w · tap word in roleplay → vocab lookup/add · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03x · quality check: ungraded vs re-check all · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
