@@ -2401,6 +2401,13 @@ async function dataImportSmart(file, onProgress) {
     return {type:"judge", count: added, total: (parsed.data||[]).length};
   }
 
+  // Backup file: {"_type":"toeic-trainer-backup",...}
+  if (trimmed.includes('"_type":"toeic-trainer-backup"') || trimmed.includes('"_type": "toeic-trainer-backup"')) {
+    const text = await file.text();
+    const stats = await importLightBackup(text);
+    return {type:"backup", count: stats.judge + stats.vocab + stats.mock, judge: stats.judge, vocab: stats.vocab, mock: stats.mock, stockMeta: stats.stockMeta, settings: stats.settings};
+  }
+
   // Stock file: [...] — use classic parser
   if (trimmed.startsWith("[")) {
     const r = await stockImportClassic(file, onProgress);
@@ -2551,40 +2558,61 @@ async function stockImportClassic(file, onProgress) {
   });
   let count = 0, skipped = 0, diffUpdated = 0, vocabAdded = 0, vocabTotal = 0, withVocab = 0;
   const vocabBefore = (await vocabGetAll()).length;
-  for (let idx = 0; idx < items.length; idx++) {
-    const item = items[idx];
-    if (idx % 5 === 0 && onProgress) {
-      const elapsed = Math.round((Date.now()-startTime)/1000);
-      const eta = idx > 0 ? Math.round(elapsed / idx * (total - idx)) : 0;
-      onProgress(idx, total, `${idx}/${total}問 (${elapsed}秒経過${eta>0?` / 残り約${eta}秒`:""})`);
-    }
-    if (!item.part || !item.qSet) continue;
-    const ts = item.createdAt || Date.now();
-    if (existingMap.has(ts)) {
-      // Duplicate — but update difficulty if imported item has it and existing doesn't
-      const ex = existingMap.get(ts);
-      if (item.difficulty && item.difficulty > 0 && (!ex.difficulty || ex.difficulty === 0)) {
-        await stockUpdateField(ex.id, {difficulty: item.difficulty});
-        diffUpdated++;
+  const IMPORT_BATCH = 50;
+  const pendingVocab = [];
+
+  for (let idx = 0; idx < items.length; idx += IMPORT_BATCH) {
+    const batch = items.slice(idx, idx + IMPORT_BATCH);
+    const toAdd = [];
+    for (const item of batch) {
+      if (!item.part || !item.qSet) continue;
+      const ts = item.createdAt || Date.now();
+      if (existingMap.has(ts)) {
+        const ex = existingMap.get(ts);
+        if (item.difficulty && item.difficulty > 0 && (!ex.difficulty || ex.difficulty === 0)) {
+          await stockUpdateField(ex.id, {difficulty: item.difficulty});
+          diffUpdated++;
+        }
+        skipped++;
+        continue;
       }
-      skipped++;
-      continue;
+      existingMap.set(ts, {id: null, difficulty: item.difficulty||0});
+      const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:safeImgUrl(item.imgUrl), createdAt:ts, difficulty:item.difficulty||0};
+      if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
+      else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
+      toAdd.push(data);
+      const vocab = item.qSet.vocab;
+      if (vocab && Array.isArray(vocab) && vocab.length > 0) {
+        withVocab++;
+        vocabTotal += vocab.length;
+        pendingVocab.push({vocab, part: item.part});
+      }
     }
-    existingMap.set(ts, {id: null, difficulty: item.difficulty||0});
-    const data = {part:item.part, level:item.level, qSet:item.qSet, imgUrl:safeImgUrl(item.imgUrl), createdAt:ts, difficulty:item.difficulty||0};
-    if (item.audioOpus) { data.audioOpus = item.audioOpus; data.audioFormat = "opus"; }
-    else if (item.audioPcm) { data.audioPcm = item.audioPcm; data.audioFormat = "pcm_pending"; }
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction("questions","readwrite");
-      tx.objectStore("questions").add(data);
-      tx.oncomplete = () => { count++; resolve(); };
-      tx.onerror = () => reject(tx.error);
-    });
-    const vocab = item.qSet.vocab;
-    if (vocab && Array.isArray(vocab) && vocab.length > 0) {
-      withVocab++;
-      vocabTotal += vocab.length;
-      await vocabAutoSave(vocab, item.part).catch(e=>console.warn("vocabAutoSave:", e));
+    // Batch write to IndexedDB
+    if (toAdd.length > 0) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("questions","readwrite");
+        const store = tx.objectStore("questions");
+        for (const d of toAdd) store.add(d);
+        tx.oncomplete = () => { count += toAdd.length; resolve(); };
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+    // Progress update
+    const done = Math.min(idx + IMPORT_BATCH, items.length);
+    if (onProgress) {
+      const elapsed = Math.round((Date.now()-startTime)/1000);
+      const eta = done > 0 ? Math.round(elapsed / done * (total - done)) : 0;
+      onProgress(done, total, `${done}/${total}問 (${elapsed}秒経過${eta>0?` / 残り約${eta}秒`:""})`);
+    }
+    // Yield to UI every batch
+    await new Promise(r => setTimeout(r, 0));
+  }
+  // Batch vocab save after all stock items (much faster than per-item)
+  if (pendingVocab.length > 0) {
+    if (onProgress) onProgress(total, total, `📝 単語帳更新中... (${pendingVocab.length}セット)`);
+    for (const {vocab, part} of pendingVocab) {
+      await vocabAutoSave(vocab, part).catch(e=>console.warn("vocabAutoSave:", e));
     }
   }
   const vocabAfter = (await vocabGetAll()).length;
@@ -7343,7 +7371,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.03x · quality check: ungraded vs re-check all · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.04b · batched import (50x fewer transactions) + full backup · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7407,13 +7435,26 @@ function renderHome() {
       </div>
       <button class="btn-s" id="notifBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px">🔔 学習リマインダー設定</button>
       <button class="btn-s" id="manualBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px;margin-left:4px">📖 マニュアル</button>
+      <button class="btn-s" id="backupBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px;margin-left:4px">💾 バックアップ</button>
     </div>`;
 
   // Async: load stock counts and IRT level
   stockCountByPart().then(counts => {
+    let totalStock = 0;
     for (const p of PARTS) {
       const el = document.getElementById(`sc_${p.id}`);
       if (el) el.textContent = counts[p.id] ? `${counts[p.id]}問` : "0";
+      totalStock += counts[p.id] || 0;
+    }
+    // Data loss detection: judge history exists but no stock
+    if (totalStock === 0 && !S._dataLossWarned) {
+      judgeGetRecentByParts(PARTS.map(p=>p.id), 1).then(rp => {
+        const hasHistory = Object.values(rp).some(arr => arr.length > 0);
+        if (hasHistory) {
+          S._dataLossWarned = true;
+          alert("⚠️ 問題データが消えている可能性があります\n\n判定履歴は残っていますが、ストック問題が0件です。\nブラウザデータの削除が原因の可能性があります。\n\n復旧手順:\n1. 💾 バックアップから設定を復元\n2. GitHub Releasesから問題JSONを再インポート");
+        }
+      });
     }
   });
   const allPartIds = PARTS.map(p=>p.id);
@@ -7631,7 +7672,7 @@ function renderHome() {
           const txt=$("homeProgText"); if(txt)txt.textContent=msg||`${done}/${total}問`;
           const pc=$("homeProgPct"); if(pc)pc.textContent=pct+"%";
         });
-        results.push(`${f.name}: ${r.type} ${r.count}件追加${r.skipped?` (${r.skipped}件スキップ)`:""}`);
+        results.push(`${f.name}: ${r.type==="backup"?`復元 ${r.judge||0}履歴 + ${r.vocab||0}語 + ${r.mock||0}模試 + ${r.stockMeta||0}問メタ`:`${r.type} ${r.count}件追加`}${r.skipped?` (${r.skipped}件スキップ)`:""}`);
       } catch(err) { results.push(`${f.name}: ❌ ${err.message}`); }
     }
     alert(`インポート結果:\n${results.join("\n")}`);
@@ -7664,6 +7705,64 @@ function renderHome() {
     setTimeout(()=>{azSave2.textContent="保存";},1500);
   };
   const mb2=$("manualBtn"); if(mb2) mb2.onclick=()=>{S.screen="manual";render();};
+  const bkb=$("backupBtn"); if(bkb) bkb.onclick=async()=>{
+    const choice = confirm("💾 学習データのバックアップ\n\n保存: 判定履歴 + 単語帳 + 設定\n（問題データはGitHub Releasesから再インポート可能）\n\nOK → バックアップ保存\nキャンセル → バックアップから復元");
+    if (choice) {
+      bkb.textContent = "⏳ 保存中...";
+      try {
+        const data = await exportLightBackup();
+        const json = JSON.stringify(data);
+        const sizeMB = (json.length/1024/1024).toFixed(1);
+        const blob = new Blob([json], {type: "application/json"});
+        const d = new Date().toISOString().slice(0,10);
+        const filename = `toeic-backup-${d}.json`;
+        const file = new File([blob], filename, {type:"application/json"});
+        if (navigator.canShare && navigator.canShare({files:[file]})) {
+          try { await navigator.share({files:[file], title:filename}); } catch(e) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
+            setTimeout(()=>URL.revokeObjectURL(url), 5000);
+          }
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
+          setTimeout(()=>URL.revokeObjectURL(url), 5000);
+        }
+        localStorage.setItem("lastBackupDate", String(Date.now()));
+        bkb.textContent = `✅ ${sizeMB}MB (${data.judge?.length||0}履歴 + ${data.vocab?.length||0}語 + ${data.mock?.length||0}模試 + ${data.stockMeta?.length||0}問メタ)`;
+      } catch(e) { bkb.textContent = "❌ " + e.message; }
+      setTimeout(()=>{bkb.textContent="💾 バックアップ";}, 3000);
+    } else {
+      // Restore
+      const input = document.createElement("input");
+      input.type = "file"; input.accept = ".json";
+      input.onchange = async (e) => {
+        const f = e.target.files[0]; if(!f) return;
+        bkb.textContent = "⏳ 復元中...";
+        try {
+          const text = await f.text();
+          const stats = await importLightBackup(text);
+          alert(`✅ 復元完了\n判定履歴: ${stats.judge}件\n単語帳: ${stats.vocab}語\n模試結果: ${stats.mock}件\n問題メタデータ: ${stats.stockMeta}件\n設定: ${stats.settings}項目\n\n※問題メタ(難易度・回答済等)は問題インポート後に再度復元で適用されます`);
+          render();
+        } catch(e) { alert("❌ 復元失敗: " + e.message); bkb.textContent = "💾 バックアップ"; }
+      };
+      input.click();
+    }
+  };
+  // Backup reminder
+  if (checkBackupReminder() && !S._backupReminded) {
+    S._backupReminded = true;
+    setTimeout(()=>{
+      const days = Math.round((Date.now() - parseInt(localStorage.getItem("lastBackupDate")||"0")) / 86400000);
+      if(confirm(`💾 前回のバックアップから${days}日経過しています。\n\n学習データをバックアップしますか？\n（判定履歴・単語帳・設定を保存します）`)) {
+        const bb = $("backupBtn"); if(bb) bb.click();
+      }
+    }, 2000);
+  }
+  // First-time backup prompt
+  if (!localStorage.getItem("lastBackupDate") && S.apiKey) {
+    localStorage.setItem("lastBackupDate", String(Date.now()));
+  }
   const nb=$("notifBtn"); if(nb)nb.onclick=async()=>{
     if (!("Notification" in window)) { alert("このブラウザは通知に対応していません"); return; }
     const perm = await Notification.requestPermission();
@@ -8986,6 +9085,176 @@ function getVoiceForSpeaker(speaker) {
     if (match) return match;
   }
   return enVoices[0];
+}
+
+/* ── 軽量バックアップ（judge + vocab + settings） ── */
+async function exportLightBackup() {
+  const data = {_type: "toeic-trainer-backup", _version: 2, _date: new Date().toISOString()};
+  // judgeDB
+  try {
+    const db = await openJudgeDB();
+    data.judge = await new Promise((resolve, reject) => {
+      const tx = db.transaction("history","readonly");
+      const req = tx.objectStore("history").getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch(e) { data.judge = []; console.warn("backup judge:", e); }
+  // vocabDB
+  try {
+    const db = await openVocabDB();
+    data.vocab = await new Promise((resolve, reject) => {
+      const tx = db.transaction("words","readonly");
+      const req = tx.objectStore("words").getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch(e) { data.vocab = []; console.warn("backup vocab:", e); }
+  // stockDB metadata (no audio/images — just practice state)
+  try {
+    const db = await openStockDB();
+    data.stockMeta = await new Promise((resolve, reject) => {
+      const arr = [];
+      const tx = db.transaction("questions","readonly");
+      const req = tx.objectStore("questions").openCursor();
+      req.onsuccess = (e) => {
+        const c = e.target.result;
+        if (c) {
+          const v = c.value;
+          arr.push({
+            createdAt: v.createdAt, part: v.part,
+            lastPracticed: v.lastPracticed||null, correctStreak: v.correctStreak||0,
+            mastered: v.mastered||false, difficulty: v.difficulty||0,
+            distractorGrade: v.distractorGrade||null, bookmarked: v.bookmarked||false
+          });
+          c.continue();
+        } else resolve(arr);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch(e) { data.stockMeta = []; console.warn("backup stockMeta:", e); }
+  // mockDB (mock test results — scores, answers, timestamps)
+  try {
+    const db = await openMockDB();
+    data.mock = await new Promise((resolve, reject) => {
+      const tx = db.transaction("mock","readonly");
+      const req = tx.objectStore("mock").getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch(e) { data.mock = []; console.warn("backup mock:", e); }
+  // localStorage settings
+  data.settings = {};
+  const keys = ["gemini_api_key","azure_speech_key","azure_speech_region","dailyGoal","judgeMode","timeAttackMode","speedDrillMode","audioSpeed","streakData","lastBackupDate"];
+  keys.forEach(k => { const v = localStorage.getItem(k); if(v !== null) data.settings[k] = v; });
+  return data;
+}
+
+async function importLightBackup(json) {
+  const data = typeof json === "string" ? JSON.parse(json) : json;
+  if (data._type !== "toeic-trainer-backup") throw new Error("バックアップファイルではありません");
+  let stats = {judge:0, vocab:0, settings:0, stockMeta:0, mock:0};
+  // Restore judgeDB
+  if (data.judge?.length) {
+    const db = await openJudgeDB();
+    for (const item of data.judge) {
+      try {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction("history","readwrite");
+          tx.objectStore("history").add(item);
+          tx.oncomplete = resolve;
+          tx.onerror = () => resolve(); // skip duplicates
+        });
+        stats.judge++;
+      } catch(e) {}
+    }
+  }
+  // Restore vocabDB
+  if (data.vocab?.length) {
+    const db = await openVocabDB();
+    for (const item of data.vocab) {
+      try {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction("words","readwrite");
+          tx.objectStore("words").add(item);
+          tx.oncomplete = resolve;
+          tx.onerror = () => resolve(); // skip duplicates
+        });
+        stats.vocab++;
+      } catch(e) {}
+    }
+  }
+  // Restore stock metadata (apply to existing stock items by createdAt)
+  if (data.stockMeta?.length) {
+    const metaMap = {};
+    data.stockMeta.forEach(m => { if(m.createdAt) metaMap[m.createdAt] = m; });
+    try {
+      const db = await openStockDB();
+      const allIds = await new Promise((resolve, reject) => {
+        const arr = [];
+        const tx = db.transaction("questions","readonly");
+        const req = tx.objectStore("questions").openCursor();
+        req.onsuccess = (e) => {
+          const c = e.target.result;
+          if (c) { arr.push({id:c.value.id, createdAt:c.value.createdAt}); c.continue(); }
+          else resolve(arr);
+        };
+        req.onerror = () => reject(req.error);
+      });
+      for (const {id, createdAt} of allIds) {
+        const meta = metaMap[createdAt];
+        if (!meta) continue;
+        try {
+          await stockUpdateField(id, {
+            lastPracticed: meta.lastPracticed,
+            correctStreak: meta.correctStreak,
+            mastered: meta.mastered,
+            difficulty: meta.difficulty,
+            distractorGrade: meta.distractorGrade,
+            bookmarked: meta.bookmarked
+          });
+          stats.stockMeta++;
+        } catch(e) {}
+      }
+    } catch(e) { console.warn("restore stockMeta:", e); }
+  }
+  // Restore mockDB
+  if (data.mock?.length) {
+    try {
+      const db = await openMockDB();
+      for (const item of data.mock) {
+        try {
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction("mock","readwrite");
+            const entry = {...item}; delete entry.id;
+            tx.objectStore("mock").add(entry);
+            tx.oncomplete = resolve;
+            tx.onerror = () => resolve();
+          });
+          stats.mock++;
+        } catch(e) {}
+      }
+    } catch(e) { console.warn("restore mock:", e); }
+  }
+  // Restore settings
+  if (data.settings) {
+    Object.entries(data.settings).forEach(([k,v]) => { localStorage.setItem(k, v); stats.settings++; });
+    S.apiKey = localStorage.getItem("gemini_api_key")||"";
+    S.azureSpeechKey = localStorage.getItem("azure_speech_key")||"";
+    S.azureSpeechRegion = localStorage.getItem("azure_speech_region")||"eastus";
+  }
+  return stats;
+}
+
+// Backup reminder: check on startup
+function checkBackupReminder() {
+  const lastBackup = parseInt(localStorage.getItem("lastBackupDate")||"0");
+  const daysSince = (Date.now() - lastBackup) / 86400000;
+  const threshold = parseInt(localStorage.getItem("backupIntervalDays")||"7");
+  if (daysSince >= threshold && lastBackup > 0) {
+    return true; // should remind
+  }
+  return false;
 }
 
 /* ── マニュアル画面 ── */
