@@ -2369,18 +2369,16 @@ async function dataImportSmart(file, onProgress) {
   if (trimmed.startsWith('{"type":"vocab"') || trimmed.startsWith('{"type": "vocab"')) {
     const text = await file.text();
     const parsed = JSON.parse(text);
-    const db = await openVocabDB();
-    let added = 0;
-    for (const w of (parsed.data||[])) {
-      await new Promise((resolve) => {
-        const tx = db.transaction("words","readwrite");
-        const entry = {...w}; delete entry.id;
-        tx.objectStore("words").add(entry);
-        tx.oncomplete = () => { added++; resolve(); };
-        tx.onerror = () => resolve();
-      });
-    }
-    return {type:"vocab", count: added, total: (parsed.data||[]).length};
+    // Use vocabAutoSave for proper deduplication (not direct store.add)
+    const vocabItems = (parsed.data||[]).map(w => ({
+      word: w.word||"", pos: w.pos||"other", ja: w.meaning||w.ja||"",
+      example: w.context||w.example||"", level: w.level||"",
+      audio: w.audio||"", example_audio: w.exampleAudio||w.example_audio||""
+    })).filter(v => v.word);
+    const before = (await vocabGetAll()).length;
+    if (vocabItems.length > 0) await vocabAutoSave(vocabItems, "import");
+    const after = (await vocabGetAll()).length;
+    return {type:"vocab", count: after - before, total: (parsed.data||[]).length, skipped: (parsed.data||[]).length - (after - before)};
   }
 
   // Judge file: {"type":"judge",...} — small, parse normally
@@ -2608,11 +2606,22 @@ async function stockImportClassic(file, onProgress) {
     // Yield to UI every batch
     await new Promise(r => setTimeout(r, 0));
   }
-  // Batch vocab save after all stock items (much faster than per-item)
+  // Merge all vocab into single deduplicated list, then save once
   if (pendingVocab.length > 0) {
-    if (onProgress) onProgress(total, total, `📝 単語帳更新中... (${pendingVocab.length}セット)`);
+    if (onProgress) onProgress(total, total, `📝 単語帳更新中...`);
+    const mergedVocab = [];
+    const seenBase = new Set();
     for (const {vocab, part} of pendingVocab) {
-      await vocabAutoSave(vocab, part).catch(e=>console.warn("vocabAutoSave:", e));
+      for (const v of vocab) {
+        if (!v.word) continue;
+        const base = lemmatize(v.word);
+        if (seenBase.has(base)) continue; // skip duplicates within import
+        seenBase.add(base);
+        mergedVocab.push(v);
+      }
+    }
+    if (mergedVocab.length > 0) {
+      await vocabAutoSave(mergedVocab, "mixed").catch(e=>console.warn("vocabAutoSave:", e));
     }
   }
   const vocabAfter = (await vocabGetAll()).length;
@@ -3320,31 +3329,8 @@ function handleAnswer(idx) {
     const allCorrect = S.answers.every((a,ai) => a.answered && a.selected === (S.qSet.questions[ai]||{}).correct);
     updateStockStreak(S.stockId, allCorrect).catch(e=>console.warn('stock streak update failed:', e));
   }
-  // Vocab SRS linkage: update correctCount/wrongCount for ALL practice modes
-  // (not just judgeMode — stock practice and normal practice also count)
-  if (!S.stockCreateMode && S.qSet && S.qSet.vocab && S.qSet.vocab.length && !S.qSet._vocabSrsUpdated) {
-    if (isLastQ || qi === S.qSet.questions.length - 1) {
-      S.qSet._vocabSrsUpdated = true;  // once per qSet, at last question
-      const anyWrong = S.answers.some((a,ai) => a.answered && a.selected !== (S.qSet.questions[ai]||{}).correct);
-      (async () => {
-        try {
-          const allVocab = await vocabGetAll();
-          const vocabByBase = {};
-          for (const w of allVocab) vocabByBase[lemmatize(w.word)] = w;
-          for (const v of S.qSet.vocab) {
-            const match = vocabByBase[lemmatize(v.word || "")];
-            if (match) {
-              if (anyWrong) {
-                await vocabUpdate(match.id, {wrongCount: (match.wrongCount||0)+1});
-              } else {
-                await vocabUpdate(match.id, {correctCount: (match.correctCount||0)+1});
-              }
-            }
-          }
-        } catch(e) { console.warn("vocab SRS linkage error:", e); }
-      })();
-    }
-  }
+  // Vocab SRS: correctCount/wrongCount are updated only by vocab quiz (renderVocabQuiz)
+  // NOT by stock question results — question correctness ≠ word mastery
   // Auto-save vocabulary from this question set (once per qSet)
   if (S.qSet && S.qSet.vocab && S.qSet.vocab.length && !S.qSet._vocabSaved) {
     S.qSet._vocabSaved = true;
@@ -7371,7 +7357,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.04b · batched import (50x fewer transactions) + full backup · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.04c · fix vocab dedup all paths + SRS quiz only + batched import · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -9169,20 +9155,36 @@ async function importLightBackup(json) {
       } catch(e) {}
     }
   }
-  // Restore vocabDB
+  // Restore vocabDB (with deduplication, preserving SRS counts)
   if (data.vocab?.length) {
     const db = await openVocabDB();
+    const existing = await new Promise((resolve, reject) => {
+      const tx = db.transaction("words","readonly");
+      const req = tx.objectStore("words").getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const byBase = {};
+    for (const w of existing) byBase[lemmatize(w.word)] = w;
+    const toAdd = [];
     for (const item of data.vocab) {
-      try {
-        await new Promise((resolve, reject) => {
-          const tx = db.transaction("words","readwrite");
-          tx.objectStore("words").add(item);
-          tx.oncomplete = resolve;
-          tx.onerror = () => resolve(); // skip duplicates
-        });
-        stats.vocab++;
-      } catch(e) {}
+      if (!item.word) continue;
+      const base = lemmatize(item.word);
+      if (byBase[base]) continue; // already exists → skip
+      const entry = {...item}; delete entry.id; // let auto-increment assign
+      toAdd.push(entry);
+      byBase[base] = entry;
     }
+    if (toAdd.length > 0) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("words","readwrite");
+        const store = tx.objectStore("words");
+        for (const rec of toAdd) store.add(rec);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+    stats.vocab = toAdd.length;
   }
   // Restore stock metadata (apply to existing stock items by createdAt)
   if (data.stockMeta?.length) {
