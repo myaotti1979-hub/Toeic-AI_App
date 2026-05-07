@@ -4542,33 +4542,52 @@ async function renderDiagnosis() {
     byPart[p.id] = {correct: items.filter(h=>h.correct).length, total: items.length};
   });
 
-  // セクション推定（パート別直近N問を合算してIRT）
+  // TOEIC本番の問題数配分（パートごとの重み）
+  const PART_WEIGHTS = {
+    part1: 6, part2: 25, part3: 39, part4: 30,  // L: 100問
+    part5: 30, part6: 16, part7: 54              // R: 100問
+  };
+
+  // セクション推定（パート別重み付きIRT）
   function estimateSection(partIds) {
-    const sectionItems = [];
-    for (const pid of partIds) sectionItems.push(...(recentByPart[pid] || []));
-    if (sectionItems.length === 0) return {score:0, total:0, recentN: 0};
-    const sByLevel = {};
-    sectionItems.forEach(h => {
-      const lv = diffToLevel(effectiveDifficulty(h));
-      if (!sByLevel[lv]) sByLevel[lv] = {correct:0, total:0};
-      sByLevel[lv].total++;
-      if (h.correct) sByLevel[lv].correct++;
-    });
-    let weightedScore = 0, totalWeight = 0;
-    for (const [lv, data] of Object.entries(sByLevel)) {
-      if (data.total >= 2) {
-        const rate = data.correct / data.total;
-        const score = irtEstimate(rate, lv);
-        weightedScore += score * data.total;
-        totalWeight += data.total;
+    const sectionWeight = partIds.reduce((a,pid) => a + (PART_WEIGHTS[pid]||1), 0); // L=100, R=100
+    let weightedScore = 0, totalData = 0, hasData = false;
+
+    for (const pid of partIds) {
+      const items = recentByPart[pid] || [];
+      if (items.length < 2) continue;
+      hasData = true;
+      // Group by difficulty level for this part
+      const sByLevel = {};
+      items.forEach(h => {
+        const lv = diffToLevel(effectiveDifficulty(h));
+        if (!sByLevel[lv]) sByLevel[lv] = {correct:0, total:0};
+        sByLevel[lv].total++;
+        if (h.correct) sByLevel[lv].correct++;
+      });
+      // IRT estimate for this part
+      let partScore = 0, partWeight = 0;
+      for (const [lv, data] of Object.entries(sByLevel)) {
+        if (data.total >= 1) {
+          const rate = data.correct / data.total;
+          const score = irtEstimate(rate, lv);
+          partScore += score * data.total;
+          partWeight += data.total;
+        }
       }
+      if (partWeight === 0) continue;
+      const partEst = partScore / partWeight; // this part's estimated score (0-990 scale)
+      // Apply TOEIC-proportional weight
+      const w = PART_WEIGHTS[pid] || 1;
+      weightedScore += partEst * w;
+      totalData += w;
     }
-    if (totalWeight === 0) {
-      const rate = sectionItems.filter(h=>h.correct).length / sectionItems.length;
-      return {score: Math.round(rate * 495), total: sectionItems.length, recentN: sectionItems.length};
-    }
-    const rawEst = weightedScore / totalWeight;
-    return {score: Math.min(495, Math.max(5, Math.round(rawEst / 2))), total: totalWeight, recentN: sectionItems.length};
+
+    if (!hasData) return {score:0, total:0, recentN: 0};
+    // Normalize: if only some parts have data, scale up proportionally
+    const rawEst = weightedScore / totalData;
+    const recentN = partIds.reduce((a,pid) => a + (recentByPart[pid]||[]).length, 0);
+    return {score: Math.min(495, Math.max(5, Math.round(rawEst / 2))), total: totalData, recentN};
   }
 
   const lEst = estimateSection(["part1","part2","part3","part4"]);
@@ -7357,7 +7376,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.04c · fix vocab dedup all paths + SRS quiz only + batched import · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.07a · TOEIC-weighted IRT + vocab dedup fix + batched import · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7478,22 +7497,30 @@ function renderHome() {
     function effDiff(h) { return Math.max(h.difficulty||0, LV_FLOOR[h.level]||0); }
     const hPartsL = ["part1","part2","part3","part4"];
     const hPartsR = ["part5","part6","part7"];
+    const HW = {part1:6, part2:25, part3:39, part4:30, part5:30, part6:16, part7:54};
     function estimateHomeSection(partIds) {
-      const byLv = {};
+      let weightedScore = 0, totalWeight = 0;
       for (const pid of partIds) {
-        (recentByPart[pid]||[]).forEach(h => {
+        const items = recentByPart[pid] || [];
+        if (items.length < 2) continue;
+        const byLv = {};
+        items.forEach(h => {
           const lv = dToLv(effDiff(h));
           if (!byLv[lv]) byLv[lv]={c:0,t:0};
           byLv[lv].t++; if (h.correct) byLv[lv].c++;
         });
+        let ps=0, pw=0;
+        for (const [lv,d] of Object.entries(byLv)) {
+          if (d.t>=1) { ps+=irt(d.c/d.t,lv)*d.t; pw+=d.t; }
+        }
+        if (pw===0) continue;
+        const partEst = ps / pw;
+        const w = HW[pid] || 1;
+        weightedScore += partEst * w;
+        totalWeight += w;
       }
-      let ws=0, wt=0;
-      for (const [lv,d] of Object.entries(byLv)) {
-        if (d.t>=2) { const s=irt(d.c/d.t,lv); ws+=s*d.t; wt+=d.t; }
-      }
-      if (wt === 0) return 0;
-      const rawEst = ws / wt;
-      return Math.min(495, Math.max(5, Math.round(rawEst / 2)));
+      if (totalWeight === 0) return 0;
+      return Math.min(495, Math.max(5, Math.round((weightedScore / totalWeight) / 2)));
     }
     const lScore = estimateHomeSection(hPartsL);
     const rScore = estimateHomeSection(hPartsR);
