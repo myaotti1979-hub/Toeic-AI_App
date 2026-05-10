@@ -64,6 +64,8 @@ MODEL_OPTIONS = {
     "gemini-2.5-pro (API premium)": {"engine":"gemini","model":"gemini-2.5-pro"},
 }
 
+BATCH_ERROR_LIMIT = 10  # Stop generation after this many consecutive failures
+
 GEMINI_THINKING = {"gemini-2.5-flash-lite":0,"gemini-2.5-flash":0,"gemini-3-flash-preview":0,"gemini-2.5-pro":1024}
 
 # 503フォールバックチェーン: 3-Flash → 2.5-Flash → Flash-Lite → ローカル gemma3
@@ -179,7 +181,7 @@ def get_level_rules(part, level):
         "part5": {
             "beginner": '- Tests: simple word forms (noun/verb/adj/adv), basic prepositions, basic tenses\n- Distractors: clearly wrong word forms or tenses\n- Vocabulary questions: all 4 choices MUST be the same part of speech (all verbs, or all nouns, etc.)',
             "intermediate": '- Make the question appropriately challenging for 500-700 level test-takers\n- FOLLOW THE CATEGORY given above — the category determines WHAT grammar/vocab is tested\n- For grammar types: add one mildly tricky distractor that requires careful reading (e.g. a tense that almost works but doesn\'t)\n- For vocab types: use words that are commonly confused (e.g. affect/effect, assure/ensure/insure)\n- Vocabulary questions: all 4 choices MUST be the same part of speech. Do NOT mix nouns with verbs.',
-            "advanced": '- Make the question challenging for 800-950 level test-takers\n- FOLLOW THE CATEGORY given above — the category determines WHAT grammar/vocab is tested. Do NOT ignore it.\n  Examples of how to make each category harder:\n  - word_form: use words where multiple forms seem plausible (e.g. "prospective" vs "perspective")\n  - verb_tense: use perfect tenses, past perfect vs simple past, future perfect\n  - conjunction: use sophisticated connectors (notwithstanding, inasmuch as, lest)\n  - preposition_idiom: use less common collocations (contingent upon, in lieu of, pursuant to)\n  - vocab_*: use near-synonyms that differ only in nuance or register\n  - pronoun: use "whom" vs "who", "whichever" vs "whatever"\n  - passive_voice: use complex passive (is expected to have been completed)\n  - subject_verb_agreement: use tricky subjects (Each of the managers HAS, The number of... IS)\n  - gerund_infinitive: use verbs that change meaning (stop doing vs stop to do)\n- IMPORTANT: The CATEGORY already specifies the grammar point. Do NOT always default to subjunctive or inversion.\n  Subjunctive (recommend that X do) should only appear when CATEGORY is verb_tense or conjunction_condition.\n  Inversion should only appear when CATEGORY is conjunction_contrast or verb_tense.\n- DISTRACTOR QUALITY CHECK — before outputting, verify:\n  (1) Word form questions: all 4 choices share the same ROOT (e.g. decide/decision/decisive/decisively). If not, fix.\n  (2) Vocabulary questions: all 4 choices are the SAME part of speech (all nouns, all verbs, all adjectives, or all adverbs). If you mix noun+verb+adjective, a student can eliminate by grammar alone — this makes the question TRIVIALLY EASY and is a critical defect.\n  (3) Grammar questions (tense/preposition/conjunction): verify only ONE choice is grammatically correct in the blank. If two choices both work, change one.\n  (4) Every wrong choice must be a real, common English word — no obscure or made-up words.',
+            "advanced": '- Make the question challenging for 800-950 level test-takers\n- FOLLOW THE CATEGORY given above — the category determines WHAT grammar/vocab is tested. Do NOT ignore it.\n- DIFFICULTY TECHNIQUE: Make questions harder by using structures where multiple answers SEEM plausible but only one is grammatically/semantically correct.\n- For each CATEGORY, increase difficulty WITHIN that category:\n  - word_form: use words where noun/adj forms are easily confused\n  - verb_tense: use perfect tenses, past perfect vs simple past, future perfect\n  - conjunction: use formal connectors appropriate to the context (vary widely)\n  - preposition_idiom: use formal business collocations (every question must use a DIFFERENT idiom)\n  - vocab_*: use near-synonyms that differ only in nuance or register\n  - pronoun: use whom vs who, whichever vs whatever\n  - passive_voice: use complex passive structures\n  - subject_verb_agreement: use tricky subjects (Each of..., The number of...)\n  - gerund_infinitive: use verbs that change meaning (stop doing vs stop to do)\n- IMPORTANT: Do NOT always default to subjunctive or inversion.\n- VOCABULARY DIVERSITY — CRITICAL:\n  Use vocabulary that fits the SPECIFIC SCENARIO given above. A question about a vineyard should use wine/agriculture terms; a question about cybersecurity should use IT terms. Do NOT fall back on generic formal phrases — let the scenario drive the word choices. Each question should feel like it belongs to a DIFFERENT business context.\n- DISTRACTOR QUALITY CHECK — before outputting, verify:\n  (1) Word form questions: all 4 choices share the same ROOT (e.g. decide/decision/decisive/decisively). If not, fix.\n  (2) Vocabulary questions: all 4 choices are the SAME part of speech. If you mix noun+verb+adjective, a student can eliminate by grammar alone — this is a critical defect.\n  (3) Grammar questions: verify only ONE choice is grammatically correct. If two choices both work, change one.\n  (4) Every wrong choice must be a real, common English word — no obscure or made-up words.',
         },
         "part6": {
             "beginner": '- Blanks 1-3: simple word forms or vocabulary\n- Blank 4 (sentence): obvious choice based on context\n- Wrong answers: grammatically incorrect or clearly don\'t fit the sentence',
@@ -210,92 +212,290 @@ def build_prompt(level, part, t):
     is_listening = part in ("part1", "part2", "part3", "part3_3p", "part4")
     audio_rule = AUDIO_RULE if is_listening else ""
     phrase_rule = PHRASE_RULE if part not in ("part1", "part2") else ""
-    sys = f"You are an expert TOEIC test maker. {LEVEL_GUIDES[level]}\nRespond with EXACTLY ONE JSON object — no arrays, no wrapping, no markdown, no backticks. DO NOT wrap the output in {{\"part1\":[...]}} or similar. DO NOT produce multiple questions. Output ONLY a single {{...}} object matching the template below.{JA}{EN_EXPL}{CONSISTENCY}{CHOICE_RULE}{audio_rule}{VOCAB_RULE}{phrase_rule}\nDIFFICULTY RATING: Include \"difficulty\" (integer 200-990). This question is being generated at {level.upper()} level.\nCALIBRATION: beginner→300-500, intermediate→450-700, advanced→650-950.\nCRITERIA: VOCAB(basic→400, business→650, advanced→850) + GRAMMAR(simple→400, clause→600, subjunctive→850) + INFERENCE(explicit→400, implied→650, cross-ref→800) + DISTRACTORS(obvious→400, plausible→650, tricky→850).\nCRITICAL: An advanced question MUST be rated 650+. Do NOT under-rate."
+    sys = f"You are an expert TOEIC test maker. {LEVEL_GUIDES[level]}\nRespond with EXACTLY ONE JSON object — no arrays, no wrapping, no markdown, no backticks. DO NOT wrap the output in {{\"part1\":[...]}} or similar. DO NOT produce multiple questions. Output ONLY a single {{...}} object matching the template below.{JA}{EN_EXPL}{CONSISTENCY}{CHOICE_RULE}{audio_rule}{VOCAB_RULE}{phrase_rule}\nDIFFICULTY RATING: Include \"difficulty\" (integer 200-990). This question is being generated at {level.upper()} level.\nCALIBRATION: beginner→300-500, intermediate→450-700, advanced→650-950.\nCRITERIA: VOCAB(basic→400, business→650, advanced→850) + GRAMMAR(simple→400, clause→600, subjunctive→850) + INFERENCE(explicit→400, implied→650, cross-ref→800) + DISTRACTORS(obvious→400, plausible→650, tricky→850).\nCRITICAL: An advanced question MUST be rated 650+. Do NOT under-rate.\nDIVERSITY: This question will be part of a large question bank. Use vocabulary, sentence structures, and scenarios that feel UNIQUE. Avoid formulaic phrasing. Match your word choices to the specific scenario/industry given — do NOT fall back on generic business clichés."
     tt, td = t.get("type","varied"), t.get("desc","")
     is_graphic = tt.startswith("graphic_")
     # Part 5 scenario diversity: randomly select a business context
     P5_SCENARIOS = [
-        "a retail store placing a product order with a supplier",
-        "an architect submitting a building renovation proposal",
-        "a hotel manager coordinating a large conference booking",
-        "a pharmaceutical company launching a new medication",
-        "a city council approving a public park renovation",
-        "a software startup pitching to venture capital investors",
-        "a magazine editor reviewing article submissions",
-        "a car dealership offering a seasonal promotion",
-        "a hospital administrator updating patient intake procedures",
-        "a museum curator organizing a special exhibition",
-        "a shipping company optimizing delivery routes",
-        "a restaurant chain expanding to a new city",
-        "a university offering a new online degree program",
-        "an insurance company processing a large claim",
-        "a fashion brand preparing for a runway show",
-        "a construction firm bidding on a highway project",
-        "a veterinary clinic upgrading its appointment system",
-        "a tech company releasing a security patch",
-        "a law firm hiring summer associates",
-        "a bakery catering a corporate event",
-        "a real estate agent listing a commercial property",
-        "a travel agency designing a group tour package",
-        "a fitness center launching a membership drive",
-        "a library system acquiring digital subscriptions",
-        "an airline revising its frequent-flyer program",
-        "a telecommunications company installing fiber optic lines",
-        "a nonprofit organizing a charity auction",
-        "a farming cooperative negotiating crop prices",
-        "an accounting firm preparing quarterly tax filings",
-        "a theater company selling season tickets",
-        "a recycling plant upgrading sorting equipment",
-        "a staffing agency placing temporary workers",
-        "a dental office scheduling patient follow-ups",
-        "a logistics company leasing warehouse space",
-        "a radio station selling advertising slots",
-        "a paint manufacturer testing new color formulas",
-        "a government agency issuing environmental permits",
-        "a sports arena hosting a music festival",
-        "an engineering firm conducting a safety inspection",
-        "a bookstore hosting an author signing event",
-        "a florist preparing wedding arrangements",
-        "a moving company quoting a residential relocation",
-        "a photography studio booking portrait sessions",
-        "a printing company fulfilling a large brochure order",
-        "a consulting firm presenting audit findings to a client",
+        # Retail & Sales
+        "a department store manager negotiating seasonal discount terms with a clothing supplier",
+        "a jewelry shop owner ordering custom display cases from a local carpenter",
+        "an electronics retailer arranging an extended warranty program for customers",
+        "a grocery chain buyer selecting organic produce vendors for 12 new stores",
+        "a furniture showroom scheduling delivery trucks for a weekend clearance sale",
+        # Food & Hospitality
+        "a head chef requesting specialty ingredients from an international distributor",
+        "a hotel concierge arranging airport shuttle schedules for a business delegation",
+        "a catering manager adjusting the menu for a guest with severe food allergies",
+        "a restaurant franchise owner reviewing lease terms for a second location",
+        "a wedding planner coordinating table arrangements with the venue's event staff",
+        # Healthcare & Pharma
+        "a hospital purchasing officer comparing prices for surgical equipment upgrades",
+        "a clinical trial coordinator filing interim results with the regulatory board",
+        "a pharmacy chain rolling out an automated prescription refill system",
+        "a dental clinic receptionist rescheduling appointments after a water main break",
+        "a medical device startup presenting safety data to an FDA review panel",
+        # Technology & Software
+        "a project manager assigning bug-fix priorities before a major product launch",
+        "a cybersecurity analyst drafting an incident response plan for the board",
+        "a UX designer presenting usability test results to the product team",
+        "a cloud services provider migrating a client's database to a new server region",
+        "a mobile app team debating whether to support older operating system versions",
+        # Finance & Banking
+        "a loan officer reviewing mortgage applications during a rate adjustment period",
+        "an investment analyst preparing a quarterly earnings forecast for shareholders",
+        "a compliance officer updating anti-money-laundering procedures for new regulations",
+        "a credit union branch manager planning a community financial literacy workshop",
+        "an auditor reconciling discrepancies between two subsidiary ledgers",
+        # Manufacturing & Engineering
+        "a factory supervisor implementing a new quality control checklist on the assembly line",
+        "a materials engineer testing heat resistance of a prototype aircraft component",
+        "an operations director renegotiating raw material contracts after a price spike",
+        "a plant safety inspector issuing corrective action notices after a routine audit",
+        "a robotics team calibrating automated welding arms for a new vehicle model",
+        # Legal & Government
+        "a city planner presenting zoning amendments at a public hearing",
+        "a patent attorney filing an international trademark application for a client",
+        "a tax consultant advising a small business on deductible travel expenses",
+        "a public defender requesting additional time to review case evidence",
+        "an immigration officer processing work permit renewals for seasonal employees",
+        # Education & Research
+        "a university registrar updating course prerequisites for the fall semester",
+        "a research lab director applying for a federal grant to study water quality",
+        "a school board member proposing a revised budget for after-school programs",
+        "a teaching assistant preparing supplemental materials for an introductory physics course",
+        "a librarian negotiating group licensing fees for an academic journal database",
+        # Transportation & Logistics
+        "a freight broker arranging refrigerated truck transport for perishable goods",
+        "an airline operations center rerouting flights due to volcanic ash warnings",
+        "a port authority inspector verifying cargo manifests for an incoming container ship",
+        "a courier service dispatcher optimizing same-day delivery routes during a holiday rush",
+        "a railroad maintenance crew scheduling overnight track repairs near a busy station",
+        # Media & Entertainment
+        "a film production assistant securing filming permits from the city council",
+        "a podcast host negotiating sponsorship rates with a health supplement brand",
+        "a newspaper editor assigning reporters to cover a local election debate",
+        "a music festival organizer arranging sound equipment rental for three outdoor stages",
+        "a streaming platform analyst reviewing viewer retention data for a new series",
+        # Real Estate & Construction
+        "a general contractor submitting a revised cost estimate after material price changes",
+        "a property management firm addressing tenant complaints about heating system failures",
+        "a commercial developer presenting an environmental impact study to the planning board",
+        "an interior designer selecting energy-efficient lighting fixtures for an office renovation",
+        "a home inspector documenting foundation cracks before a scheduled closing date",
+        # Agriculture & Environment
+        "a vineyard owner consulting a meteorologist about frost protection for the harvest",
+        "an organic farm cooperative applying for fair-trade certification",
+        "a wildlife biologist submitting a habitat conservation plan to the parks department",
+        "a water treatment plant operator reporting monthly contamination test results",
+        "a landscape architect designing a drought-resistant garden for a corporate campus",
+        # Energy & Utilities
+        "a solar panel installer coordinating roof assessments with a structural engineer",
+        "a natural gas company notifying residents about a planned pipeline maintenance outage",
+        "an electric utility provider offering rebates for customers who install smart meters",
+        "a wind farm developer negotiating land lease agreements with local farmers",
+        "a nuclear plant operator scheduling a mandatory safety drill for all shift workers",
+        # Fashion & Beauty
+        "a cosmetics brand manager reviewing ingredient sourcing for a new skincare line",
+        "a fashion buyer selecting next season's inventory at a trade show in Milan",
+        "a textile mill owner upgrading looms to produce sustainable bamboo fabric",
+        "a beauty salon chain standardizing hygiene protocols across all branches",
+        "a shoe designer coordinating with a factory in Portugal on prototype adjustments",
+        # Sports & Recreation
+        "a stadium operations team preparing crowd management plans for a championship game",
+        "a fitness equipment manufacturer recalling treadmills due to a belt defect",
+        "a golf course superintendent ordering drought-resistant turf for the back nine",
+        "a swim school director hiring certified lifeguards for the summer program",
+        "a marathon organizer securing medical support stations along the 42-kilometer route",
+        # Nonprofit & Community
+        "a charity director writing a progress report for the annual donor gala",
+        "a community center coordinator scheduling room reservations for holiday events",
+        "a volunteer coordinator matching skilled retirees with after-school tutoring slots",
+        "a food bank logistics manager arranging cold storage for a large dairy donation",
+        "an animal shelter director negotiating veterinary service discounts for rescued pets",
+        # Automotive & Aerospace
+        "a car dealership service manager ordering recall parts from the manufacturer",
+        "a fleet manager comparing fuel costs between diesel and electric delivery vans",
+        "an aircraft maintenance crew documenting engine inspection results before clearance",
+        "a tire distributor adjusting inventory levels ahead of the winter driving season",
+        "a rideshare company updating its driver background check policy to meet new state laws",
+        # Insurance & Risk
+        "an underwriter evaluating flood risk for a coastal commercial property",
+        "a claims adjuster inspecting storm damage at a warehouse before authorizing repairs",
+        "a benefits administrator explaining open enrollment changes to company employees",
+        "a risk manager recommending cybersecurity insurance coverage limits to the CFO",
+        "an actuary presenting revised premium tables based on updated mortality data",
+        # Consulting & Professional Services
+        "a management consultant delivering a cost-reduction roadmap to the executive team",
+        "a staffing agency placing bilingual customer service representatives for a tech client",
+        "a relocation specialist arranging temporary housing for transferred employees",
+        "an IT consultant recommending firewall upgrades after a penetration test",
+        "a training provider customizing a leadership workshop for mid-level managers",
+        # Telecommunications & Internet
+        "a network engineer diagnosing intermittent outages at a data center in Singapore",
+        "a mobile carrier launching a family plan promotion ahead of the back-to-school season",
+        "a broadband provider extending fiber optic service to a newly developed suburb",
+        "a VoIP company negotiating bulk pricing for a call center with 200 agents",
+        "a satellite communications firm bidding on a government emergency broadcast contract",
+        # Miscellaneous Business
+        "a customs broker clearing imported machinery held at the port for documentation errors",
+        "a translation agency quoting turnaround times for a 500-page technical manual",
+        "a cleaning service company bidding on an overnight janitorial contract for a hospital",
+        "a trade show booth designer creating a modular display for an international expo",
+        "an office supply vendor offering volume discounts for a school district's annual order",
+        "a waste management company proposing a composting program to a city council",
+        "a courier startup testing drone deliveries in a rural area with limited road access",
+        "an advertising agency pitching a social media campaign to a local bakery chain",
+        "a payroll service provider migrating clients to a new cloud-based platform",
+        "a printing company rush-producing event programs after a last-minute speaker change",
+        "a security firm installing access-control systems in a newly built office tower",
+        "a pet food company reformulating recipes to eliminate artificial preservatives",
+        "a co-working space operator adjusting membership tiers after surveying current tenants",
+        "a toy manufacturer testing product safety before the holiday retail season",
+        "a cruise line updating passenger boarding procedures to reduce wait times",
+        "a moving company training staff on proper handling of fragile antique furniture",
+        "a parking garage operator installing electric vehicle charging stations on every level",
+        "a sign-making shop producing bilingual wayfinding signs for a new transit station",
+        "a laundry equipment supplier demonstrating commercial washers to a hotel purchasing team",
+        "a roofing contractor scheduling inspections after a series of severe hailstorms",
+        "a vending machine company restocking high-traffic locations before a holiday weekend",
+        "an event ticketing platform resolving duplicate charge complaints from concertgoers",
+        "a document shredding service scheduling weekly pickups for a law firm's branch offices",
+        "a greenhouse supplier shipping temperature-controlled seedlings to nurseries nationwide",
+        "a yacht brokerage preparing sales documentation for an international boat show",
     ]
     p5_scenario = random.choice(P5_SCENARIOS)
+
+    # Part 1: Random scene details to vary photos even for same type
+    P1_PEOPLE = ["a woman in a business suit","a man wearing safety goggles","two workers in uniforms",
+        "a woman carrying a laptop bag","a man with a clipboard","a person in a lab coat",
+        "a chef in kitchen attire","a woman wearing a hard hat","a man pushing a cart",
+        "three colleagues standing together","a worker kneeling on the ground",
+        "a woman reaching for a shelf","a man pointing at a screen","two people shaking hands",
+        "a person sitting on a bench","a delivery driver","a woman watering plants",
+        "a technician inspecting equipment","a man loading boxes","a receptionist at a desk"]
+    P1_SETTINGS = ["on a sunny morning","during a busy afternoon","in the early evening",
+        "on a rainy day","during a trade fair","in a newly renovated space",
+        "near a construction site","beside a loading dock","in a well-lit studio",
+        "along a tree-lined walkway","at a waterfront location","in a modern glass building",
+        "near a parking structure","inside a greenhouse","at a rooftop terrace"]
+    p1_detail = f"{random.choice(P1_PEOPLE)} {random.choice(P1_SETTINGS)}"
+
+    # Part 2: Random specific topic to prevent same questions
+    P2_TOPICS = [
+        "ordering new toner cartridges","reserving a conference room for Tuesday",
+        "the broken coffee machine in the break room","a client arriving at 3 PM",
+        "moving desks to the third floor","the deadline for the quarterly report",
+        "a parking space near the entrance","lunch plans with the new manager",
+        "the projector not working before a presentation","rescheduling a dentist appointment",
+        "signing up for the company picnic","a water leak in the storage room",
+        "who will cover the front desk during lunch","picking up printed materials",
+        "returning a defective keyboard","the office temperature being too cold",
+        "a package that hasn't arrived yet","carpooling to the workshop tomorrow",
+        "whether the cafeteria is open on Saturday","updating the employee directory",
+        "borrowing a stapler from the supply room","the elevator being out of service",
+        "arranging flowers for the lobby","checking inventory in the warehouse",
+        "a lost ID badge","renting a van for the team outing",
+        "feeding the fish while a coworker is on leave","cleaning the whiteboard after a meeting",
+        "printing name tags for the orientation","hanging new artwork in the hallway",
+        "setting up folding chairs for the seminar","testing the microphone before the event",
+        "replacing light bulbs in the stairwell","watering the office plants",
+        "scheduling a fire drill","a coworker's retirement party next Friday"]
+    p2_topic = random.choice(P2_TOPICS)
 
     # Shared industry contexts for Part 3/6/7 diversity
     # Each entry: (industry, specific detail hint for realistic TOEIC content)
     INDUSTRY_CONTEXTS = [
+        # Office & Corporate
         ("a publishing company", "book launches, manuscript deadlines, author signings, print runs"),
         ("an electronics manufacturer", "product testing, assembly lines, component suppliers, quality control"),
-        ("a landscaping company", "garden designs, seasonal planting, client site visits, equipment maintenance"),
-        ("an organic food company", "product sourcing, food safety certifications, store partnerships, packaging"),
+        ("a management consulting firm", "client engagements, strategy decks, partner meetings, billing hours"),
+        ("an advertising agency", "campaign briefs, media buying, client pitches, creative reviews"),
+        ("a corporate law firm", "case filings, client consultations, contract reviews, paralegal assignments"),
+        ("a real estate development company", "site acquisitions, building permits, contractor bids, tenant leases"),
+        ("a financial advisory practice", "portfolio reviews, retirement planning, market analysis, compliance audits"),
+        ("an executive recruiting firm", "candidate searches, interview scheduling, reference checks, placement fees"),
+        # Healthcare & Life Sciences
         ("a dental clinic", "patient appointments, new equipment, hygiene protocols, insurance billing"),
-        ("a furniture retailer", "showroom displays, delivery scheduling, warehouse inventory, custom orders"),
-        ("an architectural firm", "building designs, city permits, client presentations, site inspections"),
-        ("a pet supply store", "product ordering, grooming services, loyalty programs, seasonal promotions"),
-        ("a catering company", "menu planning, event coordination, food preparation, vendor negotiations"),
-        ("a solar energy company", "panel installations, government incentives, customer consultations, permits"),
-        ("a language school", "class scheduling, teacher hiring, student enrollment, curriculum updates"),
-        ("a car repair shop", "diagnostic services, parts ordering, customer estimates, warranty claims"),
-        ("a textile factory", "fabric production, quality checks, export shipments, machinery upgrades"),
-        ("a sports equipment brand", "product design, athlete endorsements, trade show exhibits, retail partners"),
-        ("a wine distributor", "inventory management, restaurant clients, seasonal promotions, import regulations"),
-        ("a coworking space", "membership plans, event hosting, facility upgrades, tenant requests"),
-        ("a film production studio", "shooting schedules, location scouting, crew hiring, post-production"),
-        ("a home cleaning service", "staff scheduling, supply ordering, client feedback, new service packages"),
+        ("a veterinary hospital", "surgery scheduling, medication inventory, pet owner consultations, lab tests"),
         ("a biotech research lab", "experiment scheduling, grant applications, equipment procurement, safety reviews"),
-        ("a jewelry store", "custom orders, gemstone sourcing, display arrangements, appraisal services"),
-        ("an event planning agency", "venue bookings, vendor coordination, client consultations, budget tracking"),
-        ("a freight shipping company", "route planning, customs documentation, fleet maintenance, client accounts"),
-        ("a community center", "program scheduling, volunteer coordination, facility rentals, fundraising"),
+        ("a physical therapy center", "treatment plans, insurance approvals, exercise equipment, patient progress"),
+        ("a pharmaceutical distributor", "cold chain logistics, expiration tracking, pharmacy orders, regulatory filings"),
+        # Retail & Consumer
+        ("a furniture retailer", "showroom displays, delivery scheduling, warehouse inventory, custom orders"),
+        ("a pet supply store", "product ordering, grooming services, loyalty programs, seasonal promotions"),
+        ("an organic grocery chain", "produce sourcing, shelf life management, supplier audits, store expansions"),
+        ("a sporting goods retailer", "seasonal inventory, team uniform orders, equipment repairs, store events"),
+        ("a bookstore chain", "author events, inventory systems, online orders, store layout redesigns"),
+        # Food & Beverage
+        ("a catering company", "menu planning, event coordination, food preparation, vendor negotiations"),
+        ("a wine distributor", "inventory management, restaurant clients, seasonal promotions, import regulations"),
+        ("a craft brewery", "recipe development, tap room events, distribution agreements, ingredient sourcing"),
+        ("a frozen food company", "cold storage facilities, grocery chain partnerships, product launches, packaging"),
+        ("a coffee roasting company", "bean sourcing, café partnerships, subscription services, quality grading"),
+        # Technology & Digital
         ("a mobile app developer", "sprint planning, bug tracking, user testing, app store submissions"),
-        ("a plant nursery", "seasonal stock, greenhouse operations, wholesale orders, delivery logistics"),
+        ("a cybersecurity firm", "threat assessments, client onboarding, incident reports, certification renewals"),
+        ("a cloud hosting provider", "server maintenance, uptime guarantees, client migrations, pricing tiers"),
+        ("an e-commerce platform", "seller onboarding, payment processing, return policies, holiday traffic"),
+        ("a data analytics startup", "dashboard development, client demos, data privacy, hiring engineers"),
+        # Manufacturing & Industrial
+        ("a textile factory", "fabric production, quality checks, export shipments, machinery upgrades"),
+        ("an automotive parts supplier", "just-in-time delivery, defect tracking, contract renewals, warehouse layout"),
+        ("a chemical processing plant", "safety inspections, environmental permits, shift scheduling, waste disposal"),
+        ("a food packaging company", "material sourcing, label compliance, production runs, client specifications"),
+        ("a precision instruments maker", "calibration schedules, custom orders, trade show exhibits, R&D budgets"),
+        # Education & Training
+        ("a language school", "class scheduling, teacher hiring, student enrollment, curriculum updates"),
         ("a private school", "enrollment, parent conferences, campus renovation, faculty meetings"),
-        ("a luxury hotel chain", "guest services, staff training, renovation plans, loyalty rewards"),
+        ("a corporate training provider", "workshop design, facilitator scheduling, participant feedback, LMS setup"),
+        ("a test preparation center", "class rosters, study materials, practice exams, score tracking"),
+        ("a music academy", "recital scheduling, instrument rentals, teacher evaluations, summer camps"),
+        # Transportation & Travel
+        ("a freight shipping company", "route planning, customs documentation, fleet maintenance, client accounts"),
         ("a package delivery service", "route optimization, driver scheduling, customer tracking, warehouse sorting"),
-        ("a cosmetics brand", "product development, regulatory approval, retail launches, influencer partnerships"),
+        ("a tour operator", "itinerary design, hotel partnerships, guide training, group bookings"),
+        ("a car rental agency", "fleet rotation, insurance claims, airport kiosk staffing, loyalty programs"),
+        ("a moving and storage company", "packing supplies, truck scheduling, storage unit pricing, damage claims"),
+        # Construction & Real Estate
+        ("an architectural firm", "building designs, city permits, client presentations, site inspections"),
+        ("a property management company", "maintenance requests, lease renewals, vendor contracts, tenant screening"),
+        ("a home renovation contractor", "material estimates, subcontractor scheduling, permit applications, client walkthroughs"),
+        ("a commercial cleaning service", "staff scheduling, supply inventory, quality inspections, contract renewals"),
+        ("an interior design studio", "fabric samples, furniture sourcing, client mood boards, installation timelines"),
+        # Energy & Environment
+        ("a solar energy company", "panel installations, government incentives, customer consultations, permits"),
         ("an environmental consultancy", "site assessments, compliance reports, client advisories, field surveys"),
+        ("a waste recycling facility", "sorting equipment, municipal contracts, contamination rates, staff training"),
+        ("an electric vehicle charging network", "site selection, utility agreements, maintenance schedules, user app"),
+        # Finance & Insurance
+        ("a community credit union", "loan processing, member services, branch operations, marketing campaigns"),
+        ("an insurance brokerage", "policy comparisons, claims assistance, renewal reminders, underwriting"),
+        ("an accounting firm", "tax season staffing, client portfolios, audit schedules, software upgrades"),
+        ("a payment processing company", "merchant onboarding, fraud detection, fee structures, API integration"),
+        # Media & Entertainment
+        ("a film production studio", "shooting schedules, location scouting, crew hiring, post-production"),
+        ("a podcast network", "episode scheduling, sponsor management, guest bookings, analytics reports"),
+        ("a museum", "exhibit rotations, donor relations, school group bookings, conservation work"),
+        ("a community theater", "auditions, set construction, ticket sales, volunteer coordination"),
+        ("a photography studio", "session bookings, print orders, editing workflow, equipment upgrades"),
+        # Hospitality & Events
+        ("a luxury hotel chain", "guest services, staff training, renovation plans, loyalty rewards"),
+        ("a coworking space", "membership plans, event hosting, facility upgrades, tenant requests"),
+        ("an event planning agency", "venue bookings, vendor coordination, client consultations, budget tracking"),
+        ("a community center", "program scheduling, volunteer coordination, facility rentals, fundraising"),
+        ("a wedding venue", "seasonal pricing, vendor partnerships, site tours, layout configurations"),
+        # Other Services
+        ("a home cleaning service", "staff scheduling, supply ordering, client feedback, new service packages"),
+        ("a jewelry store", "custom orders, gemstone sourcing, display arrangements, appraisal services"),
+        ("a plant nursery", "seasonal stock, greenhouse operations, wholesale orders, delivery logistics"),
+        ("a cosmetics brand", "product development, regulatory approval, retail launches, influencer partnerships"),
+        ("a pet boarding facility", "reservation systems, veterinary partnerships, facility expansions, staff hiring"),
+        ("a dry cleaning chain", "equipment maintenance, pickup/delivery routes, stain treatment, pricing updates"),
+        ("a printing company", "print runs, paper stock, equipment calibration, rush orders, client proofs"),
+        ("a security services company", "guard scheduling, surveillance systems, client site assessments, licensing"),
+        ("a landscaping company", "seasonal crews, equipment purchases, irrigation design, commercial contracts"),
+        ("a translation services firm", "project assignments, freelancer management, quality reviews, rush fees"),
     ]
     _industry = random.choice(INDUSTRY_CONTEXTS)
     ctx_industry, ctx_details = _industry
@@ -316,7 +516,7 @@ def build_prompt(level, part, t):
     GRULE = ""
     if is_graphic:
         GRULE = '\\nGRAPHIC DATA — MANDATORY: You MUST include a "graphic" field in the JSON with structured data that the test-taker will see alongside the conversation/talk/text. The conversation/talk MUST reference specific data from this graphic. EXACTLY ONE of the 3 questions MUST start with "Look at the graphic." and can ONLY be answered by reading the graphic data.\\nGraphic format: "graphic":{{"title":"Graphic Title","headers":["Column1","Column2","Column3"],"rows":[["row1col1","row1col2","row1col3"],["row2col1","row2col2","row2col3"]]}}\\nMatch the graphic to the scenario type:\\n- Schedule/Agenda: headers=["Time","Event","Room"], rows=[["9:00 AM","Opening Remarks","Main Hall"],["10:00 AM","Workshop A","Room 201"]]\\n- Price list/Menu: headers=["Service","Standard","Premium"], rows=[["Oil Change","$35","$55"],["Tire Rotation","$25","$40"]]\\n- Order form/Invoice: headers=["Item","Qty","Unit Price","Total"], rows=[["Desk lamp","5","$35.00","$175.00"],["Monitor stand","3","$48.00","$144.00"]]\\n- Floor map/Seating: headers=["Room/Area","Department","Contact"], rows=[["Suite 301","Marketing","Ms. Chen"],["Suite 302","Finance","Mr. Park"]]\\n- Bar/Pie chart data: headers=["Quarter","Revenue ($M)","Growth (%)"], rows=[["Q1","12.4","8%"],["Q2","14.1","14%"],["Q3","11.8","-16%"]]\\n- Survey results: headers=["Category","Satisfaction (%)","Responses"], rows=[["Customer Service","92%","847"],["Delivery Speed","78%","823"]]\\n- Map/Directions: headers=["Destination","Building","Walking Time"], rows=[["Cafeteria","Building B","5 min"],["Parking","Lot C","8 min"]]\\n- Comparison: headers=["Feature","Plan A","Plan B","Plan C"], rows=[["Storage","10 GB","50 GB","Unlimited"],["Price/mo","$9.99","$19.99","$29.99"]]\\nUse 3-6 rows and 3-5 columns. Data must be SPECIFIC (real numbers, names, times) — never use placeholder text.'
-    VEX = ',"difficulty":750,"vocab":[{{"word":"English word","pos":"noun","ja":"日本語","example":"Short sentence","level":"B1"}},{{"word":"in compliance with","pos":"phrase","ja":"〜に従って","example":"The project was completed in compliance with regulations.","level":"B2"}},{{"word":"word3","pos":"adjective","ja":"訳","example":"sentence","level":"C"}}]'
+    VEX = ',"difficulty":750,"vocab":[{{"word":"(use a word FROM YOUR SENTENCE, not this example)","pos":"noun","ja":"日本語","example":"Short sentence","level":"B1"}},{{"word":"(use another word FROM YOUR SENTENCE)","pos":"verb","ja":"日本語訳","example":"Example using the word","level":"A2"}},{{"word":"word3","pos":"adjective","ja":"訳","example":"sentence","level":"C"}}]'
     # Get level-specific rules per part
     R1 = get_level_rules("part1", level)
     R2 = get_level_rules("part2", level)
@@ -328,11 +528,11 @@ def build_prompt(level, part, t):
     R7d = get_level_rules("part7d", level)
     R7t = get_level_rules("part7t", level)
     B = {
-        "part1": lambda: f'{sys}{R1}\nPart 1 (Photographs). SCENE: {tt} — {td}. 4 statements (A-D), 5-8 words each describing the photo objectively.\n- Correct answer: accurately describes what is visible.\n- Distractors: mention objects/actions that are NOT visible, wrong tense, or wrong subject.\nDO NOT include an "audio" field — it will be auto-generated from choices.\n{{"scene":"vivid 20-30 word description for image generation","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答のトラップタイプ]","explanation_en":"Short 1-2 sentence English explanation"{VEX}}}',
-        "part2": lambda: f'{sys}{R2}\nPart 2 (Question-Response). TYPE: {tt} — {td}. 3 responses (A-C). Correct answer is frequently INDIRECT (not a literal yes/no).\nVOCABULARY — CRITICAL FOR PART 2: Use NORMAL workplace English. Words like "meeting", "schedule", "report", "office", "delivery", "budget", "order" are correct. DO NOT use Part 5/7 vocabulary like "remuneration", "procurement", "notwithstanding", "forthcoming", "necessitate", "contingent upon", "arbitration". Part 2 difficulty comes from INDIRECT RESPONSES, not from exotic words.\nSCENARIO DIVERSITY — CRITICAL: Each question MUST be about a DIFFERENT workplace topic. Choose from: office supplies, meeting schedule, travel plans, lunch, parking, delivery, project deadline, new employee, equipment repair, training session, client visit, holiday schedule, building maintenance, job opening, company event. DO NOT repeat audit/compliance/regulatory themes.\nQUESTION TYPE COMPLIANCE — CRITICAL: The question MUST match the type "{tt}". If type is "yesno_do", use "Do/Does/Did". If "negative_isnt", use "Isn\'t/Aren\'t". If "wh_where_place", use "Where". Do NOT generate a different question type.\nDISTRACTOR VALIDITY — CRITICAL: Wrong answers must NOT be valid responses to the question. Test each: if someone said it in real conversation, would it make sense as a response? If yes, it is TOO GOOD for a wrong answer — change it. Wrong answers fail for: (1) answers a DIFFERENT question, (2) repeats a word but about a different topic, (3) completely unrelated subject. Example: Q="How long to deliver chairs?" GOOD wrong="The conference room is on the third floor." (unrelated) BAD wrong="The warehouse said next Friday." (this ANSWERS the question!)\nCRITICAL FORMAT: EXACTLY 3 choices (A)(B)(C). NEVER include (D). Each response MUST be 3-8 words (short spoken fragments).\nGood: "(A) In the conference room." / Bad: "(A) I believe the meeting was rescheduled to next Tuesday." (too long!)\nDO NOT include an "audio" field — it will be auto-generated.\n{{"spoken":"Natural question or statement 5-15 words","choices":["(A) 3-8 word response.","(B) 3-8 word response.","(C) 3-8 word response."],"correct":0,"explanation_ja":"【出題: {tt}】\\n和訳: (spoken の日本語訳)\\n正解理由と各誤答のトラップタイプを解説","explanation_en":"Short English"{VEX}}}',
+        "part1": lambda: f'{sys}{R1}\nPart 1 (Photographs). SCENE: {tt} — {td}. DETAIL: Include {p1_detail} in the scene. 4 statements (A-D), 5-8 words each describing the photo objectively.\n- Correct answer: accurately describes what is visible.\n- Distractors: mention objects/actions that are NOT visible, wrong tense, or wrong subject.\nDO NOT include an "audio" field — it will be auto-generated from choices.\n{{"scene":"vivid 20-30 word description for image generation","choices":["(A) Five to eight words.","(B) Five to eight words.","(C) Five to eight words.","(D) Five to eight words."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答のトラップタイプ]","explanation_en":"Short 1-2 sentence English explanation"{VEX}}}',
+        "part2": lambda: f'{sys}{R2}\nPart 2 (Question-Response). TYPE: {tt} — {td}. 3 responses (A-C). Correct answer is frequently INDIRECT (not a literal yes/no).\nVOCABULARY — CRITICAL FOR PART 2: Use NORMAL workplace English. Words like "meeting", "schedule", "report", "office", "delivery", "budget", "order" are correct. DO NOT use Part 5/7 vocabulary like "remuneration", "procurement", "notwithstanding", "forthcoming", "necessitate", "contingent upon", "arbitration". Part 2 difficulty comes from INDIRECT RESPONSES, not from exotic words.\nSCENARIO — CRITICAL: This question must be about: {p2_topic}. Write the question and responses to fit this SPECIFIC topic naturally. Use concrete details (names, room numbers, times).\nQUESTION TYPE COMPLIANCE — CRITICAL: The question MUST match the type "{tt}". If type is "yesno_do", use "Do/Does/Did". If "negative_isnt", use "Isn\'t/Aren\'t". If "wh_where_place", use "Where". Do NOT generate a different question type.\nDISTRACTOR VALIDITY — CRITICAL: Wrong answers must NOT be valid responses to the question. Test each: if someone said it in real conversation, would it make sense as a response? If yes, it is TOO GOOD for a wrong answer — change it. Wrong answers fail for: (1) answers a DIFFERENT question, (2) repeats a word but about a different topic, (3) completely unrelated subject. Example: Q="How long to deliver chairs?" GOOD wrong="The conference room is on the third floor." (unrelated) BAD wrong="The warehouse said next Friday." (this ANSWERS the question!)\nCRITICAL FORMAT: EXACTLY 3 choices (A)(B)(C). NEVER include (D). Each response MUST be 3-8 words (short spoken fragments).\nGood: "(A) In the conference room." / Bad: "(A) I believe the meeting was rescheduled to next Tuesday." (too long!)\nDO NOT include an "audio" field — it will be auto-generated.\n{{"spoken":"Natural question or statement 5-15 words","choices":["(A) 3-8 word response.","(B) 3-8 word response.","(C) 3-8 word response."],"correct":0,"explanation_ja":"【出題: {tt}】\\n和訳: (spoken の日本語訳)\\n正解理由と各誤答のトラップタイプを解説","explanation_en":"Short English"{VEX}}}',
         "part3": lambda: f'{sys}{R3}\nPart 3 (Conversations). SCENARIO: {tt} — {td}. "Man:"/"Woman:" labels. 5-8 turns, 60-100 words MAXIMUM. Keep conversation SHORT and natural. EXACTLY 3 questions. INCLUDE "translation_ja".{p3_ctx}{GRULE}\nGENDER RULES — STRICT:\n- "Man:" = MALE character (male names, he/him/his). "Woman:" = FEMALE character (female names, she/her).\n- In questions: "the man" = Man speaker, "the woman" = Woman speaker. NEVER swap.\n- translation_ja: Man = 男性, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated from conversation.\n{{"conversation":"Man: first line...\\nWoman: response...\\nMan: reply...\\nWoman: next...\\nMan: final...","translation_ja":"男性: ...\\n女性: ...","speakers":["Man","Woman"],"questions":[{{"question":"Where most likely are the speakers?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the man/woman suggest?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What will the speaker most likely do next?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
         "part3_3p": lambda: f'{sys}{R3}\nPart 3 (Conversations) with EXACTLY 3 speakers.\nFORMAT: Choose "Man 1:", "Man 2:", "Woman:" OR "Woman 1:", "Woman 2:", "Man:"\nSCENARIO: {tt} — {td}. 7-10 turns, 80-120 words. All 3 speakers must have at least 2 turns. EXACTLY 3 questions.{p3_ctx}\n\n3-PERSON CONVERSATION PATTERNS — TOEIC公式準拠. Use ONE of these patterns:\n1. BRIEF THIRD SPEAKER (電話交換手/受付型): A&B are talking → third person briefly appears as operator, receptionist, or assistant with 1-2 short lines. e.g. "One moment, I\'ll transfer you." → "Hello, shipping department, how can I help?"\n2. SAME-ROLE PAIR (同立場ペア型): Two same-gender speakers share the same position/stance and interact with the different-gender speaker. e.g. Two coworkers invite a colleague to lunch, or two team members report to a manager. The pair may say "We both think..." or take turns explaining.\n3. INTRODUCTION/JOINING (紹介・合流型): A&B discuss a topic → one introduces the third. e.g. "Oh, here comes [name] from IT." or "Let me introduce [name] — she handles our accounts." Third person joins with relevant information.\n4. CUSTOMER + TWO STAFF (顧客＋2スタッフ型): Customer talks to Staff A → Staff A cannot fully help → refers to Staff B. e.g. "My colleague handles warranty claims. [Name], could you help?" → Staff B takes over.\n5. SEQUENTIAL CONSULTATION (相談リレー型): A has a problem → asks B → B says "Let\'s check with [name]" → C provides the answer/solution.\n6. THREE-WAY MEETING (3者ミーティング型): Three colleagues in a meeting, each with a distinct role (marketing/finance/operations). Each contributes their department\'s perspective.\n\nDESIGN PRINCIPLE: The third speaker must be introduced naturally so listeners can follow who is speaking. Two same-gender speakers should have clearly distinct roles or viewpoints.\n\nGENDER RULES — STRICT:\n- "Man 1:"/"Man 2:" = MALE. "Woman:"/"Woman 1:"/"Woman 2:" = FEMALE. NEVER swap.\n- translation_ja: Man 1 = 男性1, Man 2 = 男性2, Woman = 女性. NEVER swap.\nDO NOT include an "audio" field — it will be auto-generated.\n{{"conversation":"Man 1: ...\\nWoman: ...\\nMan 2: ...","translation_ja":"男性1: ...\\n女性: ...\\n男性2: ...","speakers":["Man 1","Man 2","Woman"],"questions":[{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"...","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
-        "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}. Single-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".{GRULE}\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
+        "part4": lambda: f'{sys}{R4}\nPart 4 (Talks). TYPE: {tt} — {td}.\nINDUSTRY CONTEXT: This talk takes place at {ctx_industry}. Use realistic details from this industry ({ctx_details}). Include specific names and places.\nSingle-speaker monologue, 100-140 words, 6-10 sentences. EXACTLY 3 questions. INCLUDE "translation_ja".{GRULE}\nDO NOT include an "audio" field — it will be auto-generated from talk.\n{{"talk":"Full monologue 100-140 words...","translation_ja":"トーク全文の日本語訳","talk_type":"{tt}","questions":[{{"question":"What is the purpose of the message/announcement?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What does the speaker imply?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What are listeners asked to do?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
         "part5": lambda: f'{sys}{BLANK_RULE}{R5}\nPart 5 (Incomplete Sentences). CATEGORY: {tt} — {td}.\n\nSCENARIO CONTEXT: Write the sentence about {p5_scenario}. DO NOT use generic "the company" or "the department" — use specific names, roles, or details from this scenario.\n\nRULES:\n1. Write a business sentence (15-25 words) with EXACTLY ONE blank: -------\n2. The ------- replaces the tested word. Without it, the output is INVALID.\n3. All 4 choices (A-D) must be plausible.\n4. "correct" = index of the right answer (0=A, 1=B, 2=C, 3=D).\n5. explanation_ja MUST name the correct letter first: "正解は(X)..." where X matches "correct".\n6. INCLUDE "translation_ja" — the full sentence with the correct answer filled in, translated to Japanese.\n7. explanation_ja MUST explain WHY EACH WRONG CHOICE is incorrect.\n\nVOCABULARY QUESTION RULE — CRITICAL:\nIf this is a vocabulary question (type starts with "vocab_"), ALL 4 CHOICES MUST BE THE SAME PART OF SPEECH.\n- If the answer is a verb, all 4 choices must be verbs: (A) submit (B) distribute (C) allocate (D) postpone ✅\n- NEVER mix parts of speech: (A) submit (B) submission (C) distribute (D) postponement ❌ ← this is a word form question, NOT a vocabulary question!\n- Each wrong choice must be a real, common English word that COULD grammatically fit the blank but has the WRONG meaning for the context.\n\nGOOD: "The ------- of the new policy was announced yesterday."\nBAD: "The implementation of the new policy was announced yesterday." (NO BLANK = REJECTED)\n\n{{"sentence":"The manager asked all employees to ------- the updated safety guidelines before Friday.","choices":["(A) review","(B) reviewing","(C) reviewed","(D) reviewer"],"correct":0,"translation_ja":"マネージャーは全従業員に、金曜日までに更新された安全ガイドラインを確認するよう求めた。","explanation_ja":"正解は(A) review。ask + 人 + to + 動詞原形の形。(B) reviewingはing形で不可、(C) reviewedは過去形で不可、(D) reviewerは名詞「評論家」で文意に合わない。","explanation_en":"ask someone to + base verb"{VEX}}}',
         "part6": lambda: f'{sys}{BLANK_RULE6}{R6}\nPart 6 (Text Completion). DOC TYPE: {tt} — {td}.{p67_ctx}\n150-200 words with EXACTLY 4 blanks: (1)------- (2)------- (3)------- (4)-------.\nBlanks 1-3: word/phrase choices. Blank 4: SENTENCE INSERTION (choices are full sentences).\nINCLUDE "translation_ja" (with answers filled in).\n{{"doc_type":"{tt}","header":"To: ...\\nFrom: ...\\nSubject: ...","text":"Full text 150-200 words with (1)------- and (2)------- and (3)------- and (4)-------","translation_ja":"日本語訳（空所に正解が入った状態）","questions":[{{"blank":1,"question":"Context around blank (1)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":2,"question":"Context around blank (2)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":3,"question":"Context around blank (3)","choices":["(A) word","(B) word","(C) word","(D) word"],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"blank":4,"question":"Which sentence best fits?","choices":["(A) Full sentence A.","(B) Full sentence B.","(C) Full sentence C.","(D) Full sentence D."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
         "part7s": lambda: f'{sys}{R7s}\nPart 7 Single Passage. DOC TYPE: {tt} — {td}. 150-250 words. Generate 2-4 questions.{p67_ctx}{GRULE}\nINCLUDE "translation_ja".\n{{"doc_type":"{tt}","header":"document header if applicable","text":"150-250 word passage","translation_ja":"文書全文の日本語訳","questions":[{{"question":"What is the main purpose?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":0,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"What is indicated/suggested about X?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":1,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}},{{"question":"According to the document, what...?","choices":["(A) ...","(B) ...","(C) ...","(D) ..."],"correct":2,"explanation_ja":"正解は(X)。[正解の理由]。[各誤答が間違いの理由]","explanation_en":"Short English"}}]{VEX}}}',
@@ -414,7 +614,7 @@ def parse_json(text):
                     result = json.loads(_fix_str(t[start:i+1]))
                     print(f"[PARSE] Extracted JSON object from text", flush=True)
                     return _unwrap(result)
-                except: break
+                except Exception: break
     # Last resort: try truncating at last complete property
     fixed = _fix_str(t)
     for end_pattern in ['"}]}', '"}]', '"}', '"}}}']:
@@ -429,7 +629,7 @@ def parse_json(text):
                 result = json.loads(candidate)
                 print(f"[PARSE] Repaired truncated JSON", flush=True)
                 return _unwrap(result)
-            except: continue
+            except Exception: continue
     raise ValueError(f"JSON parse failed at char ~{len(t)}")
 
 def strip_label(c, labels="A-D"):
@@ -936,7 +1136,7 @@ def edge_tts_conv(audio_text, speakers=None):
     finally:
         for f in seg_files:
             try: os.unlink(f)
-            except: pass
+            except Exception: pass
 
 def mp3_to_opus(mp3, bitrate='16k'):
     """Convert MP3 bytes to Opus bytes via ffmpeg."""
@@ -1323,34 +1523,60 @@ def validate_stock_item(item, require_tts=True, require_image_for_part1=True, re
     """
     Unified validation before saving to stock.
     Returns (is_valid: bool, reason: str | None).
-
-    Rules (hard - fails validation):
-    - Listening parts (1-4) MUST have audioOpus (if TTS was requested)
-    - Part 1 MUST have imgUrl (if image was requested)
-    - Graphic questions MUST have imgUrl (if image was requested)
-    - Questions list must be non-empty
-
-    Rules (soft - warn only unless strict_vocab=True):
-    - vocab word audio: strongly preferred but not required (can fallback at playback)
-    - vocab example audio: optional (shorter fallback is fine)
     """
     if not item or not isinstance(item, dict):
         return False, "not a dict"
     part = item.get("part", "")
     qs = item.get("qSet", {})
-    if not qs.get("questions"):
+    questions = qs.get("questions", [])
+    if not questions:
         return False, "no questions"
-    # Listening audio (check both direct field and flag set before stripping)
+
+    # Question count validation
+    expected_q = {"part1":1, "part2":1, "part3":3, "part3_3p":3, "part4":3, "part5":1, "part6":4}
+    if part in expected_q and len(questions) != expected_q[part]:
+        return False, f"expected {expected_q[part]} questions, got {len(questions)}"
+    if part == "part7":
+        if qs.get("isTriple") or qs.get("isDouble"):
+            if len(questions) < 2:
+                return False, f"Part 7 multi-passage needs 2+ questions, got {len(questions)}"
+
+    # Correct index range check for all questions
+    for qi, q in enumerate(questions):
+        choices = q.get("choices", [])
+        correct = q.get("correct", 0)
+        if not choices:
+            return False, f"Q{qi+1} has no choices"
+        if not isinstance(correct, int) or correct < 0 or correct >= len(choices):
+            return False, f"Q{qi+1} correct index {correct} out of range (0-{len(choices)-1})"
+
+    # Part 5: blank must exist
+    if part == "part5":
+        sentence = questions[0].get("question", "") if questions else ""
+        if "-------" not in sentence:
+            return False, "Part 5 sentence has no blank (-------)"
+
+    # Part 6: blank count should match question count
+    if part == "part6":
+        text = qs.get("text", "")
+        blank_count = text.count("-------")
+        if blank_count < 3:
+            return False, f"Part 6 text has {blank_count} blanks (expected 4)"
+
+    # Empty explanation warning (soft — warn but don't fail)
+    for qi, q in enumerate(questions):
+        if not q.get("explanation_ja", "").strip():
+            print(f"[VALIDATE] {part} Q{qi+1}: explanation_ja is empty", flush=True)
+
+    # Listening audio
     is_listening = part in ("part1","part2","part3","part3_3p","part4")
     if is_listening and require_tts and not item.get("audioOpus") and not item.get("_hasAudio"):
         return False, "listening without audio"
     # Part 1 image
     if part == "part1" and require_image_for_part1 and not item.get("imgUrl") and not item.get("_hasImage"):
         return False, "part1 without image"
-    # Graphic questions: need BOTH image AND table data.
-    # Maps, floor plans, charts can't be rendered as text tables — image is mandatory.
-    qs_obj = item.get("qSet", {})
-    graphic = qs_obj.get("graphic")
+    # Graphic questions
+    graphic = qs.get("graphic")
     if graphic:
         headers = graphic.get("headers") if isinstance(graphic, dict) else None
         rows = graphic.get("rows") if isinstance(graphic, dict) else None
@@ -1358,20 +1584,18 @@ def validate_stock_item(item, require_tts=True, require_image_for_part1=True, re
             return False, "graphic missing headers/rows"
         if require_image_for_graphic and not item.get("imgUrl"):
             return False, "graphic without image"
-    # Vocab audio check (soft by default, strict only if strict_vocab=True)
-    vocab = qs_obj.get("vocab", [])
+    # Vocab audio check
+    vocab = qs.get("vocab", [])
     if vocab and require_vocab_audio:
         missing_word = sum(1 for v in vocab if not v.get("audio"))
         missing_example = sum(1 for v in vocab if v.get("example") and not v.get("example_audio"))
         if strict_vocab:
-            # Hard fail if any vocab item missing audio
             for i, v in enumerate(vocab):
                 if not v.get("audio"):
                     return False, f"vocab[{i}] missing word audio"
                 if v.get("example") and not v.get("example_audio"):
                     return False, f"vocab[{i}] missing example audio"
         else:
-            # Warn only (vocab audio can be regenerated at playback)
             if missing_word > 0 or missing_example > 0:
                 print(f"[VALIDATE] vocab audio incomplete (words:{len(vocab)-missing_word}/{len(vocab)}, examples:{missing_example} missing) - saving anyway", flush=True)
     return True, None
@@ -1609,7 +1833,7 @@ def load_results(filepath):
 def save_results(filepath, items):
     """Save results to JSON file. Merges audioOpus back from _audio_store."""
     try:
-        diff_count = sum(1 for it in items if it.get("difficulty") is not None and it.get("difficulty") != 0)
+        diff_count = sum(1 for it in items if it.get("difficulty", 0) != 0)
         print(f"[SAVE] {len(items)} items, {diff_count} with difficulty", flush=True)
         # Reconstruct full items with audio for saving
         # Copy only the parts that _restore_audio mutates (top-level dict + qSet + vocab/questions items)
@@ -1653,7 +1877,13 @@ def save_mock_batch(batch_id, items):
         # Restore audio from _audio_store for saving
         full_items = []
         for item in batch_items:
-            full = json.loads(json.dumps(item, ensure_ascii=False))
+            full = dict(item)
+            qs = full.get("qSet")
+            if qs:
+                qs_copy = dict(qs)
+                if "vocab" in qs_copy: qs_copy["vocab"] = [dict(v) for v in qs_copy["vocab"]]
+                if "questions" in qs_copy: qs_copy["questions"] = [dict(q) for q in qs_copy["questions"]]
+                full["qSet"] = qs_copy
             _restore_audio(full)
             full_items.append(full)
         tmp = fp.with_suffix(".tmp.json")
@@ -2042,7 +2272,7 @@ with st.sidebar:
     if not edge: st.caption("⚠️ Edge TTS が使えません: `pip install edge-tts`")
 
     st.divider()
-    st.caption("v2026.05.03i · batch save + perf fix · 303 types")
+    st.caption("v2026.05.07f · auto graphic ratio (20% L, 15% R) + export fix + diversity overhaul · 303 types")
 
 st.markdown("<h1 style='text-align:center;background:linear-gradient(135deg,#818cf8,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:28px'>📝 TOEIC Generator</h1>", unsafe_allow_html=True)
 
@@ -2092,7 +2322,6 @@ with tab_manage:
                 st.caption(f"レベル内訳: {lv_str}")
 
             # --- Export: full + differential ---
-            # Use session_state data + restore audio on-demand (avoid re-reading 100MB file)
             LAST_EXPORT_FILE = "last_html_export.txt"
             last_export_ts = 0
             try:
@@ -2104,43 +2333,64 @@ with tab_manage:
             _exp_filtered = st.session_state.results if selected_part == "全パート" else [r for r in st.session_state.results if r.get("part") == selected_part]
             _exp_diff = [r for r in _exp_filtered if last_export_ts > 0 and (r.get("createdAt") or 0) > last_export_ts]
 
+            def _build_export_json(items):
+                full = []
+                for it in items:
+                    d = dict(it)
+                    qs = d.get("qSet")
+                    if qs:
+                        qs_c = dict(qs)
+                        if "vocab" in qs_c: qs_c["vocab"] = [dict(v) for v in qs_c["vocab"]]
+                        if "questions" in qs_c: qs_c["questions"] = [dict(q) for q in qs_c["questions"]]
+                        d["qSet"] = qs_c
+                    _restore_audio(d)
+                    full.append(d)
+                return json.dumps(full, ensure_ascii=False, indent=None)
+
             ec1, ec2 = st.columns(2)
             with ec1:
                 if _exp_filtered:
-                    # Restore audio only when user clicks download (lazy)
-                    def _build_export_json(items):
-                        full = []
-                        for it in items:
-                            d = dict(it)
-                            qs = d.get("qSet")
-                            if qs:
-                                qs_c = dict(qs)
-                                if "vocab" in qs_c: qs_c["vocab"] = [dict(v) for v in qs_c["vocab"]]
-                                if "questions" in qs_c: qs_c["questions"] = [dict(q) for q in qs_c["questions"]]
-                                d["qSet"] = qs_c
-                            _restore_audio(d)
-                            full.append(d)
-                        return json.dumps(full, ensure_ascii=False, indent=None)
-                    _mb_est = len(_exp_filtered) * 50  # rough estimate KB
-                    st.download_button(
-                        f"📤 全問 ({len(_exp_filtered)}問 / ~{_mb_est//1024}MB)",
-                        _build_export_json(_exp_filtered),
-                        f"toeic-stock-{selected_part}-full-{datetime.now():%Y%m%d-%H%M}.json",
-                        "application/json", key="exp_full")
+                    _mb_est = len(_exp_filtered) * 50
+                    if st.button(f"📤 全問準備 ({len(_exp_filtered)}問 / ~{_mb_est//1024}MB)", key="prep_full"):
+                        with st.spinner("JSON生成中..."):
+                            st.session_state["_export_full_data"] = _build_export_json(_exp_filtered)
+                            st.session_state["_export_full_name"] = f"toeic-stock-{selected_part}-full-{datetime.now():%Y%m%d-%H%M}.json"
+                        st.rerun()
+                    if "_export_full_data" in st.session_state:
+                        st.download_button(
+                            f"⬇️ ダウンロード ({len(st.session_state['_export_full_data'])//1024//1024}MB)",
+                            st.session_state["_export_full_data"],
+                            st.session_state.get("_export_full_name", "export.json"),
+                            "application/json", key="dl_full")
             with ec2:
                 if _exp_diff:
                     _mb_d_est = len(_exp_diff) * 50
                     from datetime import datetime as _dt
                     last_dt = _dt.fromtimestamp(last_export_ts/1000).strftime("%m/%d %H:%M")
-                    st.download_button(
-                        f"🆕 差分 ({len(_exp_diff)}問 / ~{_mb_d_est//1024}MB)",
-                        _build_export_json(_exp_diff),
-                        f"toeic-stock-{selected_part}-diff-{datetime.now():%Y%m%d-%H%M}.json",
-                        "application/json", key="exp_diff", help=f"前回: {last_dt}")
+                    if st.button(f"🆕 差分準備 ({len(_exp_diff)}問)", key="prep_diff", help=f"前回: {last_dt}"):
+                        with st.spinner("JSON生成中..."):
+                            st.session_state["_export_diff_data"] = _build_export_json(_exp_diff)
+                            st.session_state["_export_diff_name"] = f"toeic-stock-{selected_part}-diff-{datetime.now():%Y%m%d-%H%M}.json"
+                        st.rerun()
+                    if "_export_diff_data" in st.session_state:
+                        st.download_button(
+                            f"⬇️ 差分ダウンロード ({len(st.session_state['_export_diff_data'])//1024//1024}MB)",
+                            st.session_state["_export_diff_data"],
+                            st.session_state.get("_export_diff_name", "diff.json"),
+                            "application/json", key="dl_diff")
                 elif last_export_ts > 0:
                     st.button("🆕 差分なし", disabled=True, key="exp_diff_empty")
                 else:
                     st.caption("初回は全問で出力")
+
+            # Clear cached export data button
+            if "_export_full_data" in st.session_state or "_export_diff_data" in st.session_state:
+                if st.button("🔄 エクスポートデータをクリア", key="clear_export"):
+                    st.session_state.pop("_export_full_data", None)
+                    st.session_state.pop("_export_diff_data", None)
+                    st.session_state.pop("_export_full_name", None)
+                    st.session_state.pop("_export_diff_name", None)
+                    st.rerun()
 
             if st.button("⏱ エクスポート時刻を記録", key="mark_export", help="次回の差分基準を更新"):
                 with open(LAST_EXPORT_FILE, "w") as f:
@@ -2723,8 +2973,22 @@ with tab_gen:
         else:
             pool = TYPES.get(base_part,[])
             if base_part=="part7": pool = TYPES["part7s"]+TYPES["part7d"]+TYPES["part7t"]
-            random.shuffle(pool)
-            pool_items = [(t, base_part) for t in pool]
+            # Separate graphic and non-graphic types
+            g_pool = [t for t in pool if t.get("type","").startswith("graphic_")]
+            n_pool = [t for t in pool if not t.get("type","").startswith("graphic_")]
+            # Build pool with TOEIC-realistic graphic ratio (~20% for L parts, ~15% for Part 7)
+            GRAPHIC_RATIO = 0.20 if is_listening else 0.15
+            pool_items = []
+            g_queue = list(g_pool); random.shuffle(g_queue)
+            n_queue = list(n_pool); random.shuffle(n_queue)
+            for ci in range(count):
+                use_graphic = g_queue and random.random() < GRAPHIC_RATIO
+                if use_graphic:
+                    if not g_queue: g_queue = list(g_pool); random.shuffle(g_queue)
+                    pool_items.append((g_queue.pop(0), base_part))
+                else:
+                    if not n_queue: n_queue = list(n_pool); random.shuffle(n_queue)
+                    pool_items.append((n_queue.pop(0), base_part))
 
         prog = st.progress(0); stat = st.empty(); log = st.container()
         gen,fail = 0,0
@@ -2849,7 +3113,7 @@ with tab_gen:
                                         if mp3e:
                                             eo = mp3_to_opus(mp3e, '12k')
                                             if eo: vw["example_audio"] = base64.b64encode(eo).decode()
-                                    except: pass
+                                    except Exception: pass
                             elif tts_eng=="gemini" and api_key:
                                 pp = gemini_tts(word, api_key); oo = pcm_to_opus(pp, '12k')
                                 if oo: vw["audio"] = base64.b64encode(oo).decode()
@@ -2887,8 +3151,9 @@ with tab_gen:
                 print(f"[OK] [{i+1}/{count}]",flush=True); log.success(f"✅ [{i+1}/{count}] {tt}")
             except Exception as e:
                 fail+=1; print(f"[ERR] {e}",flush=True); log.error(f"❌ [{i+1}/{count}] {e}")
-                # Retry is disabled for strict mode - listening needs full regeneration with TTS
-                # The main loop will continue and try the next question
+                if fail >= BATCH_ERROR_LIMIT and gen == 0:
+                    stat.error(f"⛔ {BATCH_ERROR_LIMIT}回連続失敗。APIキーやモデル設定を確認してください。")
+                    break
         # Final save (catch remaining items not saved by periodic save)
         if gen > 0:
             save_results(RESULTS_FILE, st.session_state.results)
@@ -3496,7 +3761,7 @@ with tab_practice:
                     try:
                         raw = base64.b64decode(_opus)
                         st.audio(raw, format="audio/webm")
-                    except: pass
+                    except Exception: pass
                 elif part in ("part1","part2","part3","part4"):
                     st.warning("⚠️ 音声なし")
 
@@ -3772,7 +4037,7 @@ with tab_mock_test:
                         try:
                             raw = base64.b64decode(_mock_opus)
                             st.audio(raw, format="audio/webm")
-                        except: pass
+                        except Exception: pass
                     elif is_listening:
                         st.warning("⚠️ この問題には音声データがありません")
 
