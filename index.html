@@ -2112,16 +2112,28 @@ function diverseShuffle(items) {
     if (!byType[t]) byType[t] = [];
     byType[t].push(it);
   });
-  // Shuffle within each type
   for (const arr of Object.values(byType)) {
     for (let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
   }
-  // Round-robin: pick one from each type in turn
-  const queues = Object.values(byType).sort((a,b)=>b.length-a.length);
+  // Separate graphic and non-graphic type queues
+  const gQueues = []; const nQueues = [];
+  for (const [t, arr] of Object.entries(byType)) {
+    if (t.startsWith("graphic_")) gQueues.push(arr);
+    else nQueues.push(arr);
+  }
+  gQueues.sort((a,b)=>b.length-a.length);
+  nQueues.sort((a,b)=>b.length-a.length);
+  // Round-robin non-graphic, insert graphic every ~5 items
   const result = [];
-  while (result.length < items.length) {
+  let gFlat = []; gQueues.forEach(q => { while(q.length) gFlat.push(q.shift()); });
+  for (let i=gFlat.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[gFlat[i],gFlat[j]]=[gFlat[j],gFlat[i]];}
+  let gi = 0;
+  while (nQueues.some(q=>q.length) || gi < gFlat.length) {
+    // Pick one from each non-graphic type (round-robin)
     let added = false;
-    for (const q of queues) { if (q.length > 0) { result.push(q.shift()); added = true; } }
+    for (const q of nQueues) { if (q.length) { result.push(q.shift()); added = true; } }
+    // Insert 1 graphic item per round (if available)
+    if (gi < gFlat.length) { result.push(gFlat[gi++]); added = true; }
     if (!added) break;
   }
   return result;
@@ -7376,7 +7388,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.07a · TOEIC-weighted IRT + vocab dedup fix + batched import · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.07b · graphic interleave in shuffle + TOEIC-weighted IRT · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
