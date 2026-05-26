@@ -3512,6 +3512,18 @@ async function loadNextStockItem() {
   S.stockPlayIdx++;
   if (S.stockPlayIdx >= S.stockPlaylist.length) {
     // プレイリスト終了
+    if (S._routineMode) {
+      // ルーティン完了画面
+      S._routineMode = false;
+      const t = S.stats.correct + S.stats.wrong;
+      const r = t > 0 ? Math.round(S.stats.correct / t * 100) : 0;
+      S.screen = "home";
+      render();
+      setTimeout(() => {
+        alert(`📋 ルーティン完了！\n\n正答率: ${r}% (${S.stats.correct}/${t})\n\nお疲れさまでした！`);
+      }, 300);
+      return;
+    }
     S.screen=S._stockReturnScreen||"home"; S.stockMode=false; render(); return;
   }
   await loadStockItem(S.stockPlaylist[S.stockPlayIdx]);
@@ -7388,7 +7400,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.07c · export split 100MB + graphic interleave · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.07d · routine study (all 7 parts) + export 100MB · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7453,6 +7465,11 @@ function renderHome() {
       <button class="btn-s" id="notifBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px">🔔 学習リマインダー設定</button>
       <button class="btn-s" id="manualBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px;margin-left:4px">📖 マニュアル</button>
       <button class="btn-s" id="backupBtn" style="font-size:11px;color:#7a8ea5;margin-top:4px;margin-left:4px">💾 バックアップ</button>
+
+      <div style="margin-top:12px;padding:12px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.15);border-radius:12px">
+        <button id="routineBtn" style="width:100%;padding:14px;font-size:15px;font-weight:700;color:#818cf8;background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.25);border-radius:10px;cursor:pointer">📋 ルーティン学習</button>
+        <div style="font-size:10px;color:#7a8ea5;margin-top:4px;text-align:center">P1×2 P2×2 P3×1 P4×1 P5×2 P6×1 P7×1（全パート10セット）</div>
+      </div>
     </div>`;
 
   // Async: load stock counts and IRT level
@@ -7730,6 +7747,52 @@ function renderHome() {
     setTimeout(()=>{azSave2.textContent="保存";},1500);
   };
   const mb2=$("manualBtn"); if(mb2) mb2.onclick=()=>{S.screen="manual";render();};
+
+  // Routine Study handler
+  const routBtn=$("routineBtn"); if(routBtn) routBtn.onclick=async()=>{
+    routBtn.textContent="⏳ 準備中...";
+    try {
+      const ROUTINE_CONFIG = [
+        {part:"part1", count:2},
+        {part:"part2", count:2},
+        {part:"part3", count:1},
+        {part:"part4", count:1},
+        {part:"part5", count:2},
+        {part:"part6", count:1},
+        {part:"part7", count:1},
+      ];
+      const playlist = [];
+      let missingParts = [];
+      for (const cfg of ROUTINE_CONFIG) {
+        const items = await stockGetAllLight(cfg.part);
+        if (!items.length) { missingParts.push(cfg.part); continue; }
+        const shuffled = qualityPriorityShuffle(items);
+        const picked = shuffled.slice(0, cfg.count);
+        for (const it of picked) {
+          playlist.push({id: it.id, part: it.part});
+        }
+      }
+      if (!playlist.length) {
+        alert("ストック問題がありません。まず問題をインポートしてください。");
+        routBtn.textContent="📋 ルーティン学習";
+        return;
+      }
+      if (missingParts.length) {
+        console.warn("[ROUTINE] Missing parts:", missingParts.join(", "));
+      }
+      S._stockReturnScreen = "home";
+      S._routineMode = true;
+      S._routineTotal = playlist.length;
+      S._routineDone = 0;
+      S.stockPlaylist = playlist;
+      S.stockPlayIdx = 0;
+      S._stockPlaylistActive = false;
+      await loadStockItem(playlist[0].id);
+    } catch(e) {
+      alert("ルーティン準備エラー: " + e.message);
+      routBtn.textContent="📋 ルーティン学習";
+    }
+  };
   const bkb=$("backupBtn"); if(bkb) bkb.onclick=async()=>{
     const choice = confirm("💾 学習データのバックアップ\n\n保存: 判定履歴 + 単語帳 + 設定\n（問題データはGitHub Releasesから再インポート可能）\n\nOK → バックアップ保存\nキャンセル → バックアップから復元");
     if (choice) {
@@ -7817,6 +7880,21 @@ function renderStudy() {
   const total=S.stats.correct+S.stats.wrong;
   const rate=total>0?Math.round(S.stats.correct/total*100):0;
   const isL=["part1","part2","part3","part4"].includes(S.part);
+
+  // Routine progress banner
+  let routineBanner = "";
+  if (S._routineMode && S._routineTotal) {
+    const cur = S.stockPlayIdx + 1;
+    const tot = S._routineTotal;
+    const pct = Math.round(cur / tot * 100);
+    routineBanner = `<div style="background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.2);border-radius:8px;padding:8px 12px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
+      <span style="font-size:12px;color:#818cf8;font-weight:700">📋 ルーティン ${cur}/${tot}</span>
+      <div style="flex:1;height:4px;background:rgba(129,140,248,0.1);border-radius:2px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:#818cf8;border-radius:2px;transition:width 0.3s"></div>
+      </div>
+      <span style="font-size:10px;color:#7a8ea5">${cp?.label||S.part}</span>
+    </div>`;
+  }
 
   let body="";
 
@@ -8111,6 +8189,7 @@ function renderStudy() {
            <span class="tag" style="background:rgba(251,191,36,0.1);color:#fbbf24">${S.sessionNum}/${SESSION_SIZE}</span>`}
       </div>
     </div>
+    ${routineBanner}
     <div class="stats">
       <div class="stat"><div class="sl">出題数</div><div class="sv" style="color:#7b9cf7">${total}</div></div>
       <div class="stat"><div class="sl">正解</div><div class="sv" style="color:#4ade80">${S.stats.correct}</div></div>
