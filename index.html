@@ -3270,6 +3270,13 @@ function handleAnswer(idx) {
   const isCorrect = idx===q.correct;
   if (isCorrect) { S.stats.correct++; S.streak++; }
   else           { S.stats.wrong++;   S.streak=0;  }
+  // Track per-part results for routine mode
+  if (S._routineMode && S._routinePartResults) {
+    const rp = S.part;
+    if (!S._routinePartResults[rp]) S._routinePartResults[rp] = {correct:0, wrong:0};
+    if (isCorrect) S._routinePartResults[rp].correct++;
+    else S._routinePartResults[rp].wrong++;
+  }
   // タイマー: 経過時間を記録、最終設問でのみ停止
   const elapsed=S.timerStart?Math.round((Date.now()-S.timerStart)/1000):0;
   const isLastQ=S.qIdx>=S.qSet.questions.length-1;
@@ -3401,6 +3408,7 @@ function render() {
   else if (S.screen==="colloQuiz") renderColloQuiz();
   else if (S.screen==="rolePlay") renderRolePlay();
   else if (S.screen==="manual") renderManual();
+  else if (S.screen==="routineResult") renderRoutineResult();
   else                          renderStudy();
 }
 
@@ -3513,15 +3521,9 @@ async function loadNextStockItem() {
   if (S.stockPlayIdx >= S.stockPlaylist.length) {
     // プレイリスト終了
     if (S._routineMode) {
-      // ルーティン完了画面
-      S._routineMode = false;
-      const t = S.stats.correct + S.stats.wrong;
-      const r = t > 0 ? Math.round(S.stats.correct / t * 100) : 0;
-      S.screen = "home";
+      // ルーティン完了 → 専用画面
+      S.screen = "routineResult";
       render();
-      setTimeout(() => {
-        alert(`📋 ルーティン完了！\n\n正答率: ${r}% (${S.stats.correct}/${t})\n\nお疲れさまでした！`);
-      }, 300);
       return;
     }
     S.screen=S._stockReturnScreen||"home"; S.stockMode=false; render(); return;
@@ -7400,7 +7402,7 @@ function renderHome() {
       <div class="pre">AI-POWERED · ネイティブAI音声 · 公式形式準拠</div>
       <h1>TOEIC Trainer</h1>
       <div class="sub">全7パート ｜ ストック学習 ｜ ネイティブAI音声</div>
-      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.07d · routine study (all 7 parts) + export 100MB · 303 types</div>
+      <div style="font-size:10px;color:#7a8ea5;margin-top:4px">v2026.05.07e · routine: part review + prefer unanswered · 303 types</div>
     </div>
     <div id="homeLevel" style="text-align:center;margin:8px 0;padding:10px;background:rgba(129,140,248,0.08);border:1px solid rgba(129,140,248,0.15);border-radius:10px">
       <div style="font-size:10px;color:#a0b4c8;letter-spacing:1px">ESTIMATED LEVEL</div>
@@ -7753,21 +7755,25 @@ function renderHome() {
     routBtn.textContent="⏳ 準備中...";
     try {
       const ROUTINE_CONFIG = [
-        {part:"part1", count:2},
-        {part:"part2", count:2},
-        {part:"part3", count:1},
-        {part:"part4", count:1},
-        {part:"part5", count:2},
-        {part:"part6", count:1},
-        {part:"part7", count:1},
+        {part:"part1", count:2, label:"Part 1 写真描写"},
+        {part:"part2", count:2, label:"Part 2 応答問題"},
+        {part:"part3", count:1, label:"Part 3 会話問題"},
+        {part:"part4", count:1, label:"Part 4 説明文問題"},
+        {part:"part5", count:2, label:"Part 5 短文穴埋め"},
+        {part:"part6", count:1, label:"Part 6 長文穴埋め"},
+        {part:"part7", count:1, label:"Part 7 読解問題"},
       ];
       const playlist = [];
       let missingParts = [];
+      let partBoundaries = []; // {startIdx, part, label}
       for (const cfg of ROUTINE_CONFIG) {
         const items = await stockGetAllLight(cfg.part);
-        if (!items.length) { missingParts.push(cfg.part); continue; }
-        const shuffled = qualityPriorityShuffle(items);
+        if (!items.length) { missingParts.push(cfg.label); continue; }
+        const unanswered = items.filter(it => !it.lastPracticed);
+        const pool = unanswered.length >= cfg.count ? unanswered : items;
+        const shuffled = qualityPriorityShuffle(pool);
         const picked = shuffled.slice(0, cfg.count);
+        partBoundaries.push({startIdx: playlist.length, part: cfg.part, label: cfg.label, count: picked.length});
         for (const it of picked) {
           playlist.push({id: it.id, part: it.part});
         }
@@ -7778,12 +7784,13 @@ function renderHome() {
         return;
       }
       if (missingParts.length) {
-        console.warn("[ROUTINE] Missing parts:", missingParts.join(", "));
+        alert(`⚠️ 以下のパートはストックがないためスキップします:\n${missingParts.join("\n")}`);
       }
       S._stockReturnScreen = "home";
       S._routineMode = true;
       S._routineTotal = playlist.length;
-      S._routineDone = 0;
+      S._routinePartBoundaries = partBoundaries;
+      S._routinePartResults = {}; // {part: {correct:0, wrong:0}}
       S.stockPlaylist = playlist;
       S.stockPlayIdx = 0;
       S._stockPlaylistActive = false;
@@ -9375,6 +9382,78 @@ function checkBackupReminder() {
     return true; // should remind
   }
   return false;
+}
+
+/* ── ルーティン完了画面 ── */
+function renderRoutineResult() {
+  const t = S.stats.correct + S.stats.wrong;
+  const r = t > 0 ? Math.round(S.stats.correct / t * 100) : 0;
+  const results = S._routinePartResults || {};
+  const PART_INFO = {
+    part1:{icon:"📷",label:"Part 1 写真描写"},part2:{icon:"💬",label:"Part 2 応答問題"},
+    part3:{icon:"🗣️",label:"Part 3 会話問題"},part4:{icon:"📢",label:"Part 4 説明文問題"},
+    part5:{icon:"📝",label:"Part 5 短文穴埋め"},part6:{icon:"📄",label:"Part 6 長文穴埋め"},
+    part7:{icon:"📖",label:"Part 7 読解問題"}
+  };
+
+  let partRows = "";
+  let weakParts = [];
+  for (const pid of ["part1","part2","part3","part4","part5","part6","part7"]) {
+    const pr = results[pid];
+    if (!pr) continue;
+    const total = pr.correct + pr.wrong;
+    const rate = total > 0 ? Math.round(pr.correct / total * 100) : 0;
+    const dots = [];
+    for (let i = 0; i < pr.correct; i++) dots.push("✅");
+    for (let i = 0; i < pr.wrong; i++) dots.push("❌");
+    const info = PART_INFO[pid] || {icon:"", label:pid};
+    const rateColor = rate >= 80 ? "#4ade80" : rate >= 60 ? "#fbbf24" : "#f87171";
+    if (rate < 70 && total >= 1) weakParts.push(info.label);
+    partRows += `<div style="display:flex;align-items:center;gap:8px;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;margin:4px 0">
+      <span style="font-size:13px;color:#a0b4c8;min-width:140px">${info.icon} ${info.label}</span>
+      <span style="font-size:14px;flex:1;letter-spacing:2px">${dots.join("")}</span>
+      <span style="font-size:13px;font-weight:700;color:${rateColor};min-width:50px;text-align:right">${pr.correct}/${total}</span>
+    </div>`;
+  }
+
+  const overallColor = r >= 80 ? "#4ade80" : r >= 60 ? "#fbbf24" : "#f87171";
+  let advice = "";
+  if (weakParts.length > 0) {
+    advice = `<div style="margin-top:16px;padding:12px;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.15);border-radius:10px;font-size:13px;color:#f87171">
+      💡 ${weakParts.join("、")} が弱点です。🔥 苦手特訓がおすすめ。
+    </div>`;
+  } else if (r === 100) {
+    advice = `<div style="margin-top:16px;padding:12px;background:rgba(74,222,128,0.06);border:1px solid rgba(74,222,128,0.15);border-radius:10px;font-size:13px;color:#4ade80">
+      🎉 パーフェクト！素晴らしい！
+    </div>`;
+  }
+
+  app.innerHTML = `
+    <div style="text-align:center;padding:20px 0">
+      <div style="font-size:24px;font-weight:800;color:#818cf8;margin-bottom:4px">📋 ルーティン完了！</div>
+      <div style="font-size:14px;color:#7a8ea5">お疲れさまでした</div>
+    </div>
+    <div style="text-align:center;margin:16px 0">
+      <span style="font-size:48px;font-weight:800;color:${overallColor}">${r}%</span>
+      <div style="font-size:14px;color:#a0b4c8;margin-top:4px">${S.stats.correct} / ${t} 問正解</div>
+    </div>
+    <div style="padding:0 8px">
+      <div style="font-size:12px;color:#7a8ea5;margin-bottom:8px;font-weight:600">パート別</div>
+      ${partRows}
+    </div>
+    ${advice}
+    <div style="text-align:center;padding:24px 0">
+      <button class="btn-p" id="routineHomeBtn" style="padding:14px 32px;font-size:15px">🏠 ホームに戻る</button>
+    </div>
+  `;
+
+  $("routineHomeBtn").onclick = () => {
+    S._routineMode = false;
+    S._routinePartResults = {};
+    S.stockMode = false;
+    S.screen = "home";
+    render();
+  };
 }
 
 /* ── マニュアル画面 ── */
